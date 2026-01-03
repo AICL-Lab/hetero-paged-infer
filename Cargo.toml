@@ -1,0 +1,30 @@
+[package]
+name = "hetero-infer"
+version = "0.1.0"
+edition = "2021"
+description = "Heterogeneous Inference System with CPU-GPU co-execution"
+authors = ["Developer"]
+
+[dependencies]
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+clap = { version = "4.0", features = ["derive"] }
+
+[dev-dependencies]
+proptest = "1.4"
+
+[features]
+default = []
+cuda = []
+
+[[bin]]
+name = "hetero-infer"
+path = "src/main.rs"
+
+[lib]
+name = "hetero_infer"
+path = "src/lib.rs"
