@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::config::EngineConfig;
-use crate::error::{MemoryError, SchedulerError};
+use crate::error::SchedulerError;
 use crate::kv_cache::{KVCacheManager, KVCacheManagerTrait};
 use crate::types::{
     BlockIdx, ExecutionBatch, ExecutionOutput, Request, RequestId, RequestState,
@@ -155,6 +155,22 @@ impl Scheduler {
             self.completed_requests.push(sequence.request);
         }
     }
+
+    /// Fail a sequence and release its resources
+    fn fail_sequence(&mut self, seq_id: SeqId, reason: String) {
+        if let Some(mut sequence) = self.decode_sequences.remove(&seq_id) {
+            sequence.request.state = RequestState::Failed(reason);
+            self.kv_cache.free_sequence(seq_id);
+            self.completed_requests.push(sequence.request);
+            return;
+        }
+
+        if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
+            sequence.request.state = RequestState::Failed(reason);
+            self.kv_cache.free_sequence(seq_id);
+            self.completed_requests.push(sequence.request);
+        }
+    }
     
     /// Get sequence by ID (from any queue)
     pub fn get_sequence(&self, seq_id: SeqId) -> Option<&Sequence> {
@@ -242,8 +258,11 @@ impl SchedulerTrait for Scheduler {
                                 crate::types::LogicalBlock::with_physical(logical_idx, physical_ref),
                             );
                         }
-                        Err(_) => {
-                            continue; // Skip this sequence if can't allocate
+                        Err(err) => {
+                            let reason = format!("Failed to allocate KV block: {}", err);
+                            drop(sequence);
+                            self.fail_sequence(seq_id, reason);
+                            continue;
                         }
                     }
                 }
@@ -264,18 +283,42 @@ impl SchedulerTrait for Scheduler {
             if num_sequences >= self.config.max_batch_size {
                 break;
             }
-            
-            if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
-                let prefill_tokens = sequence.request.input_tokens.len() as u32;
-                
-                if total_tokens + prefill_tokens > self.config.max_total_tokens {
-                    break;
+
+            let (prefill_tokens, blocks_needed) = match self.prefill_sequences.get(&seq_id) {
+                Some(sequence) => {
+                    let tokens = sequence.request.input_tokens.len() as u32;
+                    (tokens, self.blocks_needed(tokens))
                 }
-                
+                None => continue,
+            };
+
+            if prefill_tokens > self.config.max_total_tokens {
+                let reason = format!(
+                    "Input tokens {} exceed max_total_tokens {}",
+                    prefill_tokens, self.config.max_total_tokens
+                );
+                self.fail_sequence(seq_id, reason);
+                continue;
+            }
+
+            if blocks_needed > self.config.max_num_blocks {
+                let reason = format!(
+                    "Required blocks {} exceed max_num_blocks {}",
+                    blocks_needed, self.config.max_num_blocks
+                );
+                self.fail_sequence(seq_id, reason);
+                continue;
+            }
+
+            if total_tokens + prefill_tokens > self.config.max_total_tokens {
+                break;
+            }
+
+            if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
                 let block_table = self.kv_cache.get_block_table(seq_id).unwrap_or_default();
                 output.block_tables.insert(seq_id, block_table.clone());
                 output.prefill_sequences.push(Arc::new(sequence.clone()));
-                
+
                 total_tokens += prefill_tokens;
                 num_sequences += 1;
             }
@@ -290,6 +333,27 @@ impl SchedulerTrait for Scheduler {
                 }
                 
                 let prefill_tokens = request.input_tokens.len() as u32;
+                if prefill_tokens > self.config.max_total_tokens {
+                    let mut failed_request = request;
+                    failed_request.state = RequestState::Failed(format!(
+                        "Input tokens {} exceed max_total_tokens {}",
+                        prefill_tokens, self.config.max_total_tokens
+                    ));
+                    self.completed_requests.push(failed_request);
+                    continue;
+                }
+
+                let blocks_needed = self.blocks_needed(prefill_tokens);
+                if blocks_needed > self.config.max_num_blocks {
+                    let mut failed_request = request;
+                    failed_request.state = RequestState::Failed(format!(
+                        "Required blocks {} exceed max_num_blocks {}",
+                        blocks_needed, self.config.max_num_blocks
+                    ));
+                    self.completed_requests.push(failed_request);
+                    continue;
+                }
+                
                 if total_tokens + prefill_tokens > self.config.max_total_tokens {
                     self.pending_queue.push_front(request);
                     break;
@@ -330,11 +394,20 @@ impl SchedulerTrait for Scheduler {
             
             // Update decode sequence with new token
             if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
+                let max_model_len = self.config.max_model_len as usize;
+                if sequence.request.total_tokens() >= max_model_len {
+                    let seq_id_to_complete = seq_id;
+                    drop(sequence);
+                    self.complete_sequence(seq_id_to_complete);
+                    continue;
+                }
+
                 sequence.request.output_tokens.push(next_token);
                 sequence.num_generated_tokens += 1;
                 
                 // Check completion conditions
-                if sequence.request.is_complete(eos_token_id) {
+                let reached_max_model_len = sequence.request.total_tokens() >= max_model_len;
+                if reached_max_model_len || sequence.request.is_complete(eos_token_id) {
                     let seq_id_to_complete = seq_id;
                     // Mark for completion (can't complete here due to borrow)
                     drop(sequence);

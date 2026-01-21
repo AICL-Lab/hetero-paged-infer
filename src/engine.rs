@@ -131,23 +131,24 @@ impl InferenceEngine {
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError> {
         // Schedule next batch
         let scheduler_output = self.scheduler.schedule();
-        
-        if scheduler_output.is_empty() {
+
+        if !scheduler_output.is_empty() {
+            // Build execution batch
+            let execution_batch = build_execution_batch(&scheduler_output);
+
+            // Execute on GPU
+            let execution_output = self.gpu_executor.execute(&execution_batch)?;
+
+            // Update scheduler with results
+            self.scheduler.update_sequences(&execution_output, self.eos_token_id);
+        }
+
+        // Get completed requests (may exist even without execution batch)
+        let completed_requests = self.scheduler.get_completed();
+        if completed_requests.is_empty() {
             return Ok(Vec::new());
         }
-        
-        // Build execution batch
-        let execution_batch = build_execution_batch(&scheduler_output);
-        
-        // Execute on GPU
-        let execution_output = self.gpu_executor.execute(&execution_batch)?;
-        
-        // Update scheduler with results
-        self.scheduler.update_sequences(&execution_output, self.eos_token_id);
-        
-        // Get completed requests
-        let completed_requests = self.scheduler.get_completed();
-        
+
         // Convert to CompletedRequest with decoded text
         let results: Vec<CompletedRequest> = completed_requests
             .into_iter()
@@ -158,7 +159,7 @@ impl InferenceEngine {
                     RequestState::Failed(msg) => Some(msg.clone()),
                     _ => None,
                 };
-                
+
                 CompletedRequest {
                     request_id: req.id,
                     input_text: None, // Could store original text if needed
@@ -169,7 +170,7 @@ impl InferenceEngine {
                 }
             })
             .collect();
-        
+
         Ok(results)
     }
     
