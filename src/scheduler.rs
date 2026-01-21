@@ -228,23 +228,30 @@ impl SchedulerTrait for Scheduler {
                 break;
             }
             
-            if let Some(sequence) = self.decode_sequences.get(&seq_id) {
+            if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
                 // Check if sequence needs more blocks
                 let current_tokens = sequence.context_len();
-                let current_blocks = self.kv_cache.get_memory_stats().used_blocks;
                 let blocks_needed = self.blocks_needed(current_tokens + 1);
-                
+
                 // Allocate additional block if needed
                 if blocks_needed > sequence.logical_blocks.len() as u32 {
-                    if self.kv_cache.allocate_block(seq_id).is_err() {
-                        continue; // Skip this sequence if can't allocate
+                    match self.kv_cache.allocate_block(seq_id) {
+                        Ok(physical_ref) => {
+                            let logical_idx = sequence.logical_blocks.len() as u32;
+                            sequence.logical_blocks.push(
+                                crate::types::LogicalBlock::with_physical(logical_idx, physical_ref),
+                            );
+                        }
+                        Err(_) => {
+                            continue; // Skip this sequence if can't allocate
+                        }
                     }
                 }
-                
+
                 let block_table = self.kv_cache.get_block_table(seq_id).unwrap_or_default();
                 output.block_tables.insert(seq_id, block_table.clone());
                 output.decode_sequences.push(Arc::new(sequence.clone()));
-                
+
                 total_tokens += 1;
                 num_sequences += 1;
             }
