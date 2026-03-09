@@ -1,11 +1,52 @@
 title: Hetero-Paged-Infer
-description: PagedAttention + Continuous Batching Inference Engine in Rust
+description: >-
+  PagedAttention + Continuous Batching 推理引擎 — Rust 实现的 CPU-GPU 协同推理系统
 remote_theme: pages-themes/cayman@v0.2.0
-
-url: "https://lessup.github.io"
-baseurl: "/hetero-paged-infer"
-lang: zh-CN
-
 plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
+repository: LessUp/hetero-paged-infer
+show_downloads: false
+
+# SEO & metadata
+url: https://lessup.github.io
+baseurl: /hetero-paged-infer
+lang: zh-CN
+author: LessUp
+
+# Markdown rendering
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# Default layout for all pages
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+  - scope:
+      path: "changelog"
+    values:
+      layout: default
+
+# Exclude irrelevant files from Jekyll build
+exclude:
+  - .git
+  - .github
+  - .kiro
+  - .vscode
+  - src
+  - tests
+  - target
+  - Cargo.toml
+  - Cargo.lock
+  - rustfmt.toml
+  - .editorconfig
+  - .gitignore
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - "*.rs"
