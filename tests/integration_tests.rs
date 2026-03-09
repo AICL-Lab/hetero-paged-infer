@@ -6,6 +6,8 @@ use hetero_infer::{
     EngineConfig, GenerationParams, InferenceEngine,
 };
 
+// Integration tests can't use #[cfg(test)] pub mod test_utils from lib.rs directly,
+// so we duplicate the minimal helper here.
 fn create_test_config() -> EngineConfig {
     EngineConfig {
         block_size: 16,

@@ -312,18 +312,7 @@ impl InferenceEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_test_config() -> EngineConfig {
-        EngineConfig {
-            block_size: 16,
-            max_num_blocks: 100,
-            max_batch_size: 8,
-            max_num_seqs: 32,
-            max_model_len: 2048,
-            max_total_tokens: 512,
-            memory_threshold: 0.9,
-        }
-    }
+    use crate::test_utils::create_test_config;
 
     #[test]
     fn test_engine_creation() {

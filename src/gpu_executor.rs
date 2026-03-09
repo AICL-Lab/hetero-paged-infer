@@ -15,7 +15,11 @@ use crate::types::{
     BlockIdx, ExecutionBatch, ExecutionOutput, SeqId, TokenId,
 };
 
-/// Pinned buffer for CPU-GPU transfer (mock implementation)
+/// Pinned buffer for CPU-GPU transfer
+///
+/// Mock 实现：底层使用普通 `Vec<T>`。
+/// 生产环境应替换为 CUDA pinned memory (`cudaMallocHost`)
+/// 以实现 PCIe DMA 零拷贝传输。
 #[derive(Debug, Clone)]
 pub struct PinnedBuffer<T> {
     data: Vec<T>,
@@ -452,7 +456,7 @@ mod property_tests {
             seq_lengths in prop::collection::vec(1u32..64, 1..8),
         ) {
             let max_total = seq_lengths.iter().sum::<u32>().max(100);
-            let config = create_test_config_with_limits(8, max_total);
+            let config = create_test_config_with_limits(8, max_total, 200);
             let mut executor = MockGPUExecutor::new(config, 32000);
             
             // Build batch with variable sequence lengths
@@ -512,7 +516,7 @@ mod property_tests {
             num_sequences in 1usize..20,
             max_batch_size in 1u32..10,
         ) {
-            let config = create_test_config_with_limits(max_batch_size, 1000);
+            let config = create_test_config_with_limits(max_batch_size, 1000, 200);
             let mut executor = MockGPUExecutor::new(config, 32000);
             
             // Build batch
@@ -541,7 +545,7 @@ mod property_tests {
         fn prop_output_per_sequence(
             num_sequences in 1usize..5,
         ) {
-            let config = create_test_config_with_limits(8, 500);
+            let config = create_test_config_with_limits(8, 500, 200);
             let mut executor = MockGPUExecutor::new(config, 32000);
             
             // Build batch
