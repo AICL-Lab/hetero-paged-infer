@@ -295,8 +295,8 @@ mod property_tests {
             let decoded = tokenizer.decode(&tokens);
             
             prop_assert_eq!(
-                decoded,
-                text,
+                decoded.clone(),
+                text.clone(),
                 "Round-trip failed: '{}' -> {:?} -> '{}'",
                 text,
                 tokens,

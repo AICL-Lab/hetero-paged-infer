@@ -10,7 +10,7 @@ use crate::config::EngineConfig;
 use crate::error::SchedulerError;
 use crate::kv_cache::{KVCacheManager, KVCacheManagerTrait};
 use crate::types::{
-    BlockIdx, ExecutionBatch, ExecutionOutput, Request, RequestId, RequestState,
+    ExecutionOutput, Request, RequestState,
     SchedulerOutput, SeqId, Sequence, TokenId,
 };
 
@@ -244,31 +244,35 @@ impl SchedulerTrait for Scheduler {
                 break;
             }
             
-            if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
-                // Check if sequence needs more blocks
-                let current_tokens = sequence.context_len();
-                let blocks_needed = self.blocks_needed(current_tokens + 1);
+            // 先只读取需要的字段，避免 borrow checker 冲突
+            let (current_tokens, current_blocks) = match self.decode_sequences.get(&seq_id) {
+                Some(seq) => (seq.context_len(), seq.logical_blocks.len() as u32),
+                None => continue,
+            };
+            let blocks_needed = self.blocks_needed(current_tokens + 1);
 
-                // Allocate additional block if needed
-                if blocks_needed > sequence.logical_blocks.len() as u32 {
-                    match self.kv_cache.allocate_block(seq_id) {
-                        Ok(physical_ref) => {
+            // Allocate additional block if needed
+            if blocks_needed > current_blocks {
+                match self.kv_cache.allocate_block(seq_id) {
+                    Ok(physical_ref) => {
+                        if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
                             let logical_idx = sequence.logical_blocks.len() as u32;
                             sequence.logical_blocks.push(
                                 crate::types::LogicalBlock::with_physical(logical_idx, physical_ref),
                             );
                         }
-                        Err(err) => {
-                            let reason = format!("Failed to allocate KV block: {}", err);
-                            drop(sequence);
-                            self.fail_sequence(seq_id, reason);
-                            continue;
-                        }
+                    }
+                    Err(err) => {
+                        let reason = format!("Failed to allocate KV block: {}", err);
+                        self.fail_sequence(seq_id, reason);
+                        continue;
                     }
                 }
+            }
 
+            if let Some(sequence) = self.decode_sequences.get(&seq_id) {
                 let block_table = self.kv_cache.get_block_table(seq_id).unwrap_or_default();
-                output.block_tables.insert(seq_id, block_table.clone());
+                output.block_tables.insert(seq_id, block_table);
                 output.decode_sequences.push(Arc::new(sequence.clone()));
 
                 total_tokens += 1;
@@ -384,6 +388,8 @@ impl SchedulerTrait for Scheduler {
     }
     
     fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId) {
+        let mut to_complete = Vec::new();
+
         for (i, &seq_id) in outputs.seq_ids.iter().enumerate() {
             let next_token = outputs.next_tokens.get(i).copied().unwrap_or(0);
             
@@ -399,14 +405,16 @@ impl SchedulerTrait for Scheduler {
                 sequence.num_generated_tokens += 1;
                 
                 let max_model_len = self.config.max_model_len as usize;
-                let should_complete = sequence.request.total_tokens() >= max_model_len
-                    || sequence.request.is_complete(eos_token_id);
-                
-                if should_complete {
-                    drop(sequence);
-                    self.complete_sequence(seq_id);
+                if sequence.request.total_tokens() >= max_model_len
+                    || sequence.request.is_complete(eos_token_id)
+                {
+                    to_complete.push(seq_id);
                 }
             }
+        }
+
+        for seq_id in to_complete {
+            self.complete_sequence(seq_id);
         }
     }
     
@@ -578,9 +586,13 @@ mod property_tests {
                 let _ = scheduler.add_request(request);
             }
             
-            // Schedule to assign IDs
-            for _ in 0..num_requests {
+            // 反复调度直到 pending 队列清空；每轮调度后执行
+            // update_sequences 使 prefill → decode，避免同一批被重复上报
+            loop {
                 let output = scheduler.schedule();
+                if output.is_empty() {
+                    break;
+                }
                 
                 for seq in &output.prefill_sequences {
                     prop_assert!(
@@ -589,6 +601,24 @@ mod property_tests {
                         seq.seq_id
                     );
                     assigned_ids.insert(seq.seq_id);
+                }
+                for seq in &output.decode_sequences {
+                    // decode 阶段的 seq_id 也不能重复
+                    assigned_ids.insert(seq.seq_id);
+                }
+                
+                // 模拟执行，推动 prefill → decode 转换
+                let seq_ids: Vec<SeqId> = output.prefill_sequences.iter()
+                    .chain(output.decode_sequences.iter())
+                    .map(|s| s.seq_id)
+                    .collect();
+                if !seq_ids.is_empty() {
+                    let exec_output = ExecutionOutput {
+                        next_tokens: vec![100; seq_ids.len()],
+                        logits: None,
+                        seq_ids,
+                    };
+                    scheduler.update_sequences(&exec_output, 0);
                 }
             }
         }

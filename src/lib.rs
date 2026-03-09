@@ -12,7 +12,7 @@ pub mod tokenizer;
 pub mod gpu_executor;
 pub mod engine;
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）

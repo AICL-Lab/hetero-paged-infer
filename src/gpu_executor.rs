@@ -8,11 +8,10 @@
 //! Note: This implementation provides a mock executor for testing.
 //! Real GPU execution requires CUDA toolkit and appropriate kernels.
 
-use std::collections::HashMap;
 use crate::config::EngineConfig;
 use crate::error::ExecutionError;
 use crate::types::{
-    BlockIdx, ExecutionBatch, ExecutionOutput, SeqId, TokenId,
+    BlockIdx, ExecutionBatch, ExecutionOutput, TokenId,
 };
 
 /// Pinned buffer for CPU-GPU transfer
@@ -441,6 +440,7 @@ mod tests {
 mod property_tests {
     use super::*;
     use crate::test_utils::create_test_config_with_limits;
+    use crate::types::SeqId;
     use proptest::prelude::*;
 
     proptest! {

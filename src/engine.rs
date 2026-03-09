@@ -10,7 +10,7 @@ use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
 use crate::gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
 use crate::scheduler::{Scheduler, SchedulerTrait};
-use crate::tokenizer::{SimpleTokenizer, TokenizerTrait, EOS_TOKEN_ID};
+use crate::tokenizer::{SimpleTokenizer, TokenizerTrait};
 use crate::types::{
     CompletedRequest, GenerationParams, Request, RequestId, RequestState,
 };
