@@ -1,6 +1,9 @@
 # Hetero-Paged-Infer
 
-[![CI](https://github.com/user/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/user/hetero-paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue?logo=github)](https://lessup.github.io/hetero-paged-infer/)
+
+简体中文 | [English](README.en.md)
 
 异构推理系统 — 基于 PagedAttention 和 Continuous Batching 的 CPU-GPU 协同推理引擎。
 
