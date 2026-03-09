@@ -45,6 +45,9 @@ pub enum ConfigError {
     #[error("Failed to load config file: {0}")]
     FileLoadError(String),
     
+    #[error("Failed to save config file: {0}")]
+    FileSaveError(String),
+    
     #[error("Failed to parse config: {0}")]
     ParseError(String),
 }
@@ -69,7 +72,7 @@ pub enum ValidationError {
 }
 
 /// Execution errors
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum ExecutionError {
     #[error("CUDA error: {0}")]
     CudaError(String),

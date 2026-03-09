@@ -1,0 +1,28 @@
+# Rust build artifacts
+/target/
+debug/
+*.pdb
+
+# Cargo lock (committed for binary crates)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+coverage/

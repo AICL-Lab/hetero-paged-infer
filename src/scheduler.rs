@@ -85,9 +85,9 @@ impl Scheduler {
         self.under_memory_pressure = stats.utilization() >= self.config.memory_threshold;
     }
     
-    /// Calculate blocks needed for a sequence
+    /// Calculate blocks needed for a sequence (delegates to EngineConfig)
     fn blocks_needed(&self, num_tokens: u32) -> u32 {
-        (num_tokens + self.config.block_size - 1) / self.config.block_size
+        self.config.blocks_for_tokens(num_tokens)
     }
     
     /// Try to start prefill for a pending request
@@ -216,11 +216,11 @@ impl SchedulerTrait for Scheduler {
             return Err(SchedulerError::MemoryPressure);
         }
         
-        // Add to pending queue
+        // Return request ID (seq_id is assigned later during scheduling)
+        let request_id = request.id;
         self.pending_queue.push_back(request);
         
-        // Return a placeholder ID (actual ID assigned during scheduling)
-        Ok(0)
+        Ok(request_id)
     }
     
     fn schedule(&mut self) -> SchedulerOutput {
@@ -394,24 +394,17 @@ impl SchedulerTrait for Scheduler {
             
             // Update decode sequence with new token
             if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
-                let max_model_len = self.config.max_model_len as usize;
-                if sequence.request.total_tokens() >= max_model_len {
-                    let seq_id_to_complete = seq_id;
-                    drop(sequence);
-                    self.complete_sequence(seq_id_to_complete);
-                    continue;
-                }
-
+                // 先推入 token，再检查完成条件，避免边界处丢弃 token
                 sequence.request.output_tokens.push(next_token);
                 sequence.num_generated_tokens += 1;
                 
-                // Check completion conditions
-                let reached_max_model_len = sequence.request.total_tokens() >= max_model_len;
-                if reached_max_model_len || sequence.request.is_complete(eos_token_id) {
-                    let seq_id_to_complete = seq_id;
-                    // Mark for completion (can't complete here due to borrow)
+                let max_model_len = self.config.max_model_len as usize;
+                let should_complete = sequence.request.total_tokens() >= max_model_len
+                    || sequence.request.is_complete(eos_token_id);
+                
+                if should_complete {
                     drop(sequence);
-                    self.complete_sequence(seq_id_to_complete);
+                    self.complete_sequence(seq_id);
                 }
             }
         }
@@ -436,27 +429,7 @@ impl SchedulerTrait for Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::GenerationParams;
-
-    fn create_test_config() -> EngineConfig {
-        EngineConfig {
-            block_size: 16,
-            max_num_blocks: 100,
-            max_batch_size: 8,
-            max_num_seqs: 32,
-            max_model_len: 2048,
-            max_total_tokens: 512,
-            memory_threshold: 0.9,
-        }
-    }
-
-    fn create_test_request(id: RequestId, num_tokens: usize) -> Request {
-        Request::new(
-            id,
-            vec![1; num_tokens],
-            GenerationParams::default(),
-        )
-    }
+    use crate::test_utils::{create_test_config, create_test_request};
 
     #[test]
     fn test_add_request() {
@@ -580,37 +553,9 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::types::GenerationParams;
+    use crate::test_utils::{create_test_config_with_limits, create_test_request_with_params};
     use proptest::prelude::*;
     use std::collections::HashSet;
-
-    fn create_test_config_with_params(
-        max_batch_size: u32,
-        max_total_tokens: u32,
-        max_num_blocks: u32,
-    ) -> EngineConfig {
-        EngineConfig {
-            block_size: 16,
-            max_num_blocks,
-            max_batch_size,
-            max_num_seqs: 64,
-            max_model_len: 2048,
-            max_total_tokens,
-            memory_threshold: 0.9,
-        }
-    }
-
-    fn create_request_with_tokens(id: RequestId, num_tokens: usize, max_gen: u32) -> Request {
-        Request::new(
-            id,
-            vec![1; num_tokens],
-            GenerationParams {
-                max_tokens: max_gen,
-                temperature: 1.0,
-                top_p: 1.0,
-            },
-        )
-    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
@@ -624,12 +569,12 @@ mod property_tests {
             num_requests in 1usize..50,
             tokens_per_request in 1usize..64,
         ) {
-            let config = create_test_config_with_params(32, 4096, 500);
+            let config = create_test_config_with_limits(32, 4096, 500);
             let mut scheduler = Scheduler::new(config);
             let mut assigned_ids: HashSet<SeqId> = HashSet::new();
             
             for i in 0..num_requests {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 10);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 10);
                 let _ = scheduler.add_request(request);
             }
             
@@ -658,12 +603,12 @@ mod property_tests {
             tokens_per_request in 1usize..32,
             num_steps in 1usize..10,
         ) {
-            let config = create_test_config_with_params(16, 1024, 200);
+            let config = create_test_config_with_limits(16, 1024, 200);
             let mut scheduler = Scheduler::new(config);
             
             // Add requests
             for i in 0..num_requests {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 50);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 50);
                 let _ = scheduler.add_request(request);
             }
             
@@ -723,12 +668,12 @@ mod property_tests {
             num_requests in 1usize..30,
             tokens_per_request in 1usize..64,
         ) {
-            let config = create_test_config_with_params(max_batch_size, max_total_tokens, 500);
+            let config = create_test_config_with_limits(max_batch_size, max_total_tokens, 500);
             let mut scheduler = Scheduler::new(config);
             
             // Add many requests
             for i in 0..num_requests {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 10);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 10);
                 let _ = scheduler.add_request(request);
             }
             
@@ -786,12 +731,12 @@ mod property_tests {
             num_pending in 1usize..10,
             tokens_per_request in 4usize..32,
         ) {
-            let config = create_test_config_with_params(32, 2048, 500);
+            let config = create_test_config_with_limits(32, 2048, 500);
             let mut scheduler = Scheduler::new(config);
             
             // First, create some decode sequences
             for i in 0..num_decode {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 100);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 scheduler.add_request(request).unwrap();
             }
             
@@ -819,7 +764,7 @@ mod property_tests {
             
             // Now add more pending requests
             for i in num_decode..(num_decode + num_pending) {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 100);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 scheduler.add_request(request).unwrap();
             }
             
@@ -847,12 +792,12 @@ mod property_tests {
             num_requests in 1usize..10,
             tokens_per_request in 4usize..32,
         ) {
-            let config = create_test_config_with_params(16, 1024, 200);
+            let config = create_test_config_with_limits(16, 1024, 200);
             let mut scheduler = Scheduler::new(config);
             
             // Add requests
             for i in 0..num_requests {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 50);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 50);
                 scheduler.add_request(request).unwrap();
             }
             
@@ -895,10 +840,10 @@ mod property_tests {
             tokens_per_request in 4usize..16,
             eos_position in 0usize..25,
         ) {
-            let config = create_test_config_with_params(8, 512, 100);
+            let config = create_test_config_with_limits(8, 512, 100);
             let mut scheduler = Scheduler::new(config);
             
-            let request = create_request_with_tokens(1, tokens_per_request, max_tokens);
+            let request = create_test_request_with_params(1, tokens_per_request, max_tokens);
             scheduler.add_request(request).unwrap();
             
             // Schedule and transition to decode
@@ -973,7 +918,7 @@ mod property_tests {
             
             // Fill up memory
             for i in 0..num_initial_requests {
-                let request = create_request_with_tokens(i as u64, tokens_per_request, 100);
+                let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 let _ = scheduler.add_request(request);
                 let _ = scheduler.schedule();
             }
@@ -983,7 +928,7 @@ mod property_tests {
             
             // If under pressure, new requests should be rejected
             if utilization >= 0.5 {
-                let new_request = create_request_with_tokens(999, tokens_per_request, 100);
+                let new_request = create_test_request_with_params(999, tokens_per_request, 100);
                 let result = scheduler.add_request(new_request);
                 
                 // Should either reject or queue (depending on exact state)

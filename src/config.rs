@@ -114,7 +114,7 @@ impl EngineConfig {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| ConfigError::ParseError(e.to_string()))?;
         std::fs::write(path, content)
-            .map_err(|e| ConfigError::FileLoadError(e.to_string()))?;
+            .map_err(|e| ConfigError::FileSaveError(e.to_string()))?;
         Ok(())
     }
 

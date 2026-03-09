@@ -6,8 +6,6 @@
 //! - GPU Executor for computation
 //! - KV Cache Manager for memory
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
 use crate::gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
@@ -16,13 +14,6 @@ use crate::tokenizer::{SimpleTokenizer, TokenizerTrait, EOS_TOKEN_ID};
 use crate::types::{
     CompletedRequest, GenerationParams, Request, RequestId, RequestState,
 };
-
-/// Request ID generator
-static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
-fn generate_request_id() -> RequestId {
-    NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
-}
 
 /// Main inference engine orchestrating all components
 pub struct InferenceEngine {
@@ -40,6 +31,16 @@ pub struct InferenceEngine {
     running: bool,
     /// Maximum steps (for testing, 0 = unlimited)
     max_steps: usize,
+    /// Total requests submitted
+    total_requests: u64,
+    /// Total requests completed successfully
+    completed_requests_count: u64,
+    /// Total requests failed
+    failed_requests_count: u64,
+    /// Total tokens generated
+    total_tokens_generated: u64,
+    /// Request ID counter (instance-level, avoids global state leaking across tests)
+    next_request_id: RequestId,
 }
 
 impl InferenceEngine {
@@ -62,6 +63,11 @@ impl InferenceEngine {
             eos_token_id,
             running: false,
             max_steps: 0,
+            total_requests: 0,
+            completed_requests_count: 0,
+            failed_requests_count: 0,
+            total_tokens_generated: 0,
+            next_request_id: 1,
         })
     }
     
@@ -84,6 +90,11 @@ impl InferenceEngine {
             eos_token_id,
             running: false,
             max_steps: 0,
+            total_requests: 0,
+            completed_requests_count: 0,
+            failed_requests_count: 0,
+            total_tokens_generated: 0,
+            next_request_id: 1,
         })
     }
     
@@ -117,12 +128,14 @@ impl InferenceEngine {
             ).into());
         }
         
-        // Create request
-        let request_id = generate_request_id();
+        // Create request with instance-level ID
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
         let request = Request::new(request_id, input_tokens, params);
         
         // Add to scheduler
         self.scheduler.add_request(request)?;
+        self.total_requests += 1;
         
         Ok(request_id)
     }
@@ -160,9 +173,17 @@ impl InferenceEngine {
                     _ => None,
                 };
 
+                // 更新指标
+                self.total_tokens_generated += req.output_tokens.len() as u64;
+                if success {
+                    self.completed_requests_count += 1;
+                } else {
+                    self.failed_requests_count += 1;
+                }
+
                 CompletedRequest {
                     request_id: req.id,
-                    input_text: None, // Could store original text if needed
+                    input_text: None,
                     output_text,
                     output_tokens: req.output_tokens,
                     success,
@@ -278,8 +299,12 @@ impl InferenceEngine {
     /// Get current metrics
     pub fn get_metrics(&self) -> EngineMetrics {
         EngineMetrics {
+            total_requests: self.total_requests,
+            completed_requests: self.completed_requests_count,
+            failed_requests: self.failed_requests_count,
+            total_tokens_generated: self.total_tokens_generated,
             memory_utilization: self.memory_utilization(),
-            ..Default::default()
+            active_sequences: self.scheduler.num_active_sequences() as u32,
         }
     }
 }

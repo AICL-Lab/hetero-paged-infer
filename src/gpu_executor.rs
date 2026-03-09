@@ -336,18 +336,7 @@ pub fn build_execution_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_test_config() -> EngineConfig {
-        EngineConfig {
-            block_size: 16,
-            max_num_blocks: 100,
-            max_batch_size: 8,
-            max_num_seqs: 32,
-            max_model_len: 2048,
-            max_total_tokens: 512,
-            memory_threshold: 0.9,
-        }
-    }
+    use crate::test_utils::create_test_config;
 
     #[test]
     fn test_mock_executor_creation() {
@@ -447,19 +436,8 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
+    use crate::test_utils::create_test_config_with_limits;
     use proptest::prelude::*;
-
-    fn create_test_config_with_limits(max_batch: u32, max_tokens: u32) -> EngineConfig {
-        EngineConfig {
-            block_size: 16,
-            max_num_blocks: 200,
-            max_batch_size: max_batch,
-            max_num_seqs: 64,
-            max_model_len: 2048,
-            max_total_tokens: max_tokens,
-            memory_threshold: 0.9,
-        }
-    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
