@@ -1,8 +1,8 @@
 //! Core types and data structures for the inference system
 
-use std::time::Instant;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Unique identifier for requests
 pub type RequestId = u64;
@@ -35,7 +35,7 @@ impl RequestState {
     pub fn is_active(&self) -> bool {
         matches!(self, RequestState::Prefill | RequestState::Decode)
     }
-    
+
     pub fn is_terminal(&self) -> bool {
         matches!(self, RequestState::Completed | RequestState::Failed(_))
     }
@@ -76,13 +76,13 @@ impl GenerationParams {
         }
         Ok(())
     }
-    
+
     /// Check if parameters are valid
     pub fn is_valid(&self) -> bool {
-        self.max_tokens > 0 
-            && self.temperature > 0.0 
+        self.max_tokens > 0
+            && self.temperature > 0.0
             && self.temperature <= 2.0
-            && self.top_p > 0.0 
+            && self.top_p > 0.0
             && self.top_p <= 1.0
     }
 }
@@ -116,12 +116,12 @@ impl Request {
             created_at: Instant::now(),
         }
     }
-    
+
     /// Total number of tokens (input + output)
     pub fn total_tokens(&self) -> usize {
         self.input_tokens.len() + self.output_tokens.len()
     }
-    
+
     /// Check if generation is complete
     pub fn is_complete(&self, eos_token_id: TokenId) -> bool {
         // Complete if reached max tokens
@@ -161,7 +161,7 @@ impl LogicalBlock {
             physical_block: None,
         }
     }
-    
+
     pub fn with_physical(block_idx: u32, physical: PhysicalBlockRef) -> Self {
         Self {
             block_idx,
@@ -196,7 +196,7 @@ impl Sequence {
             num_generated_tokens: 0,
         }
     }
-    
+
     /// Get the block table (physical block indices) for GPU execution
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
         self.logical_blocks
@@ -204,12 +204,12 @@ impl Sequence {
             .filter_map(|lb| lb.physical_block.map(|pb| pb.block_idx))
             .collect()
     }
-    
+
     /// Total context length (input + generated)
     pub fn context_len(&self) -> u32 {
         self.request.input_tokens.len() as u32 + self.num_generated_tokens
     }
-    
+
     /// Number of tokens to process in current step
     pub fn num_tokens_to_process(&self) -> u32 {
         match self.request.state {
@@ -261,7 +261,7 @@ impl SchedulerOutput {
     pub fn is_empty(&self) -> bool {
         self.prefill_sequences.is_empty() && self.decode_sequences.is_empty()
     }
-    
+
     pub fn num_sequences(&self) -> usize {
         self.prefill_sequences.len() + self.decode_sequences.len()
     }
@@ -290,11 +290,11 @@ impl ExecutionBatch {
     pub fn is_empty(&self) -> bool {
         self.seq_ids.is_empty()
     }
-    
+
     pub fn num_sequences(&self) -> usize {
         self.seq_ids.len()
     }
-    
+
     pub fn total_tokens(&self) -> usize {
         self.input_tokens.len()
     }
@@ -385,20 +385,20 @@ mod tests {
                 top_p: 1.0,
             },
         );
-        
+
         let eos_token = 0;
-        
+
         // Not complete initially
         assert!(!request.is_complete(eos_token));
-        
+
         // Add some tokens
         request.output_tokens = vec![10, 11, 12];
         assert!(!request.is_complete(eos_token));
-        
+
         // Add EOS token
         request.output_tokens.push(eos_token);
         assert!(request.is_complete(eos_token));
-        
+
         // Or reach max tokens
         request.output_tokens = vec![10, 11, 12, 13, 14];
         assert!(request.is_complete(eos_token));
@@ -413,12 +413,11 @@ mod tests {
             num_sequences: 5,
         };
         assert!((stats.utilization() - 0.25).abs() < 0.001);
-        
+
         let empty = MemoryStats::default();
         assert_eq!(empty.utilization(), 0.0);
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {

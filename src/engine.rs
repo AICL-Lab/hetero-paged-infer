@@ -11,9 +11,7 @@ use crate::error::{EngineError, ValidationError};
 use crate::gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
 use crate::scheduler::{Scheduler, SchedulerTrait};
 use crate::tokenizer::{SimpleTokenizer, TokenizerTrait};
-use crate::types::{
-    CompletedRequest, GenerationParams, Request, RequestId, RequestState,
-};
+use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
 
 /// Main inference engine orchestrating all components
 pub struct InferenceEngine {
@@ -47,14 +45,14 @@ impl InferenceEngine {
     /// Create a new inference engine with default components
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
-        
+
         let tokenizer = Box::new(SimpleTokenizer::new());
         let vocab_size = tokenizer.vocab_size();
         let eos_token_id = tokenizer.eos_token_id();
-        
+
         let scheduler = Scheduler::new(config.clone());
         let gpu_executor = Box::new(MockGPUExecutor::new(config.clone(), vocab_size));
-        
+
         Ok(Self {
             config,
             tokenizer,
@@ -70,7 +68,7 @@ impl InferenceEngine {
             next_request_id: 1,
         })
     }
-    
+
     /// Create engine with custom components (for testing)
     pub fn with_components(
         config: EngineConfig,
@@ -79,9 +77,9 @@ impl InferenceEngine {
         gpu_executor: Box<dyn GPUExecutorTrait>,
     ) -> Result<Self, EngineError> {
         config.validate()?;
-        
+
         let eos_token_id = tokenizer.eos_token_id();
-        
+
         Ok(Self {
             config,
             tokenizer,
@@ -97,12 +95,12 @@ impl InferenceEngine {
             next_request_id: 1,
         })
     }
-    
+
     /// Set maximum steps for testing
     pub fn set_max_steps(&mut self, max_steps: usize) {
         self.max_steps = max_steps;
     }
-    
+
     /// Submit a new inference request
     pub fn submit_request(
         &mut self,
@@ -111,35 +109,36 @@ impl InferenceEngine {
     ) -> Result<RequestId, EngineError> {
         // Validate parameters
         params.validate()?;
-        
+
         // Validate input
         if text.is_empty() {
             return Err(ValidationError::EmptyInput.into());
         }
-        
+
         // Tokenize input
         let input_tokens = self.tokenizer.encode(text);
-        
+
         // Check length
         if input_tokens.len() > self.config.max_model_len as usize {
             return Err(ValidationError::InputTooLong(
                 input_tokens.len(),
                 self.config.max_model_len,
-            ).into());
+            )
+            .into());
         }
-        
+
         // Create request with instance-level ID
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         let request = Request::new(request_id, input_tokens, params);
-        
+
         // Add to scheduler
         self.scheduler.add_request(request)?;
         self.total_requests += 1;
-        
+
         Ok(request_id)
     }
-    
+
     /// Execute one inference step
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError> {
         // Schedule next batch
@@ -153,7 +152,8 @@ impl InferenceEngine {
             let execution_output = self.gpu_executor.execute(&execution_batch)?;
 
             // Update scheduler with results
-            self.scheduler.update_sequences(&execution_output, self.eos_token_id);
+            self.scheduler
+                .update_sequences(&execution_output, self.eos_token_id);
         }
 
         // Get completed requests (may exist even without execution batch)
@@ -194,13 +194,13 @@ impl InferenceEngine {
 
         Ok(results)
     }
-    
+
     /// Run the inference loop until all requests complete
     pub fn run(&mut self) -> Vec<CompletedRequest> {
         self.running = true;
         let mut all_completed = Vec::new();
         let mut steps = 0;
-        
+
         while self.running && self.scheduler.has_pending_work() {
             match self.step() {
                 Ok(completed) => {
@@ -211,38 +211,37 @@ impl InferenceEngine {
                     // Continue processing other requests
                 }
             }
-            
+
             steps += 1;
             if self.max_steps > 0 && steps >= self.max_steps {
                 break;
             }
         }
-        
+
         self.running = false;
         all_completed
     }
-    
+
     /// Stop the inference loop
     pub fn stop(&mut self) {
         self.running = false;
     }
-    
+
     /// Check if engine has pending work
     pub fn has_pending_work(&self) -> bool {
         self.scheduler.has_pending_work()
     }
-    
+
     /// Get memory utilization
     pub fn memory_utilization(&self) -> f32 {
         self.scheduler.get_memory_utilization()
     }
-    
+
     /// Get configuration
     pub fn config(&self) -> &EngineConfig {
         &self.config
     }
 }
-
 
 /// Recovery action for error handling
 #[derive(Debug, Clone, PartialEq)]
@@ -261,14 +260,14 @@ impl InferenceEngine {
     /// Handle execution error and determine recovery action
     pub fn handle_error(&self, error: &EngineError) -> RecoveryAction {
         match error {
-            EngineError::Execution(exec_err) => {
-                match exec_err {
-                    crate::error::ExecutionError::CudaError(_) => RecoveryAction::SkipSequence,
-                    crate::error::ExecutionError::GpuTimeout => RecoveryAction::Retry { max_attempts: 2 },
-                    crate::error::ExecutionError::InvalidOutput => RecoveryAction::SkipSequence,
-                    crate::error::ExecutionError::KernelLaunchFailed(_) => RecoveryAction::ResetBatch,
+            EngineError::Execution(exec_err) => match exec_err {
+                crate::error::ExecutionError::CudaError(_) => RecoveryAction::SkipSequence,
+                crate::error::ExecutionError::GpuTimeout => {
+                    RecoveryAction::Retry { max_attempts: 2 }
                 }
-            }
+                crate::error::ExecutionError::InvalidOutput => RecoveryAction::SkipSequence,
+                crate::error::ExecutionError::KernelLaunchFailed(_) => RecoveryAction::ResetBatch,
+            },
             EngineError::Memory(_) => RecoveryAction::ResetBatch,
             EngineError::Config(_) => RecoveryAction::Shutdown,
             EngineError::Validation(_) => RecoveryAction::SkipSequence,
@@ -318,7 +317,7 @@ mod tests {
     fn test_engine_creation() {
         let config = create_test_config();
         let engine = InferenceEngine::new(config);
-        
+
         assert!(engine.is_ok());
     }
 
@@ -326,16 +325,16 @@ mod tests {
     fn test_submit_request() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        
+
         let params = GenerationParams {
             max_tokens: 10,
             temperature: 1.0,
             top_p: 0.9,
         };
-        
+
         let result = engine.submit_request("Hello", params);
         assert!(result.is_ok());
-        
+
         assert!(engine.has_pending_work());
     }
 
@@ -343,10 +342,10 @@ mod tests {
     fn test_submit_empty_request() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        
+
         let params = GenerationParams::default();
         let result = engine.submit_request("", params);
-        
+
         assert!(result.is_err());
     }
 
@@ -354,13 +353,13 @@ mod tests {
     fn test_submit_invalid_params() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        
+
         let params = GenerationParams {
             max_tokens: 0, // Invalid
             temperature: 1.0,
             top_p: 0.9,
         };
-        
+
         let result = engine.submit_request("Hello", params);
         assert!(result.is_err());
     }
@@ -369,15 +368,15 @@ mod tests {
     fn test_step() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        
+
         let params = GenerationParams {
             max_tokens: 5,
             temperature: 1.0,
             top_p: 0.9,
         };
-        
+
         engine.submit_request("Hi", params).unwrap();
-        
+
         // Run a few steps
         for _ in 0..10 {
             let _ = engine.step();
@@ -389,17 +388,17 @@ mod tests {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
         engine.set_max_steps(100); // Limit steps for test
-        
+
         let params = GenerationParams {
             max_tokens: 3,
             temperature: 1.0,
             top_p: 0.9,
         };
-        
+
         engine.submit_request("Test", params).unwrap();
-        
+
         let completed = engine.run();
-        
+
         // Should complete within max_steps
         assert!(!completed.is_empty() || !engine.has_pending_work());
     }
@@ -408,16 +407,19 @@ mod tests {
     fn test_recovery_action() {
         let config = create_test_config();
         let engine = InferenceEngine::new(config).unwrap();
-        
-        let cuda_error = EngineError::Execution(
-            crate::error::ExecutionError::CudaError("test".to_string())
+
+        let cuda_error =
+            EngineError::Execution(crate::error::ExecutionError::CudaError("test".to_string()));
+        assert_eq!(
+            engine.handle_error(&cuda_error),
+            RecoveryAction::SkipSequence
         );
-        assert_eq!(engine.handle_error(&cuda_error), RecoveryAction::SkipSequence);
-        
-        let timeout_error = EngineError::Execution(
-            crate::error::ExecutionError::GpuTimeout
+
+        let timeout_error = EngineError::Execution(crate::error::ExecutionError::GpuTimeout);
+        assert_eq!(
+            engine.handle_error(&timeout_error),
+            RecoveryAction::Retry { max_attempts: 2 }
         );
-        assert_eq!(engine.handle_error(&timeout_error), RecoveryAction::Retry { max_attempts: 2 });
     }
 
     #[test]
@@ -425,20 +427,22 @@ mod tests {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
         engine.set_max_steps(50);
-        
+
         let params = GenerationParams {
             max_tokens: 2,
             temperature: 1.0,
             top_p: 0.9,
         };
-        
+
         // Submit multiple requests
         for i in 0..3 {
-            engine.submit_request(&format!("Request {}", i), params).unwrap();
+            engine
+                .submit_request(&format!("Request {}", i), params)
+                .unwrap();
         }
-        
+
         let completed = engine.run();
-        
+
         // Should process all requests
         assert!(completed.len() <= 3);
     }

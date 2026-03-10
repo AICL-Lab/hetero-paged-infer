@@ -41,11 +41,7 @@ pub fn create_test_request(id: RequestId, num_tokens: usize) -> Request {
 }
 
 /// Create a test request with custom generation params
-pub fn create_test_request_with_params(
-    id: RequestId,
-    num_tokens: usize,
-    max_gen: u32,
-) -> Request {
+pub fn create_test_request_with_params(id: RequestId, num_tokens: usize, max_gen: u32) -> Request {
     Request::new(
         id,
         vec![1; num_tokens],

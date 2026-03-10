@@ -60,9 +60,9 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    
+
     let args = Args::parse();
-    
+
     let config = if let Some(config_path) = args.config {
         EngineConfig::from_file(&config_path)?
     } else {
@@ -76,12 +76,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             memory_threshold: args.memory_threshold,
         }
     };
-    
+
     config.validate()?;
-    
+
     info!("Starting Heterogeneous Inference System");
     info!("Configuration: {:?}", config);
-    
+
     println!("Heterogeneous Inference System");
     println!("==============================");
     println!("Configuration:");
@@ -90,10 +90,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Max batch size: {}", config.max_batch_size);
     println!("  Max sequences: {}", config.max_num_seqs);
     println!();
-    
+
     // Create inference engine
     let mut engine = InferenceEngine::new(config)?;
-    
+
     // Process input if provided
     if let Some(input_text) = args.input {
         let params = GenerationParams {
@@ -101,19 +101,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             temperature: args.temperature,
             top_p: args.top_p,
         };
-        
+
         println!("Input: {}", input_text);
         println!("Generating up to {} tokens...", args.max_tokens);
         println!();
-        
+
         // Submit request
         let request_id = engine.submit_request(&input_text, params)?;
         info!("Submitted request: {}", request_id);
-        
+
         // Run inference
         engine.set_max_steps(1000);
         let completed = engine.run();
-        
+
         // Print results
         for result in completed {
             if result.success {
@@ -129,6 +129,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Example:");
         println!("  hetero-infer --input \"Hello, world!\" --max-tokens 50");
     }
-    
+
     Ok(())
 }

@@ -10,27 +10,26 @@ use crate::config::EngineConfig;
 use crate::error::SchedulerError;
 use crate::kv_cache::{KVCacheManager, KVCacheManagerTrait};
 use crate::types::{
-    ExecutionOutput, Request, RequestState,
-    SchedulerOutput, SeqId, Sequence, TokenId,
+    ExecutionOutput, Request, RequestState, SchedulerOutput, SeqId, Sequence, TokenId,
 };
 
 /// Scheduler trait defining the interface
 pub trait SchedulerTrait {
     /// Add new request to pending queue
     fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError>;
-    
+
     /// Schedule next batch for execution
     fn schedule(&mut self) -> SchedulerOutput;
-    
+
     /// Update sequences after GPU execution
     fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId);
-    
+
     /// Get completed requests
     fn get_completed(&mut self) -> Vec<Request>;
-    
+
     /// Check if scheduler has work
     fn has_pending_work(&self) -> bool;
-    
+
     /// Get memory stats from KV cache
     fn get_memory_utilization(&self) -> f32;
 }
@@ -59,7 +58,7 @@ impl Scheduler {
     /// Create a new scheduler
     pub fn new(config: EngineConfig) -> Self {
         let kv_cache = KVCacheManager::new(config.max_num_blocks, config.block_size);
-        
+
         Self {
             config,
             kv_cache,
@@ -71,46 +70,46 @@ impl Scheduler {
             under_memory_pressure: false,
         }
     }
-    
+
     /// Generate unique sequence ID
     fn generate_seq_id(&mut self) -> SeqId {
         let id = self.next_seq_id;
         self.next_seq_id += 1;
         id
     }
-    
+
     /// Check and update memory pressure status
     fn update_memory_pressure(&mut self) {
         let stats = self.kv_cache.get_memory_stats();
         self.under_memory_pressure = stats.utilization() >= self.config.memory_threshold;
     }
-    
+
     /// Calculate blocks needed for a sequence (delegates to EngineConfig)
     fn blocks_needed(&self, num_tokens: u32) -> u32 {
         self.config.blocks_for_tokens(num_tokens)
     }
-    
+
     /// Try to start prefill for a pending request
     fn try_start_prefill(&mut self, request: Request) -> Result<SeqId, Request> {
         let num_tokens = request.input_tokens.len() as u32;
         let blocks_needed = self.blocks_needed(num_tokens);
-        
+
         // Check if we can allocate
         if !self.kv_cache.can_allocate(blocks_needed) {
             return Err(request);
         }
-        
+
         let seq_id = self.generate_seq_id();
-        
+
         // Allocate KV cache blocks
         if self.kv_cache.allocate_sequence(seq_id, num_tokens).is_err() {
             return Err(request);
         }
-        
+
         // Create sequence and set to prefill state
         let mut sequence = Sequence::new(seq_id, request);
         sequence.request.state = RequestState::Prefill;
-        
+
         // Update logical blocks from KV cache
         if let Some(block_table) = self.kv_cache.get_block_table(seq_id) {
             sequence.logical_blocks = block_table
@@ -124,11 +123,11 @@ impl Scheduler {
                 })
                 .collect();
         }
-        
+
         self.prefill_sequences.insert(seq_id, sequence);
         Ok(seq_id)
     }
-    
+
     /// Transition sequence from prefill to decode
     fn transition_to_decode(&mut self, seq_id: SeqId) {
         if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
@@ -137,7 +136,7 @@ impl Scheduler {
             self.decode_sequences.insert(seq_id, sequence);
         }
     }
-    
+
     /// Complete a sequence
     fn complete_sequence(&mut self, seq_id: SeqId) {
         // Try decode sequences first
@@ -147,7 +146,7 @@ impl Scheduler {
             self.completed_requests.push(sequence.request);
             return;
         }
-        
+
         // Try prefill sequences
         if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Completed;
@@ -171,14 +170,14 @@ impl Scheduler {
             self.completed_requests.push(sequence.request);
         }
     }
-    
+
     /// Get sequence by ID (from any queue)
     pub fn get_sequence(&self, seq_id: SeqId) -> Option<&Sequence> {
         self.prefill_sequences
             .get(&seq_id)
             .or_else(|| self.decode_sequences.get(&seq_id))
     }
-    
+
     /// Get mutable sequence by ID
     pub fn get_sequence_mut(&mut self, seq_id: SeqId) -> Option<&mut Sequence> {
         if self.prefill_sequences.contains_key(&seq_id) {
@@ -187,12 +186,12 @@ impl Scheduler {
             self.decode_sequences.get_mut(&seq_id)
         }
     }
-    
+
     /// Get number of active sequences
     pub fn num_active_sequences(&self) -> usize {
         self.prefill_sequences.len() + self.decode_sequences.len()
     }
-    
+
     /// Check if a request is in exactly one queue
     pub fn is_in_exactly_one_queue(&self, seq_id: SeqId) -> bool {
         let in_prefill = self.prefill_sequences.contains_key(&seq_id);
@@ -201,49 +200,48 @@ impl Scheduler {
     }
 }
 
-
 impl SchedulerTrait for Scheduler {
     fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError> {
         // Check memory pressure
         self.update_memory_pressure();
-        
+
         if self.under_memory_pressure {
             return Err(SchedulerError::MemoryPressure);
         }
-        
+
         // Check if we've reached max sequences
         if self.num_active_sequences() >= self.config.max_num_seqs as usize {
             return Err(SchedulerError::MemoryPressure);
         }
-        
+
         // Return request ID (seq_id is assigned later during scheduling)
         let request_id = request.id;
         self.pending_queue.push_back(request);
-        
+
         Ok(request_id)
     }
-    
+
     fn schedule(&mut self) -> SchedulerOutput {
         let mut output = SchedulerOutput::default();
         let mut total_tokens: u32 = 0;
         let mut num_sequences: u32 = 0;
-        
+
         // Update memory pressure status
         self.update_memory_pressure();
-        
+
         // Priority 1: Schedule decode sequences first (lower latency for in-flight requests)
         let decode_seq_ids: Vec<SeqId> = self.decode_sequences.keys().copied().collect();
-        
+
         for seq_id in decode_seq_ids {
             if num_sequences >= self.config.max_batch_size {
                 break;
             }
-            
+
             // Each decode step processes 1 token
             if total_tokens + 1 > self.config.max_total_tokens {
                 break;
             }
-            
+
             // 先只读取需要的字段，避免 borrow checker 冲突
             let (current_tokens, current_blocks) = match self.decode_sequences.get(&seq_id) {
                 Some(seq) => (seq.context_len(), seq.logical_blocks.len() as u32),
@@ -258,7 +256,10 @@ impl SchedulerTrait for Scheduler {
                         if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
                             let logical_idx = sequence.logical_blocks.len() as u32;
                             sequence.logical_blocks.push(
-                                crate::types::LogicalBlock::with_physical(logical_idx, physical_ref),
+                                crate::types::LogicalBlock::with_physical(
+                                    logical_idx,
+                                    physical_ref,
+                                ),
                             );
                         }
                     }
@@ -279,10 +280,10 @@ impl SchedulerTrait for Scheduler {
                 num_sequences += 1;
             }
         }
-        
+
         // Priority 2: Schedule prefill sequences
         let prefill_seq_ids: Vec<SeqId> = self.prefill_sequences.keys().copied().collect();
-        
+
         for seq_id in prefill_seq_ids {
             if num_sequences >= self.config.max_batch_size {
                 break;
@@ -327,7 +328,7 @@ impl SchedulerTrait for Scheduler {
                 num_sequences += 1;
             }
         }
-        
+
         // Priority 3: Start new prefills from pending queue (if not under memory pressure)
         if !self.under_memory_pressure {
             while let Some(request) = self.pending_queue.pop_front() {
@@ -335,7 +336,7 @@ impl SchedulerTrait for Scheduler {
                     self.pending_queue.push_front(request);
                     break;
                 }
-                
+
                 let prefill_tokens = request.input_tokens.len() as u32;
                 if prefill_tokens > self.config.max_total_tokens {
                     let mut failed_request = request;
@@ -357,19 +358,20 @@ impl SchedulerTrait for Scheduler {
                     self.completed_requests.push(failed_request);
                     continue;
                 }
-                
+
                 if total_tokens + prefill_tokens > self.config.max_total_tokens {
                     self.pending_queue.push_front(request);
                     break;
                 }
-                
+
                 match self.try_start_prefill(request) {
                     Ok(seq_id) => {
                         if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
-                            let block_table = self.kv_cache.get_block_table(seq_id).unwrap_or_default();
+                            let block_table =
+                                self.kv_cache.get_block_table(seq_id).unwrap_or_default();
                             output.block_tables.insert(seq_id, block_table.clone());
                             output.prefill_sequences.push(Arc::new(sequence.clone()));
-                            
+
                             total_tokens += prefill_tokens;
                             num_sequences += 1;
                         }
@@ -382,28 +384,28 @@ impl SchedulerTrait for Scheduler {
                 }
             }
         }
-        
+
         output.total_tokens = total_tokens;
         output
     }
-    
+
     fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId) {
         let mut to_complete = Vec::new();
 
         for (i, &seq_id) in outputs.seq_ids.iter().enumerate() {
             let next_token = outputs.next_tokens.get(i).copied().unwrap_or(0);
-            
+
             // Check if this was a prefill sequence - transition to decode
             if self.prefill_sequences.contains_key(&seq_id) {
                 self.transition_to_decode(seq_id);
             }
-            
+
             // Update decode sequence with new token
             if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
                 // 先推入 token，再检查完成条件，避免边界处丢弃 token
                 sequence.request.output_tokens.push(next_token);
                 sequence.num_generated_tokens += 1;
-                
+
                 let max_model_len = self.config.max_model_len as usize;
                 if sequence.request.total_tokens() >= max_model_len
                     || sequence.request.is_complete(eos_token_id)
@@ -417,22 +419,21 @@ impl SchedulerTrait for Scheduler {
             self.complete_sequence(seq_id);
         }
     }
-    
+
     fn get_completed(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.completed_requests)
     }
-    
+
     fn has_pending_work(&self) -> bool {
         !self.pending_queue.is_empty()
             || !self.prefill_sequences.is_empty()
             || !self.decode_sequences.is_empty()
     }
-    
+
     fn get_memory_utilization(&self) -> f32 {
         self.kv_cache.get_memory_stats().utilization()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -443,10 +444,10 @@ mod tests {
     fn test_add_request() {
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);
-        
+
         let request = create_test_request(1, 32);
         let result = scheduler.add_request(request);
-        
+
         assert!(result.is_ok());
         assert!(scheduler.has_pending_work());
     }
@@ -455,12 +456,12 @@ mod tests {
     fn test_schedule_prefill() {
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);
-        
+
         let request = create_test_request(1, 32);
         scheduler.add_request(request).unwrap();
-        
+
         let output = scheduler.schedule();
-        
+
         assert_eq!(output.prefill_sequences.len(), 1);
         assert_eq!(output.decode_sequences.len(), 0);
     }
@@ -469,25 +470,25 @@ mod tests {
     fn test_prefill_to_decode_transition() {
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);
-        
+
         let request = create_test_request(1, 32);
         scheduler.add_request(request).unwrap();
-        
+
         // Schedule prefill
         let output = scheduler.schedule();
         assert_eq!(output.prefill_sequences.len(), 1);
-        
+
         let seq_id = output.prefill_sequences[0].seq_id;
-        
+
         // Simulate GPU output
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
             logits: None,
             seq_ids: vec![seq_id],
         };
-        
+
         scheduler.update_sequences(&exec_output, 0);
-        
+
         // Now should be in decode phase
         assert!(scheduler.decode_sequences.contains_key(&seq_id));
         assert!(!scheduler.prefill_sequences.contains_key(&seq_id));
@@ -497,13 +498,13 @@ mod tests {
     fn test_decode_priority() {
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);
-        
+
         // Add and schedule first request to get it into decode
         let request1 = create_test_request(1, 16);
         scheduler.add_request(request1).unwrap();
         let output = scheduler.schedule();
         let seq_id = output.prefill_sequences[0].seq_id;
-        
+
         // Transition to decode
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
@@ -511,14 +512,14 @@ mod tests {
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
-        
+
         // Add another pending request
         let request2 = create_test_request(2, 16);
         scheduler.add_request(request2).unwrap();
-        
+
         // Schedule - decode should come first
         let output = scheduler.schedule();
-        
+
         // Decode sequences should be scheduled
         assert!(!output.decode_sequences.is_empty());
     }
@@ -527,22 +528,22 @@ mod tests {
     fn test_completion() {
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);
-        
+
         let mut request = create_test_request(1, 16);
         request.params.max_tokens = 2;
         scheduler.add_request(request).unwrap();
-        
+
         // Schedule and transition to decode
         let output = scheduler.schedule();
         let seq_id = output.prefill_sequences[0].seq_id;
-        
+
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
             logits: None,
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
-        
+
         // Generate one more token
         scheduler.schedule();
         let exec_output = ExecutionOutput {
@@ -551,7 +552,7 @@ mod tests {
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
-        
+
         // Should be completed (max_tokens = 2)
         let completed = scheduler.get_completed();
         assert_eq!(completed.len(), 1);
@@ -580,12 +581,12 @@ mod property_tests {
             let config = create_test_config_with_limits(32, 4096, 500);
             let mut scheduler = Scheduler::new(config);
             let mut assigned_ids: HashSet<SeqId> = HashSet::new();
-            
+
             for i in 0..num_requests {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 10);
                 let _ = scheduler.add_request(request);
             }
-            
+
             // 反复调度直到 pending 队列清空；每轮调度后执行
             // update_sequences 使 prefill → decode，避免同一批被重复上报
             loop {
@@ -593,7 +594,7 @@ mod property_tests {
                 if output.is_empty() {
                     break;
                 }
-                
+
                 for seq in &output.prefill_sequences {
                     prop_assert!(
                         !assigned_ids.contains(&seq.seq_id),
@@ -606,7 +607,7 @@ mod property_tests {
                     // decode 阶段的 seq_id 也不能重复
                     assigned_ids.insert(seq.seq_id);
                 }
-                
+
                 // 模拟执行，推动 prefill → decode 转换
                 let seq_ids: Vec<SeqId> = output.prefill_sequences.iter()
                     .chain(output.decode_sequences.iter())
@@ -635,17 +636,17 @@ mod property_tests {
         ) {
             let config = create_test_config_with_limits(16, 1024, 200);
             let mut scheduler = Scheduler::new(config);
-            
+
             // Add requests
             for i in 0..num_requests {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 50);
                 let _ = scheduler.add_request(request);
             }
-            
+
             // Run scheduling steps
             for _ in 0..num_steps {
                 let output = scheduler.schedule();
-                
+
                 // Verify each scheduled sequence is in exactly one queue
                 for seq in &output.prefill_sequences {
                     prop_assert!(
@@ -654,7 +655,7 @@ mod property_tests {
                         seq.seq_id
                     );
                 }
-                
+
                 for seq in &output.decode_sequences {
                     prop_assert!(
                         scheduler.is_in_exactly_one_queue(seq.seq_id),
@@ -662,11 +663,11 @@ mod property_tests {
                         seq.seq_id
                     );
                 }
-                
+
                 // Simulate execution
                 let mut next_tokens = Vec::new();
                 let mut seq_ids = Vec::new();
-                
+
                 for seq in &output.prefill_sequences {
                     next_tokens.push(100u32);
                     seq_ids.push(seq.seq_id);
@@ -675,7 +676,7 @@ mod property_tests {
                     next_tokens.push(100u32);
                     seq_ids.push(seq.seq_id);
                 }
-                
+
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
@@ -700,17 +701,17 @@ mod property_tests {
         ) {
             let config = create_test_config_with_limits(max_batch_size, max_total_tokens, 500);
             let mut scheduler = Scheduler::new(config);
-            
+
             // Add many requests
             for i in 0..num_requests {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 10);
                 let _ = scheduler.add_request(request);
             }
-            
+
             // Schedule and verify constraints
             for _ in 0..5 {
                 let output = scheduler.schedule();
-                
+
                 let num_sequences = output.num_sequences();
                 prop_assert!(
                     num_sequences <= max_batch_size as usize,
@@ -718,18 +719,18 @@ mod property_tests {
                     num_sequences,
                     max_batch_size
                 );
-                
+
                 prop_assert!(
                     output.total_tokens <= max_total_tokens,
                     "Batch has {} tokens, max is {}",
                     output.total_tokens,
                     max_total_tokens
                 );
-                
+
                 // Simulate execution to progress
                 let mut next_tokens = Vec::new();
                 let mut seq_ids = Vec::new();
-                
+
                 for seq in &output.prefill_sequences {
                     next_tokens.push(100u32);
                     seq_ids.push(seq.seq_id);
@@ -738,7 +739,7 @@ mod property_tests {
                     next_tokens.push(100u32);
                     seq_ids.push(seq.seq_id);
                 }
-                
+
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
@@ -763,25 +764,25 @@ mod property_tests {
         ) {
             let config = create_test_config_with_limits(32, 2048, 500);
             let mut scheduler = Scheduler::new(config);
-            
+
             // First, create some decode sequences
             for i in 0..num_decode {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 scheduler.add_request(request).unwrap();
             }
-            
+
             // Schedule and transition to decode
             for _ in 0..num_decode {
                 let output = scheduler.schedule();
-                
+
                 let mut next_tokens = Vec::new();
                 let mut seq_ids = Vec::new();
-                
+
                 for seq in &output.prefill_sequences {
                     next_tokens.push(100u32);
                     seq_ids.push(seq.seq_id);
                 }
-                
+
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
@@ -791,16 +792,16 @@ mod property_tests {
                     scheduler.update_sequences(&exec_output, 0);
                 }
             }
-            
+
             // Now add more pending requests
             for i in num_decode..(num_decode + num_pending) {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 scheduler.add_request(request).unwrap();
             }
-            
+
             // Schedule - decode should come first
             let output = scheduler.schedule();
-            
+
             // If we have decode sequences, they should all be scheduled before prefill
             // (given sufficient capacity)
             let decode_count = scheduler.decode_sequences.len();
@@ -824,17 +825,17 @@ mod property_tests {
         ) {
             let config = create_test_config_with_limits(16, 1024, 200);
             let mut scheduler = Scheduler::new(config);
-            
+
             // Add requests
             for i in 0..num_requests {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 50);
                 scheduler.add_request(request).unwrap();
             }
-            
+
             // Schedule prefill
             let output = scheduler.schedule();
             let prefill_seq_ids: Vec<SeqId> = output.prefill_sequences.iter().map(|s| s.seq_id).collect();
-            
+
             // Simulate execution
             let next_tokens: Vec<u32> = prefill_seq_ids.iter().map(|_| 100).collect();
             let exec_output = ExecutionOutput {
@@ -842,9 +843,9 @@ mod property_tests {
                 logits: None,
                 seq_ids: prefill_seq_ids.clone(),
             };
-            
+
             scheduler.update_sequences(&exec_output, 0);
-            
+
             // All prefill sequences should now be in decode
             for seq_id in &prefill_seq_ids {
                 prop_assert!(
@@ -872,35 +873,35 @@ mod property_tests {
         ) {
             let config = create_test_config_with_limits(8, 512, 100);
             let mut scheduler = Scheduler::new(config);
-            
+
             let request = create_test_request_with_params(1, tokens_per_request, max_tokens);
             scheduler.add_request(request).unwrap();
-            
+
             // Schedule and transition to decode
             let output = scheduler.schedule();
             let seq_id = output.prefill_sequences[0].seq_id;
-            
+
             let exec_output = ExecutionOutput {
                 next_tokens: vec![100],
                 logits: None,
                 seq_ids: vec![seq_id],
             };
             scheduler.update_sequences(&exec_output, 0);
-            
+
             // Generate tokens until completion
             let eos_token: TokenId = 0;
             let mut generated = 1u32;
-            
+
             while scheduler.decode_sequences.contains_key(&seq_id) && generated < max_tokens + 5 {
                 scheduler.schedule();
-                
+
                 // Decide whether to send EOS
                 let token = if generated as usize == eos_position {
                     eos_token
                 } else {
                     100 + generated
                 };
-                
+
                 let exec_output = ExecutionOutput {
                     next_tokens: vec![token],
                     logits: None,
@@ -909,15 +910,15 @@ mod property_tests {
                 scheduler.update_sequences(&exec_output, eos_token);
                 generated += 1;
             }
-            
+
             // Should be completed
             let completed = scheduler.get_completed();
-            
+
             if !completed.is_empty() {
                 let req = &completed[0];
                 let hit_max = req.output_tokens.len() >= max_tokens as usize;
                 let hit_eos = req.output_tokens.last() == Some(&eos_token);
-                
+
                 prop_assert!(
                     hit_max || hit_eos,
                     "Completion should be due to max_tokens or EOS"
@@ -945,22 +946,22 @@ mod property_tests {
                 memory_threshold: 0.5,  // Low threshold
             };
             let mut scheduler = Scheduler::new(config);
-            
+
             // Fill up memory
             for i in 0..num_initial_requests {
                 let request = create_test_request_with_params(i as u64, tokens_per_request, 100);
                 let _ = scheduler.add_request(request);
                 let _ = scheduler.schedule();
             }
-            
+
             // Check memory utilization
             let utilization = scheduler.get_memory_utilization();
-            
+
             // If under pressure, new requests should be rejected
             if utilization >= 0.5 {
                 let new_request = create_test_request_with_params(999, tokens_per_request, 100);
                 let result = scheduler.add_request(new_request);
-                
+
                 // Should either reject or queue (depending on exact state)
                 // The key property is that we don't crash and handle gracefully
                 prop_assert!(

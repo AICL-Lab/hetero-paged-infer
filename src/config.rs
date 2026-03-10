@@ -101,10 +101,10 @@ impl EngineConfig {
 
     /// Load configuration from a JSON file
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::FileLoadError(e.to_string()))?;
-        let config: Self = serde_json::from_str(&content)
-            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| ConfigError::FileLoadError(e.to_string()))?;
+        let config: Self =
+            serde_json::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }
@@ -113,8 +113,7 @@ impl EngineConfig {
     pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| ConfigError::ParseError(e.to_string()))?;
-        std::fs::write(path, content)
-            .map_err(|e| ConfigError::FileSaveError(e.to_string()))?;
+        std::fs::write(path, content).map_err(|e| ConfigError::FileSaveError(e.to_string()))?;
         Ok(())
     }
 
@@ -216,7 +215,7 @@ mod tests {
             block_size: 16,
             ..Default::default()
         };
-        
+
         assert_eq!(config.blocks_for_tokens(0), 0);
         assert_eq!(config.blocks_for_tokens(1), 1);
         assert_eq!(config.blocks_for_tokens(16), 1);
@@ -231,14 +230,13 @@ mod tests {
             block_size: 16,
             ..Default::default()
         };
-        
+
         assert_eq!(config.tokens_in_blocks(0), 0);
         assert_eq!(config.tokens_in_blocks(1), 16);
         assert_eq!(config.tokens_in_blocks(2), 32);
         assert_eq!(config.tokens_in_blocks(3), 48);
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {
