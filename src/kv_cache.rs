@@ -208,7 +208,7 @@ impl KVCacheManager {
     /// Calculate number of blocks needed for given token count
     pub fn blocks_for_tokens(&self, num_tokens: u32) -> u32 {
         // ceil(num_tokens / block_size) — 公式对 num_tokens==0 也成立
-        (num_tokens + self.block_pool.block_size() - 1) / self.block_pool.block_size()
+        num_tokens.div_ceil(self.block_pool.block_size())
     }
 
     /// Check if sequence exists

@@ -119,7 +119,7 @@ impl EngineConfig {
 
     /// Calculate maximum blocks needed for a sequence of given length
     pub fn blocks_for_tokens(&self, num_tokens: u32) -> u32 {
-        (num_tokens + self.block_size - 1) / self.block_size
+        num_tokens.div_ceil(self.block_size)
     }
 
     /// Calculate maximum tokens that can fit in given blocks

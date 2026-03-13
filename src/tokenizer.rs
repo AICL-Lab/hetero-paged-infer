@@ -4,7 +4,7 @@
 //! Can be replaced with a real tokenizer (e.g., SentencePiece, tiktoken) for production.
 
 use crate::types::TokenId;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 /// Special token IDs
 pub const BOS_TOKEN_ID: TokenId = 1;
@@ -66,8 +66,8 @@ impl SimpleTokenizer {
 
         // Add common whitespace
         for c in ['\n', '\r', '\t'] {
-            if !char_to_id.contains_key(&c) {
-                char_to_id.insert(c, next_id);
+            if let Entry::Vacant(entry) = char_to_id.entry(c) {
+                entry.insert(next_id);
                 id_to_char.insert(next_id, c);
                 next_id += 1;
             }
