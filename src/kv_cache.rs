@@ -466,7 +466,7 @@ mod property_tests {
             block_size in 1u32..64,
         ) {
             // Ensure we have enough blocks
-            let expected_blocks = (num_tokens + block_size - 1) / block_size;
+            let expected_blocks = num_tokens.div_ceil(block_size);
             let num_blocks = expected_blocks + 10; // Extra headroom
 
             let mut manager = KVCacheManager::new(num_blocks, block_size);
