@@ -8,11 +8,17 @@ Heterogeneous inference system — A CPU-GPU collaborative inference engine base
 
 ## Features
 
-- **PagedAttention KV Cache** — Paged VRAM management with on-demand block allocation/deallocation, copy-on-write
-- **Continuous Batching** — Scheduler with prefill/decode phase management, decode-priority scheduling
+- **PagedAttention-style KV Cache** — Paged block management with on-demand allocation/deallocation
+- **Continuous Batching** — Scheduler with prefill/decode phase management and decode-priority scheduling
 - **Memory Pressure Awareness** — Configurable threshold, auto-reject new requests to prevent OOM
-- **CUDA Graph Support** — Capture decode phase for accelerated repeated execution
+- **Mock GPU Executor Interface** — Includes execution and CUDA-graph-shaped interfaces for testing and future backend replacement
 - **Modular Architecture** — Tokenizer / Scheduler / GPU Executor / KV Cache Manager via traits
+
+## Current Status
+
+This repository currently focuses on scheduler, KV-cache, batching, and engine orchestration correctness.
+The GPU executor is still a **mock implementation** used for testing; real CUDA kernels, real pinned memory,
+copy-on-write KV sharing, and async CPU/GPU overlap are **not implemented yet**.
 
 ## Architecture
 

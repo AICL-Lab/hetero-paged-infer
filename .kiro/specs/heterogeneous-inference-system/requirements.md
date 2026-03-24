@@ -21,6 +21,9 @@ This document defines the requirements for a Heterogeneous Inference Microservic
 
 ## Requirements
 
+> Note: this document describes the target architecture. Parts of Requirement 4-7 are not fully implemented in the current codebase yet; the current repository mainly provides a validated scheduler/KV-cache prototype with a mock GPU executor.
+
+
 ### Requirement 1: Request Management
 
 **User Story:** As a client, I want to submit inference requests to the system, so that I can get generated text responses.

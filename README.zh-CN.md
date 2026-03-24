@@ -9,11 +9,17 @@
 
 ## 特性
 
-- **PagedAttention KV Cache** — 分页式显存管理，按需分配/释放物理块，支持 copy-on-write
+- **PagedAttention 风格 KV Cache** — 分页式块管理，按需分配/释放物理块
 - **Continuous Batching** — 连续批处理调度器，prefill/decode 分阶段管理，decode 优先调度
 - **内存压力感知** — 可配置的内存阈值，自动拒绝新请求防止 OOM
-- **CUDA Graph 支持** — decode 阶段可捕获 CUDA Graph 加速重复执行
+- **Mock GPU Executor 接口** — 提供执行与 CUDA Graph 形态的接口，便于测试和后续替换真实后端
 - **模块化架构** — Tokenizer / Scheduler / GPU Executor / KV Cache Manager 均通过 trait 抽象，便于替换
+
+## 当前状态
+
+当前仓库主要聚焦于调度器、KV Cache、批处理和引擎编排的正确性。
+目前 `GPUExecutor` 仍然是**mock 实现**，真实 CUDA kernel、真实 pinned memory、
+copy-on-write KV 共享以及异步 CPU/GPU overlap **尚未实现**。
 
 ## 架构
 
