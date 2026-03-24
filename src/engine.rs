@@ -118,10 +118,19 @@ impl InferenceEngine {
         // Tokenize input
         let input_tokens = self.tokenizer.encode(text);
 
-        // Check length
+        // Check prompt length
         if input_tokens.len() > self.config.max_model_len as usize {
             return Err(ValidationError::InputTooLong(
                 input_tokens.len(),
+                self.config.max_model_len,
+            )
+            .into());
+        }
+
+        let total_requested_tokens = input_tokens.len() + params.max_tokens as usize;
+        if total_requested_tokens > self.config.max_model_len as usize {
+            return Err(ValidationError::TotalLengthTooLong(
+                total_requested_tokens,
                 self.config.max_model_len,
             )
             .into());
@@ -149,21 +158,63 @@ impl InferenceEngine {
             let execution_batch = build_execution_batch(&scheduler_output);
 
             // Execute on GPU
-            let execution_output = self.gpu_executor.execute(&execution_batch)?;
-
-            // Update scheduler with results
-            self.scheduler
-                .update_sequences(&execution_output, self.eos_token_id);
+            match self.execute_batch(&execution_batch) {
+                Ok(execution_output) => {
+                    self.scheduler
+                        .update_sequences(&execution_output, self.eos_token_id);
+                }
+                Err(engine_error) => {
+                    let reason = engine_error.to_string();
+                    self.scheduler
+                        .fail_sequences(execution_batch.seq_ids.iter().copied(), &reason);
+                    let completed = self.collect_completed_requests();
+                    return if completed.is_empty() {
+                        Err(engine_error)
+                    } else {
+                        Ok(completed)
+                    };
+                }
+            }
         }
 
-        // Get completed requests (may exist even without execution batch)
+        Ok(self.collect_completed_requests())
+    }
+
+    fn execute_batch(
+        &mut self,
+        execution_batch: &crate::types::ExecutionBatch,
+    ) -> Result<crate::types::ExecutionOutput, EngineError> {
+        let mut retries = 0;
+
+        loop {
+            match self.gpu_executor.execute(execution_batch) {
+                Ok(output) => return Ok(output),
+                Err(exec_error) => {
+                    let engine_error = EngineError::Execution(exec_error);
+                    match self.handle_error(&engine_error) {
+                        RecoveryAction::Retry { max_attempts } if retries < max_attempts => {
+                            retries += 1;
+                            log::warn!(
+                                "Retrying batch execution after error (attempt {}/{}): {}",
+                                retries,
+                                max_attempts,
+                                engine_error
+                            );
+                        }
+                        _ => return Err(engine_error),
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_completed_requests(&mut self) -> Vec<CompletedRequest> {
         let completed_requests = self.scheduler.get_completed();
         if completed_requests.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
 
-        // Convert to CompletedRequest with decoded text
-        let results: Vec<CompletedRequest> = completed_requests
+        completed_requests
             .into_iter()
             .map(|req| {
                 let output_text = self.tokenizer.decode(&req.output_tokens);
@@ -173,7 +224,6 @@ impl InferenceEngine {
                     _ => None,
                 };
 
-                // 更新指标
                 self.total_tokens_generated += req.output_tokens.len() as u64;
                 if success {
                     self.completed_requests_count += 1;
@@ -190,9 +240,7 @@ impl InferenceEngine {
                     error,
                 }
             })
-            .collect();
-
-        Ok(results)
+            .collect()
     }
 
     /// Run the inference loop until all requests complete
@@ -208,8 +256,19 @@ impl InferenceEngine {
                 }
                 Err(e) => {
                     log::error!("Inference step failed: {}", e);
-                    // Continue processing other requests
+                    match self.handle_error(&e) {
+                        RecoveryAction::Shutdown => {
+                            self.running = false;
+                        }
+                        RecoveryAction::Retry { .. }
+                        | RecoveryAction::SkipSequence
+                        | RecoveryAction::ResetBatch => {}
+                    }
                 }
+            }
+
+            if !self.scheduler.has_pending_work() {
+                all_completed.extend(self.collect_completed_requests());
             }
 
             steps += 1;
@@ -311,7 +370,66 @@ impl InferenceEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ExecutionError;
     use crate::test_utils::create_test_config;
+    use crate::types::{ExecutionBatch, ExecutionOutput};
+
+    struct AlwaysFailExecutor;
+
+    impl GPUExecutorTrait for AlwaysFailExecutor {
+        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+            Err(ExecutionError::KernelLaunchFailed("boom".to_string()))
+        }
+
+        fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
+            Ok(())
+        }
+
+        fn execute_graph(
+            &mut self,
+            _batch: &ExecutionBatch,
+        ) -> Result<ExecutionOutput, ExecutionError> {
+            Err(ExecutionError::KernelLaunchFailed("boom".to_string()))
+        }
+
+        fn has_captured_graph(&self) -> bool {
+            false
+        }
+    }
+
+    struct TimeoutThenSuccessExecutor {
+        attempts: u32,
+    }
+
+    impl GPUExecutorTrait for TimeoutThenSuccessExecutor {
+        fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+            if self.attempts == 0 {
+                self.attempts += 1;
+                Err(ExecutionError::GpuTimeout)
+            } else {
+                Ok(ExecutionOutput {
+                    next_tokens: vec![123; batch.seq_ids.len()],
+                    logits: None,
+                    seq_ids: batch.seq_ids.clone(),
+                })
+            }
+        }
+
+        fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
+            Ok(())
+        }
+
+        fn execute_graph(
+            &mut self,
+            batch: &ExecutionBatch,
+        ) -> Result<ExecutionOutput, ExecutionError> {
+            self.execute(batch)
+        }
+
+        fn has_captured_graph(&self) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn test_engine_creation() {
@@ -334,7 +452,6 @@ mod tests {
 
         let result = engine.submit_request("Hello", params);
         assert!(result.is_ok());
-
         assert!(engine.has_pending_work());
     }
 
@@ -355,13 +472,67 @@ mod tests {
         let mut engine = InferenceEngine::new(config).unwrap();
 
         let params = GenerationParams {
-            max_tokens: 0, // Invalid
+            max_tokens: 0,
             temperature: 1.0,
             top_p: 0.9,
         };
 
         let result = engine.submit_request("Hello", params);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_request_rejects_total_length_over_limit() {
+        let config = EngineConfig {
+            max_model_len: 8,
+            ..create_test_config()
+        };
+        let mut engine = InferenceEngine::new(config).unwrap();
+
+        let params = GenerationParams {
+            max_tokens: 4,
+            temperature: 1.0,
+            top_p: 0.9,
+        };
+
+        let result = engine.submit_request("Hello", params);
+        assert!(matches!(
+            result,
+            Err(EngineError::Validation(ValidationError::TotalLengthTooLong(_, 8)))
+        ));
+    }
+
+    #[test]
+    fn test_submit_request_allows_total_length_at_limit() {
+        let config = EngineConfig {
+            max_model_len: 11,
+            ..create_test_config()
+        };
+        let mut engine = InferenceEngine::new(config).unwrap();
+
+        let params = GenerationParams {
+            max_tokens: 4,
+            temperature: 1.0,
+            top_p: 0.9,
+        };
+
+        let result = engine.submit_request("Hello", params);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_submit_request_rejects_prompt_too_long_before_generation_check() {
+        let config = EngineConfig {
+            max_model_len: 3,
+            ..create_test_config()
+        };
+        let mut engine = InferenceEngine::new(config).unwrap();
+
+        let result = engine.submit_request("Hello", GenerationParams::default());
+        assert!(matches!(
+            result,
+            Err(EngineError::Validation(ValidationError::InputTooLong(_, 3)))
+        ));
     }
 
     #[test]
@@ -377,7 +548,6 @@ mod tests {
 
         engine.submit_request("Hi", params).unwrap();
 
-        // Run a few steps
         for _ in 0..10 {
             let _ = engine.step();
         }
@@ -387,7 +557,7 @@ mod tests {
     fn test_run_to_completion() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        engine.set_max_steps(100); // Limit steps for test
+        engine.set_max_steps(100);
 
         let params = GenerationParams {
             max_tokens: 3,
@@ -398,8 +568,6 @@ mod tests {
         engine.submit_request("Test", params).unwrap();
 
         let completed = engine.run();
-
-        // Should complete within max_steps
         assert!(!completed.is_empty() || !engine.has_pending_work());
     }
 
@@ -410,10 +578,7 @@ mod tests {
 
         let cuda_error =
             EngineError::Execution(crate::error::ExecutionError::CudaError("test".to_string()));
-        assert_eq!(
-            engine.handle_error(&cuda_error),
-            RecoveryAction::SkipSequence
-        );
+        assert_eq!(engine.handle_error(&cuda_error), RecoveryAction::SkipSequence);
 
         let timeout_error = EngineError::Execution(crate::error::ExecutionError::GpuTimeout);
         assert_eq!(
@@ -434,7 +599,6 @@ mod tests {
             top_p: 0.9,
         };
 
-        // Submit multiple requests
         for i in 0..3 {
             engine
                 .submit_request(&format!("Request {}", i), params)
@@ -442,8 +606,73 @@ mod tests {
         }
 
         let completed = engine.run();
-
-        // Should process all requests
         assert!(completed.len() <= 3);
+    }
+
+    #[test]
+    fn test_executor_failure_marks_request_failed_and_clears_pending_work() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(AlwaysFailExecutor),
+        )
+        .unwrap();
+
+        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert!(completed[0].error.is_some());
+        assert!(!engine.has_pending_work());
+    }
+
+    #[test]
+    fn test_executor_failure_updates_failure_metrics() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(AlwaysFailExecutor),
+        )
+        .unwrap();
+
+        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+        let _ = engine.run();
+
+        let metrics = engine.get_metrics();
+        assert_eq!(metrics.failed_requests, 1);
+        assert_eq!(metrics.completed_requests, 0);
+    }
+
+    #[test]
+    fn test_gpu_timeout_retries_once_then_succeeds() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(TimeoutThenSuccessExecutor { attempts: 0 }),
+        )
+        .unwrap();
+        engine.set_max_steps(200);
+
+        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].success);
+        assert!(completed[0].error.is_none());
+
+        let metrics = engine.get_metrics();
+        assert_eq!(metrics.failed_requests, 0);
+        assert_eq!(metrics.completed_requests, 1);
     }
 }

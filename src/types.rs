@@ -1,6 +1,5 @@
 //! Core types and data structures for the inference system
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -218,6 +217,20 @@ impl Sequence {
             _ => 0,
         }
     }
+
+    /// Input token for the next decode step.
+    pub fn decode_input_token(&self) -> Option<TokenId> {
+        self.request
+            .output_tokens
+            .last()
+            .copied()
+            .or_else(|| self.request.input_tokens.last().copied())
+    }
+
+    /// Position for the next decode step.
+    pub fn decode_position(&self) -> Option<u32> {
+        self.context_len().checked_sub(1)
+    }
 }
 
 /// Memory statistics for KV cache
@@ -251,8 +264,6 @@ pub struct SchedulerOutput {
     pub prefill_sequences: Vec<Arc<Sequence>>,
     /// Sequences in decode phase
     pub decode_sequences: Vec<Arc<Sequence>>,
-    /// Block tables for all sequences (seq_id -> block indices)
-    pub block_tables: HashMap<SeqId, Vec<BlockIdx>>,
     /// Total number of tokens in this batch
     pub total_tokens: u32,
 }

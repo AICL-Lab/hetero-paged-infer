@@ -2,7 +2,44 @@
 //!
 //! These tests verify end-to-end functionality across all components.
 
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use hetero_infer::{
+    EngineConfig, ExecutionBatch, ExecutionError, ExecutionOutput, GPUExecutorTrait,
+    GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
+};
+
+struct FailingExecutor;
+
+impl GPUExecutorTrait for FailingExecutor {
+    fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        Err(ExecutionError::KernelLaunchFailed(
+            "integration executor failure".to_string(),
+        ))
+    }
+
+    fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
+        Ok(())
+    }
+
+    fn execute_graph(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        Err(ExecutionError::KernelLaunchFailed(
+            "integration executor failure".to_string(),
+        ))
+    }
+
+    fn has_captured_graph(&self) -> bool {
+        false
+    }
+}
+
+fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
+    InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config),
+        Box::new(FailingExecutor),
+    )
+    .unwrap()
+}
 
 // Integration tests can't use #[cfg(test)] pub mod test_utils from lib.rs directly,
 // so we duplicate the minimal helper here.
@@ -222,6 +259,20 @@ fn test_invalid_request_handling() {
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid top_p should be rejected");
+
+    // Total requested length beyond max_model_len
+    let tiny_config = EngineConfig {
+        max_model_len: 8,
+        ..create_test_config()
+    };
+    let mut tiny_engine = InferenceEngine::new(tiny_config).unwrap();
+    let too_long_params = GenerationParams {
+        max_tokens: 4,
+        temperature: 1.0,
+        top_p: 0.9,
+    };
+    let result = tiny_engine.submit_request("Hello", too_long_params);
+    assert!(result.is_err(), "Total requested length should be rejected");
 }
 
 /// **Integration Test: Continuous Batching**
@@ -256,7 +307,10 @@ fn test_continuous_batching() {
     let completed = engine.run();
 
     // Both should complete
-    assert!(completed.len() >= 1, "At least one request should complete");
+    assert!(
+        !completed.is_empty(),
+        "At least one request should complete"
+    );
 }
 
 /// **Integration Test: Engine Stop**
@@ -372,7 +426,7 @@ fn test_memory_pressure_handling() {
 
     // Should complete without crashing
     assert!(
-        completed.len() > 0 || !engine.has_pending_work(),
+        !completed.is_empty() || !engine.has_pending_work(),
         "Should handle memory pressure gracefully"
     );
 }
@@ -413,7 +467,7 @@ fn test_large_batch_processing() {
     let completed = engine.run();
 
     // Should complete most requests
-    assert!(completed.len() > 0, "Should complete some requests");
+    assert!(!completed.is_empty(), "Should complete some requests");
 }
 
 /// **Integration Test: Sequential Request Processing**
@@ -447,6 +501,27 @@ fn test_sequential_request_processing() {
             }
         }
     }
+}
+
+#[test]
+fn test_execution_failure_surfaces_as_completed_error() {
+    let config = create_test_config();
+    let mut engine = create_failure_test_engine(config);
+    engine.set_max_steps(50);
+
+    let params = GenerationParams {
+        max_tokens: 5,
+        temperature: 1.0,
+        top_p: 0.9,
+    };
+
+    engine.submit_request("Failure case", params).unwrap();
+    let completed = engine.run();
+
+    assert_eq!(completed.len(), 1);
+    assert!(!completed[0].success);
+    assert!(completed[0].error.is_some());
+    assert!(!engine.has_pending_work());
 }
 
 /// **Integration Test: Metrics Collection**

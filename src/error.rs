@@ -69,6 +69,9 @@ pub enum ValidationError {
 
     #[error("Input exceeds max model length: {0} > {1}")]
     InputTooLong(usize, u32),
+
+    #[error("Total requested length exceeds max model length: {0} > {1}")]
+    TotalLengthTooLong(usize, u32),
 }
 
 /// Execution errors
