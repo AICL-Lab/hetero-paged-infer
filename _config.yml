@@ -1,32 +1,42 @@
-# 站点配置
+# Site Configuration
 title: Hetero-Paged-Infer
 description: >-
-  异构推理系统 — 基于 PagedAttention 和 Continuous Batching 的 CPU-GPU 协同推理引擎
-author: LessUp
+  Heterogeneous Inference System with PagedAttention and Continuous Batching
+  for CPU-GPU Co-execution
 
-# 主题
+# Author
+author: LessUp
+email: contact@example.com
+
+# Theme
 remote_theme: pages-themes/cayman@v0.2.0
 
-# 插件
+# Plugins
 plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-feed
 
-# 仓库信息
+# Repository
 repository: LessUp/hetero-paged-infer
 
-# URL 配置
+# URL Configuration
 url: https://lessup.github.io
 baseurl: /hetero-paged-infer
-lang: zh-CN
 
-# 显示设置
+# Languages
+languages:
+  - en
+  - zh
+
+default_lang: en
+
+# Display Settings
 show_downloads: true
 google_analytics: false
 
-# Markdown 渲染
+# Markdown Rendering
 markdown: kramdown
 kramdown:
   input: GFM
@@ -36,30 +46,53 @@ kramdown:
     block:
       line_numbers: true
 
-# 导航菜单
-navigation:
-  - title: 首页
+# Navigation - English
+navigation_en:
+  - title: Home
     url: /
   - title: README
+    url: /README
+  - title: Changelog
+    url: /CHANGELOG
+  - title: Contributing
+    url: /CONTRIBUTING
+  - title: English Docs
+    url: /docs/en/
+  - title: 中文文档
+    url: /docs/zh/
+
+# Navigation - Chinese
+navigation_zh:
+  - title: 首页
+    url: /
+  - title: 项目说明
     url: /README
   - title: 变更日志
     url: /CHANGELOG
   - title: 贡献指南
     url: /CONTRIBUTING
+  - title: English Docs
+    url: /docs/en/
+  - title: 中文文档
+    url: /docs/zh/
 
-# 默认布局
+# Default Layout
 defaults:
   - scope:
       path: ""
     values:
       layout: default
   - scope:
+      path: "docs"
+    values:
+      layout: default
+  - scope:
       path: "changelog"
     values:
       layout: default
-      category: 变更日志
+      category: changelog
 
-# 排除文件
+# Exclude Files
 exclude:
   - .git
   - .github
@@ -78,21 +111,27 @@ exclude:
   - vendor
   - "*.rs"
   - config.example.json
+  - RELEASE_NOTES.md
 
-# 包含文件
+# Include Files
 include:
   - README.md
+  - README.zh.md
   - CHANGELOG.md
   - CONTRIBUTING.md
   - index.md
+  - docs
 
-# 集合
+# Collections
 collections:
   changelog:
     output: true
     permalink: /:collection/:name
+  docs:
+    output: true
+    permalink: /:collection/:path
 
-# 社交链接
+# Social Links
 social:
   github: LessUp/hetero-paged-infer
 
@@ -100,9 +139,9 @@ social:
 twitter:
   card: summary
 
-# 时间 zone
+# Timezone
 timezone: Asia/Shanghai
 
-# 分页
+# Pagination
 paginate: 10
 paginate_path: "/blog/page:num/"

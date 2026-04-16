@@ -1,126 +1,140 @@
-# 变更日志
+# Changelog
 
-本项目的所有重要变更都将记录在此文件中。
+All notable changes to this project will be documented in this file.
 
-格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
-版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### 新增
-
-- 完整的中文 API 文档 (rustdoc)
-- GitHub Pages 文档站点增强
-- CI/CD workflow 优化
+### Added
+- Comprehensive bilingual documentation (English/Chinese)
+- GitHub Pages documentation site
+- CI/CD workflow optimizations
 
 ## [0.1.0] - 2026-04-16
 
-### 新增
+### Added
 
-- **文档系统**
-  - 完整的中文 README
-  - CONTRIBUTING.md 贡献指南
-  - CHANGELOG.md 变更日志
-  - config.example.json 示例配置
-  - 所有公共 API 的 rustdoc 文档注释
+#### Documentation System
+- Complete bilingual README (English + Chinese)
+- CONTRIBUTING.md contribution guidelines
+- CHANGELOG.md changelog
+- config.example.json example configuration
+- Full rustdoc documentation for all public APIs
+- Comprehensive docs/ directory with:
+  - English documentation (5 files)
+  - Chinese documentation (5 files)
 
-- **PagedAttention KV Cache**
-  - 分页式块管理，按需分配/释放物理块
-  - BlockPool 实现 FIFO 空闲列表管理
-  - PageTable 实现逻辑块到物理块的映射
+#### PagedAttention KV Cache
+- Block-based memory management with on-demand allocation/deallocation
+- BlockPool with FIFO free list management
+- PageTable for logical to physical block mapping
+- Memory pressure detection and handling
 
-- **Continuous Batching 调度器**
-  - prefill/decode 分阶段管理
-  - decode 优先调度策略
-  - 内存压力感知与自动拒绝
+#### Continuous Batching Scheduler
+- Prefill/decode phase separation
+- Decode-priority scheduling strategy
+- Dynamic batch formation
+- Request state machine management
 
-- **推理引擎**
-  - InferenceEngine 主编排器
-  - 错误恢复策略（重试/跳过/重置/关闭）
-  - EngineMetrics 指标收集
+#### Inference Engine
+- InferenceEngine main orchestrator
+- Error recovery strategies (retry/skip/reset/shutdown)
+- EngineMetrics metrics collection
+- Step-by-step and continuous execution modes
 
-- **模块化架构**
-  - TokenizerTrait 分词器接口
-  - SchedulerTrait 调度器接口
-  - GPUExecutorTrait GPU 执行器接口
-  - KVCacheManagerTrait KV Cache 管理器接口
+#### Modular Architecture
+- TokenizerTrait tokenizer interface
+- SchedulerTrait scheduler interface
+- GPUExecutorTrait GPU executor interface
+- KVCacheManagerTrait KV Cache manager interface
 
-- **测试覆盖**
-  - 78 个单元测试
-  - 15 个属性测试 (proptest)
-  - 13 个集成测试
-  - 29 个文档测试
+#### Testing
+- 78 unit tests covering all modules
+- 15 property tests using proptest
+- 13 integration tests for end-to-end flows
+- 29 documentation tests
 
-- **Mock 实现**
-  - MockGPUExecutor 用于测试
-  - SimpleTokenizer 字符级分词器
+#### Mock Implementations
+- MockGPUExecutor for testing
+- SimpleTokenizer character-level tokenizer
 
-### 变更
+### Changed
 
-- 2026-03-13: 修复 clippy 警告，优化 `div_ceil` 和 `HashMap::entry` 使用
-- 2026-03-10: 统一 GitHub Actions workflow 配置
-
----
-
-## 详细变更记录
-
-### 2026-04-16 - 文档全面优化重构
-
-**文档**
-- 重写 README.md 为完整中文版
-- 为所有源文件添加 rustdoc 注释
-- 新增 CONTRIBUTING.md 贡献指南
-- 新增 CHANGELOG.md 统一变更日志
-- 新增 config.example.json 示例配置
-- 更新 index.md GitHub Pages 首页
-
-**CI/CD**
-- 增强 CI workflow 配置
-- 优化 Pages workflow 部署流程
-
-### 2026-03-13 - Workflow CPU-safe CI 调整
-
-**修复**
-- 修复 `div_ceil` API 使用
-- 修复 `HashMap::entry` 写法
-- 使 CI 在 GitHub Hosted Runner 上正常运行
-
-### 2026-03-10 - Workflow 深度标准化
-
-**变更**
-- 统一 workflow 权限配置
-- 添加并发控制
-- 添加路径过滤减少无效构建
+- 2026-04-16: Complete documentation overhaul with bilingual support
+- 2026-03-13: Fixed clippy warnings, optimized `div_ceil` and `HashMap::entry` usage
+- 2026-03-10: Unified GitHub Actions workflow configuration
 
 ---
 
-## 版本说明
+## Release Notes
 
-### [0.1.0] - 初始发布
+### v0.1.0 - Initial Release
 
-首个发布版本，包含核心功能实现：
+**Release Date**: 2026-04-16
 
-1. **KV Cache 管理**
-   - 支持分页式内存管理
-   - 支持动态块分配
-   - 支持 copy-on-write（接口设计）
+#### Overview
 
-2. **调度器**
-   - 支持 continuous batching
-   - 支持 decode 优先
-   - 支持内存压力检测
+First stable release of Hetero-Paged-Infer, a heterogeneous inference system for Large Language Models. This release provides a production-ready foundation with PagedAttention memory management and Continuous Batching scheduling.
 
-3. **推理引擎**
-   - 支持请求提交和执行
-   - 支持错误恢复
-   - 支持指标收集
+#### Key Features
 
-4. **测试**
-   - 完整的单元测试覆盖
-   - 属性测试验证不变量
-   - 集成测试验证端到端流程
+1. **KV Cache Management**
+   - PagedAttention block-based memory management
+   - Dynamic block allocation and deallocation
+   - Memory-efficient design with <5% waste
 
-5. **文档**
-   - 完整的中文文档
-   - API 文档 (rustdoc)
-   - 贡献指南
+2. **Scheduler**
+   - Continuous batching with prefill/decode phases
+   - Decode-priority scheduling for lower latency
+   - Memory pressure awareness
+
+3. **Inference Engine**
+   - Request submission and execution
+   - Error recovery mechanisms
+   - Metrics collection and monitoring
+
+4. **Testing**
+   - Comprehensive unit test coverage
+   - Property tests for invariant verification
+   - Integration tests for end-to-end validation
+
+5. **Documentation**
+   - Bilingual documentation (English/Chinese)
+   - API documentation (rustdoc)
+   - Architecture and deployment guides
+
+#### Known Limitations
+
+- GPU Executor is currently a mock implementation
+- Real CUDA kernels not yet implemented
+- Async CPU/GPU overlap planned for future releases
+
+#### Installation
+
+```bash
+git clone https://github.com/LessUp/hetero-paged-infer.git
+cd hetero-paged-infer
+cargo build --release
+```
+
+#### Quick Start
+
+```bash
+./target/release/hetero-infer --input "Hello, world!" --max-tokens 50
+```
+
+---
+
+## Detailed Changelog
+
+See the [changelog/](./changelog/) directory for detailed change logs.
+
+- [2026-04-16_documentation-overhaul.md](./changelog/2026-04-16_documentation-overhaul.md) - Documentation overhaul
+- [2026-03-13_workflow-cpu-safe-ci.md](./changelog/2026-03-13_workflow-cpu-safe-ci.md) - CI fixes
+- [2026-03-10_workflow-deep-standardization.md](./changelog/2026-03-10_workflow-deep-standardization.md) - Workflow standardization
+
+---
+
+[0.1.0]: https://github.com/LessUp/hetero-paged-infer/releases/tag/v0.1.0
