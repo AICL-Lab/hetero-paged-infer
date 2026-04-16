@@ -5,5 +5,12 @@
   "max_num_seqs": 256,
   "max_model_len": 2048,
   "max_total_tokens": 4096,
-  "memory_threshold": 0.9
+  "memory_threshold": 0.9,
+  "max_retry_attempts": 2,
+  "special_tokens": {
+    "bos": 1,
+    "eos": 2,
+    "pad": 0,
+    "unk": 3
+  }
 }

@@ -55,6 +55,8 @@ fn create_test_config() -> EngineConfig {
         max_model_len: 2048,
         max_total_tokens: 512,
         memory_threshold: 0.9,
+        max_retry_attempts: 2,
+        special_tokens: Default::default(),
     }
 }
 
@@ -396,6 +398,7 @@ fn test_memory_pressure_handling() {
         max_model_len: 256,
         max_total_tokens: 256,
         memory_threshold: 0.5, // Low threshold
+        ..Default::default()
     };
 
     let mut engine = InferenceEngine::new(config).unwrap();
@@ -449,6 +452,7 @@ fn test_large_batch_processing() {
         max_model_len: 2048,
         max_total_tokens: 2048,
         memory_threshold: 0.9,
+        ..Default::default()
     };
 
     let mut engine = InferenceEngine::new(config).unwrap();

@@ -1079,6 +1079,7 @@ mod property_tests {
                 max_model_len: 2048,
                 max_total_tokens: 1024,
                 memory_threshold: 0.5,  // Low threshold
+                ..Default::default()
             };
             let mut scheduler = Scheduler::new(config);
 

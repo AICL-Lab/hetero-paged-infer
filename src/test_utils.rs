@@ -15,6 +15,8 @@ pub fn create_test_config() -> EngineConfig {
         max_model_len: 2048,
         max_total_tokens: 512,
         memory_threshold: 0.9,
+        max_retry_attempts: 2,
+        special_tokens: Default::default(),
     }
 }
 
@@ -32,6 +34,8 @@ pub fn create_test_config_with_limits(
         max_model_len: 2048,
         max_total_tokens,
         memory_threshold: 0.9,
+        max_retry_attempts: 2,
+        special_tokens: Default::default(),
     }
 }
 

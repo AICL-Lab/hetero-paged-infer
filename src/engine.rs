@@ -485,9 +485,9 @@ impl InferenceEngine {
         match error {
             EngineError::Execution(exec_err) => match exec_err {
                 crate::error::ExecutionError::CudaError(_) => RecoveryAction::SkipSequence,
-                crate::error::ExecutionError::GpuTimeout => {
-                    RecoveryAction::Retry { max_attempts: 2 }
-                }
+                crate::error::ExecutionError::GpuTimeout => RecoveryAction::Retry {
+                    max_attempts: self.config.max_retry_attempts,
+                },
                 crate::error::ExecutionError::InvalidOutput => RecoveryAction::SkipSequence,
                 crate::error::ExecutionError::KernelLaunchFailed(_) => RecoveryAction::ResetBatch,
             },

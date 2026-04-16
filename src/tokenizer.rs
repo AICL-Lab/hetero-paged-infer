@@ -12,6 +12,8 @@
 //! | 2 | EOS | 句尾 token |
 //! | 3 | UNK | 未知 token |
 //!
+//! 注意：这些默认值可通过 [`SpecialTokenIds`] 配置。
+//!
 //! # 示例
 //!
 //! ```rust
@@ -23,13 +25,32 @@
 //! let text = tokenizer.decode(&tokens);
 //! ```
 
+use crate::config::SpecialTokenIds;
 use crate::types::TokenId;
 use std::collections::{hash_map::Entry, HashMap};
 
-/// Special token IDs
+/// Special token IDs (deprecated constants, use SpecialTokenIds instead)
+///
+/// 这些常量保留用于向后兼容。新代码应使用 [`SpecialTokenIds`]。
+#[deprecated(
+    since = "0.2.0",
+    note = "Use SpecialTokenIds from EngineConfig instead"
+)]
 pub const BOS_TOKEN_ID: TokenId = 1;
+#[deprecated(
+    since = "0.2.0",
+    note = "Use SpecialTokenIds from EngineConfig instead"
+)]
 pub const EOS_TOKEN_ID: TokenId = 2;
+#[deprecated(
+    since = "0.2.0",
+    note = "Use SpecialTokenIds from EngineConfig instead"
+)]
 pub const PAD_TOKEN_ID: TokenId = 0;
+#[deprecated(
+    since = "0.2.0",
+    note = "Use SpecialTokenIds from EngineConfig instead"
+)]
 pub const UNK_TOKEN_ID: TokenId = 3;
 
 /// 分词器 trait 接口
@@ -58,7 +79,7 @@ pub trait TokenizerTrait: Send + Sync {
 /// 简单字符级分词器
 ///
 /// 将每个 ASCII 字符映射为唯一的 token ID。
-/// 特殊 token: PAD=0, BOS=1, EOS=2, UNK=3
+/// 特殊 token: PAD=0, BOS=1, EOS=2, UNK=3 (可通过配置修改)
 /// 常规字符从 ID 4 开始。
 #[derive(Debug, Clone)]
 pub struct SimpleTokenizer {
@@ -68,15 +89,22 @@ pub struct SimpleTokenizer {
     id_to_char: HashMap<TokenId, char>,
     /// Vocabulary size
     vocab_size: u32,
+    /// Special token IDs
+    special_tokens: SpecialTokenIds,
 }
 
 impl SimpleTokenizer {
-    /// Create a new simple tokenizer with ASCII vocabulary
+    /// Create a new simple tokenizer with ASCII vocabulary and default special tokens
     pub fn new() -> Self {
+        Self::with_special_tokens(SpecialTokenIds::default())
+    }
+
+    /// Create a new simple tokenizer with custom special token IDs
+    pub fn with_special_tokens(special_tokens: SpecialTokenIds) -> Self {
         let mut char_to_id = HashMap::new();
         let mut id_to_char = HashMap::new();
 
-        // Reserve special tokens 0-3
+        // Reserve special tokens
         let mut next_id: TokenId = 4;
 
         // Add printable ASCII characters (32-126)
@@ -99,17 +127,23 @@ impl SimpleTokenizer {
             char_to_id,
             id_to_char,
             vocab_size: next_id,
+            special_tokens,
         }
     }
 
     /// Encode a single character
     fn encode_char(&self, c: char) -> TokenId {
-        *self.char_to_id.get(&c).unwrap_or(&UNK_TOKEN_ID)
+        *self.char_to_id.get(&c).unwrap_or(&self.special_tokens.unk)
     }
 
     /// Decode a single token
     fn decode_token(&self, token: TokenId) -> Option<char> {
         self.id_to_char.get(&token).copied()
+    }
+
+    /// Get the special token IDs configuration
+    pub fn special_tokens(&self) -> &SpecialTokenIds {
+        &self.special_tokens
     }
 }
 
@@ -124,7 +158,7 @@ impl TokenizerTrait for SimpleTokenizer {
         let mut tokens = Vec::with_capacity(text.len() + 2);
 
         // Add BOS token
-        tokens.push(BOS_TOKEN_ID);
+        tokens.push(self.special_tokens.bos);
 
         // Encode each character
         for c in text.chars() {
@@ -132,7 +166,7 @@ impl TokenizerTrait for SimpleTokenizer {
         }
 
         // Add EOS token
-        tokens.push(EOS_TOKEN_ID);
+        tokens.push(self.special_tokens.eos);
 
         tokens
     }
@@ -142,7 +176,10 @@ impl TokenizerTrait for SimpleTokenizer {
 
         for &token in tokens {
             // Skip special tokens
-            if token == BOS_TOKEN_ID || token == EOS_TOKEN_ID || token == PAD_TOKEN_ID {
+            if token == self.special_tokens.bos
+                || token == self.special_tokens.eos
+                || token == self.special_tokens.pad
+            {
                 continue;
             }
 
@@ -160,15 +197,15 @@ impl TokenizerTrait for SimpleTokenizer {
     }
 
     fn bos_token_id(&self) -> TokenId {
-        BOS_TOKEN_ID
+        self.special_tokens.bos
     }
 
     fn eos_token_id(&self) -> TokenId {
-        EOS_TOKEN_ID
+        self.special_tokens.eos
     }
 
     fn pad_token_id(&self) -> TokenId {
-        PAD_TOKEN_ID
+        self.special_tokens.pad
     }
 }
 
@@ -182,6 +219,13 @@ impl RoundTripTokenizer {
     pub fn new() -> Self {
         Self {
             inner: SimpleTokenizer::new(),
+        }
+    }
+
+    /// Create with custom special token IDs
+    pub fn with_special_tokens(special_tokens: SpecialTokenIds) -> Self {
+        Self {
+            inner: SimpleTokenizer::with_special_tokens(special_tokens),
         }
     }
 }
@@ -215,15 +259,15 @@ impl TokenizerTrait for RoundTripTokenizer {
     }
 
     fn bos_token_id(&self) -> TokenId {
-        BOS_TOKEN_ID
+        self.inner.bos_token_id()
     }
 
     fn eos_token_id(&self) -> TokenId {
-        EOS_TOKEN_ID
+        self.inner.eos_token_id()
     }
 
     fn pad_token_id(&self) -> TokenId {
-        PAD_TOKEN_ID
+        self.inner.pad_token_id()
     }
 }
 
@@ -234,13 +278,14 @@ mod tests {
     #[test]
     fn test_simple_tokenizer_encode() {
         let tokenizer = SimpleTokenizer::new();
+        let special_tokens = tokenizer.special_tokens();
 
         let tokens = tokenizer.encode("Hi");
 
         // Should have BOS + 'H' + 'i' + EOS
         assert_eq!(tokens.len(), 4);
-        assert_eq!(tokens[0], BOS_TOKEN_ID);
-        assert_eq!(tokens[tokens.len() - 1], EOS_TOKEN_ID);
+        assert_eq!(tokens[0], special_tokens.bos);
+        assert_eq!(tokens[tokens.len() - 1], special_tokens.eos);
     }
 
     #[test]
@@ -292,6 +337,20 @@ mod tests {
 
         // Should have special tokens + printable ASCII + whitespace
         assert!(tokenizer.vocab_size() > 100);
+    }
+
+    #[test]
+    fn test_custom_special_tokens() {
+        let custom_tokens = SpecialTokenIds::new(100, 101, 102, 103);
+        let tokenizer = SimpleTokenizer::with_special_tokens(custom_tokens.clone());
+
+        assert_eq!(tokenizer.bos_token_id(), 100);
+        assert_eq!(tokenizer.eos_token_id(), 101);
+        assert_eq!(tokenizer.pad_token_id(), 102);
+
+        let tokens = tokenizer.encode("Hi");
+        assert_eq!(tokens[0], 100); // BOS
+        assert_eq!(tokens[tokens.len() - 1], 101); // EOS
     }
 }
 

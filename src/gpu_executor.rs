@@ -94,10 +94,10 @@ pub struct GPUBatchData {
 }
 
 impl GPUBatchData {
-    pub fn new(max_batch_size: u32, max_blocks_per_seq: u32) -> Self {
+    pub fn new(max_batch_size: u32, max_blocks_per_seq: u32, max_total_tokens: u32) -> Self {
         Self {
-            input_ids: PinnedBuffer::new(4096),
-            positions: PinnedBuffer::new(4096),
+            input_ids: PinnedBuffer::new(max_total_tokens as usize),
+            positions: PinnedBuffer::new(max_total_tokens as usize),
             seq_start_locs: PinnedBuffer::new(max_batch_size as usize + 1),
             seq_lens: PinnedBuffer::new(max_batch_size as usize),
             block_tables: PinnedBuffer::new((max_batch_size * max_blocks_per_seq) as usize),
@@ -183,7 +183,11 @@ pub struct MockGPUExecutor {
 impl MockGPUExecutor {
     pub fn new(config: EngineConfig, vocab_size: u32) -> Self {
         let max_blocks_per_seq = config.max_model_len / config.block_size + 1;
-        let batch_data = GPUBatchData::new(config.max_batch_size, max_blocks_per_seq);
+        let batch_data = GPUBatchData::new(
+            config.max_batch_size,
+            max_blocks_per_seq,
+            config.max_total_tokens,
+        );
 
         Self {
             config,
@@ -404,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_gpu_batch_data_prepare() {
-        let mut batch_data = GPUBatchData::new(8, 16);
+        let mut batch_data = GPUBatchData::new(8, 16, 4096);
 
         let batch = ExecutionBatch {
             input_tokens: vec![1, 2, 3],

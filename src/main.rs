@@ -74,6 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_model_len: args.max_model_len,
             max_total_tokens: args.max_total_tokens,
             memory_threshold: args.memory_threshold,
+            max_retry_attempts: 2,
+            special_tokens: Default::default(),
         }
     };
 

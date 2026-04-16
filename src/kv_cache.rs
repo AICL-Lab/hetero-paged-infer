@@ -288,7 +288,14 @@ impl KVCacheManagerTrait for KVCacheManager {
             // Free all physical blocks
             for logical_block in &page_table.logical_blocks {
                 if let Some(physical_ref) = logical_block.physical_block {
-                    let _ = self.block_pool.free(physical_ref);
+                    if let Err(e) = self.block_pool.free(physical_ref) {
+                        log::debug!(
+                            "Failed to free block {} for sequence {}: {}",
+                            physical_ref.block_idx,
+                            seq_id,
+                            e
+                        );
+                    }
                 }
             }
         }

@@ -35,6 +35,40 @@ use crate::error::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// 特殊 Token ID 配置
+///
+/// 定义模型使用的特殊 token ID。
+/// 不同模型可能有不同的特殊 token ID，需要根据实际模型配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpecialTokenIds {
+    /// 句首 token ID (Beginning of Sequence)
+    pub bos: u32,
+    /// 句尾 token ID (End of Sequence)
+    pub eos: u32,
+    /// 填充 token ID (Padding)
+    pub pad: u32,
+    /// 未知 token ID (Unknown)
+    pub unk: u32,
+}
+
+impl Default for SpecialTokenIds {
+    fn default() -> Self {
+        Self {
+            bos: 1,
+            eos: 2,
+            pad: 0,
+            unk: 3,
+        }
+    }
+}
+
+impl SpecialTokenIds {
+    /// 创建新的特殊 Token ID 配置
+    pub fn new(bos: u32, eos: u32, pad: u32, unk: u32) -> Self {
+        Self { bos, eos, pad, unk }
+    }
+}
+
 /// 引擎配置
 ///
 /// 包含推理引擎的所有可配置参数。
@@ -50,6 +84,8 @@ use std::path::Path;
 /// | `max_model_len` | 模型最大上下文长度 | 2048 |
 /// | `max_total_tokens` | 单批次最大 token 总数 | 4096 |
 /// | `memory_threshold` | 内存压力阈值 | 0.9 |
+/// | `max_retry_attempts` | GPU 执行重试次数 | 2 |
+/// | `special_tokens` | 特殊 Token ID 配置 | 默认值 |
 ///
 /// # 示例
 ///
@@ -64,6 +100,7 @@ use std::path::Path;
 ///     max_model_len: 2048,
 ///     max_total_tokens: 4096,
 ///     memory_threshold: 0.9,
+///     ..Default::default()
 /// };
 ///
 /// assert!(config.is_valid());
@@ -106,6 +143,17 @@ pub struct EngineConfig {
     /// 当内存利用率超过此阈值时，调度器将拒绝新的 prefill 请求。
     /// 建议设置在 0.8-0.95 之间，留出安全余量。
     pub memory_threshold: f32,
+
+    /// GPU 执行超时的最大重试次数
+    ///
+    /// 当 GPU 执行超时时，引擎将重试的最大次数。
+    /// 默认值为 2。
+    pub max_retry_attempts: u32,
+
+    /// 特殊 Token ID 配置
+    ///
+    /// 包含 BOS、EOS、PAD、UNK 等特殊 token 的 ID。
+    pub special_tokens: SpecialTokenIds,
 }
 
 impl Default for EngineConfig {
@@ -118,6 +166,8 @@ impl Default for EngineConfig {
             max_model_len: 2048,
             max_total_tokens: 4096,
             memory_threshold: 0.9,
+            max_retry_attempts: 2,
+            special_tokens: SpecialTokenIds::default(),
         }
     }
 }
@@ -165,6 +215,8 @@ impl EngineConfig {
             max_model_len,
             max_total_tokens,
             memory_threshold,
+            max_retry_attempts: 2,
+            special_tokens: SpecialTokenIds::default(),
         };
         config.validate()?;
         Ok(config)
@@ -217,6 +269,7 @@ impl EngineConfig {
         if self.memory_threshold <= 0.0 || self.memory_threshold > 1.0 {
             return Err(ConfigError::InvalidMemoryThreshold(self.memory_threshold));
         }
+        // Note: max_retry_attempts can be 0 (no retries) or any positive value
         Ok(())
     }
 
@@ -482,6 +535,7 @@ mod property_tests {
                 max_model_len,
                 max_total_tokens,
                 memory_threshold,
+                ..Default::default()
             };
 
             let validation_result = config.validate();
@@ -534,6 +588,7 @@ mod property_tests {
                 max_model_len: valid_max_model_len,
                 max_total_tokens: valid_max_total_tokens,
                 memory_threshold: valid_memory_threshold,
+                ..Default::default()
             };
             prop_assert!(config_zero_block.validate().is_err());
 
@@ -546,6 +601,7 @@ mod property_tests {
                 max_model_len: valid_max_model_len,
                 max_total_tokens: valid_max_total_tokens,
                 memory_threshold: valid_memory_threshold,
+                ..Default::default()
             };
             prop_assert!(config_zero_blocks.validate().is_err());
 
@@ -558,6 +614,7 @@ mod property_tests {
                 max_model_len: valid_max_model_len,
                 max_total_tokens: valid_max_total_tokens,
                 memory_threshold: valid_memory_threshold,
+                ..Default::default()
             };
             prop_assert!(config_zero_batch.validate().is_err());
 
@@ -570,6 +627,7 @@ mod property_tests {
                 max_model_len: valid_max_model_len,
                 max_total_tokens: valid_max_total_tokens,
                 memory_threshold: valid_memory_threshold,
+                ..Default::default()
             };
             prop_assert!(config_zero_seqs.validate().is_err());
 
@@ -582,6 +640,7 @@ mod property_tests {
                 max_model_len: valid_max_model_len,
                 max_total_tokens: valid_max_total_tokens,
                 memory_threshold: valid_memory_threshold,
+                ..Default::default()
             };
             prop_assert!(valid_config.validate().is_ok());
         }
