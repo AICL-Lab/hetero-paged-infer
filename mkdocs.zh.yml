@@ -1,0 +1,191 @@
+# MkDocs Material Configuration - Chinese
+site_name: Hetero-Paged-Infer 异构推理系统
+site_description: 高性能异构推理引擎，支持大语言模型 CPU-GPU 协同执行
+site_author: LessUp
+site_url: https://lessup.github.io/hetero-paged-infer/zh/
+
+docs_dir: docs/zh
+site_dir: _site/zh
+
+theme:
+  name: material
+  language: zh
+  
+  # Advanced theming
+  palette:
+    # Palette toggle for automatic mode
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: 切换到浅色模式
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到系统偏好
+  
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  
+  icon:
+    logo: material/memory
+    repo: fontawesome/brands/github
+  
+  favicon: assets/favicon.png
+  
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - header.autohide
+    - announce.dismiss
+
+plugins:
+  - search:
+      lang: zh
+      separator: '[\s\u200b\-,:!=\[\]()"/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+      fallback_to_build_date: true
+      locale: zh
+  
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      permalink_title: 链接到本章节
+      toc_depth: 4
+  
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/LessUp/hetero-paged-infer
+      name: GitHub 仓库
+    - icon: fontawesome/solid/book
+      link: /en/
+      name: English Docs
+  
+  alternate:
+    - name: English
+      link: /en/
+      lang: en
+    - name: 中文
+      link: /zh/
+      lang: zh
+  
+  # Version information
+  version:
+    provider: mike
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - javascripts/extra.js
+
+# Page tree
+nav:
+  - 首页: index.md
+  - 快速开始:
+    - 快速入门: getting-started/quickstart.md
+    - 安装指南: getting-started/installation.md
+    - 配置说明: getting-started/configuration.md
+  - 架构设计:
+    - 概览: architecture/overview.md
+    - 组件说明: architecture/components.md
+    - 数据流: architecture/dataflow.md
+  - API 参考:
+    - 核心类型: api/core-types.md
+    - Trait 接口: api/traits.md
+    - 错误处理: api/errors.md
+  - 部署运维:
+    - Docker: deployment/docker.md
+    - Kubernetes: deployment/kubernetes.md
+    - Systemd: deployment/systemd.md
+  - 开发指南:
+    - 贡献指南: development/contributing.md
+    - 测试指南: development/testing.md
+  - 变更日志: changelog/index.md
+
+copyright: |
+  Copyright &copy; 2026 LessUp – <a href="#__consent">更改 Cookie 设置</a>
+
+code_line_numbers: true

@@ -1,98 +1,36 @@
-# Site Configuration
+# GitHub Pages Configuration
+# This file configures Jekyll for GitHub Pages deployment
+# Note: The actual documentation is built with MkDocs
+
+# Site settings
 title: Hetero-Paged-Infer
 description: >-
-  Heterogeneous Inference System with PagedAttention and Continuous Batching
-  for CPU-GPU Co-execution
+  High-Performance Heterogeneous Inference Engine for LLMs
+  with PagedAttention and Continuous Batching
 
 # Author
 author: LessUp
-email: contact@example.com
-
-# Theme
-remote_theme: pages-themes/cayman@v0.2.0
-
-# Plugins
-plugins:
-  - jekyll-remote-theme
-  - jekyll-seo-tag
-  - jekyll-sitemap
-  - jekyll-feed
 
 # Repository
 repository: LessUp/hetero-paged-infer
-
-# URL Configuration
 url: https://lessup.github.io
 baseurl: /hetero-paged-infer
 
-# Languages
-languages:
-  - en
-  - zh
-
-default_lang: en
-
-# Display Settings
-show_downloads: true
-google_analytics: false
-
-# Markdown Rendering
+# Build settings
 markdown: kramdown
 kramdown:
   input: GFM
-  hard_wrap: false
   syntax_highlighter: rouge
-  syntax_highlighter_opts:
-    block:
-      line_numbers: true
 
-# Navigation - English
-navigation_en:
-  - title: Home
-    url: /
-  - title: README
-    url: /README
-  - title: Changelog
-    url: /CHANGELOG
-  - title: Contributing
-    url: /CONTRIBUTING
-  - title: English Docs
-    url: /docs/en/
-  - title: 中文文档
-    url: /docs/zh/
+# Theme (minimal, since we use MkDocs)
+theme: minima
 
-# Navigation - Chinese
-navigation_zh:
-  - title: 首页
-    url: /
-  - title: 项目说明
-    url: /README
-  - title: 变更日志
-    url: /CHANGELOG
-  - title: 贡献指南
-    url: /CONTRIBUTING
-  - title: English Docs
-    url: /docs/en/
-  - title: 中文文档
-    url: /docs/zh/
+# Plugins
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
 
-# Default Layout
-defaults:
-  - scope:
-      path: ""
-    values:
-      layout: default
-  - scope:
-      path: "docs"
-    values:
-      layout: default
-  - scope:
-      path: "changelog"
-    values:
-      layout: default
-      category: changelog
-
-# Exclude Files
+# Exclude files not needed for Pages
 exclude:
   - .git
   - .github
@@ -106,42 +44,40 @@ exclude:
   - rustfmt.toml
   - .editorconfig
   - .gitignore
-  - Gemfile
-  - Gemfile.lock
-  - vendor
-  - "*.rs"
   - config.example.json
-  - RELEASE_NOTES.md
+  - "*.rs"
+  - mkdocs*.yml
+  - requirements*.txt
+  - site/
+  - venv/
+  - ".python-version"
 
-# Include Files
+# Include specific files  
 include:
+  - index.md
   - README.md
   - README.zh.md
   - CHANGELOG.md
   - CONTRIBUTING.md
-  - index.md
   - docs
 
-# Collections
-collections:
-  changelog:
-    output: true
-    permalink: /:collection/:name
-  docs:
-    output: true
-    permalink: /:collection/:path
+# Defaults
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
 
-# Social Links
+# Social links
 social:
-  github: LessUp/hetero-paged-infer
+  github: LessUp
 
 # SEO
 twitter:
   card: summary
 
+# Language settings
+lang: en
+
 # Timezone
 timezone: Asia/Shanghai
-
-# Pagination
-paginate: 10
-paginate_path: "/blog/page:num/"
