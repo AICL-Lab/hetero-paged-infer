@@ -1,15 +1,15 @@
-# 贡献指南
+# Contributing Guide
 
-感谢您有兴趣为 Hetero-Paged-Infer 做贡献！
+Thank you for your interest in contributing to Hetero-Paged-Infer!
 
-## 开发环境设置
+## Development Setup
 
-### 环境要求
+### Requirements
 
 - Rust 1.70+ (2021 edition)
 - Git
 
-### 克隆与构建
+### Clone and Build
 
 ```bash
 git clone https://github.com/LessUp/hetero-paged-infer.git
@@ -17,55 +17,55 @@ cd hetero-paged-infer
 cargo build
 ```
 
-### 运行测试
+### Running Tests
 
 ```bash
-# 运行所有测试
+# Run all tests
 cargo test
 
-# 运行特定测试
+# Run specific test
 cargo test test_engine_creation
 
-# 运行属性测试
+# Run property tests
 cargo test -- --test-threads=1
 ```
 
-## 代码风格
+## Code Style
 
-### 格式化
+### Formatting
 
-使用 `rustfmt` 保持代码风格一致：
+Use `rustfmt` to maintain consistent code style:
 
 ```bash
 cargo fmt --check
 ```
 
-### Lint
+### Linting
 
-使用 `clippy` 进行静态检查：
+Use `clippy` for static analysis:
 
 ```bash
 cargo clippy --all-targets -- -D warnings
 ```
 
-### 文档注释
+### Documentation Comments
 
-所有公共 API 必须有文档注释：
+All public APIs must have doc comments:
 
 ```rust
-/// 简短描述
+/// Brief description.
 ///
-/// 详细说明。
+/// Detailed explanation.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `param1` - 参数说明
+/// * `param1` - Parameter description
 ///
-/// # 返回
+/// # Returns
 ///
-/// 返回值说明。
+/// Return value description.
 ///
-/// # 示例
+/// # Example
 ///
 /// ```rust
 /// use my_crate::my_function;
@@ -76,11 +76,35 @@ pub fn my_function() -> i32 {
 }
 ```
 
-## 提交代码
+## Spec-Driven Development
 
-### 提交信息格式
+This project follows **Spec-Driven Development (SDD)**. All changes must start with updating specifications before code implementation.
 
-使用约定式提交格式：
+### Workflow for Contributors
+
+1. **Identify the relevant spec** in `/specs/`:
+   - Product requirements: `/specs/product/`
+   - Technical designs: `/specs/rfc/`
+   - Test specifications: `/specs/testing/`
+
+2. **Update the spec first** before writing any code:
+   - If adding a feature, propose the change in the appropriate spec document
+   - If fixing a bug, verify the spec accurately describes the expected behavior
+   - Get review on spec changes before implementation
+
+3. **Implement according to spec**:
+   - Follow the interfaces, types, and constraints defined in specs
+   - Do not add functionality not specified in the spec
+
+4. **Test against spec**:
+   - Ensure tests cover acceptance criteria from specs
+   - Property tests must validate invariants defined in RFCs
+
+## Submitting Code
+
+### Commit Message Format
+
+Use conventional commits format:
 
 ```
 <type>(<scope>): <description>
@@ -90,48 +114,49 @@ pub fn my_function() -> i32 {
 [optional footer]
 ```
 
-类型：
-- `feat` - 新功能
-- `fix` - Bug 修复
-- `docs` - 文档更新
-- `style` - 代码格式（不影响功能）
-- `refactor` - 重构
-- `test` - 测试相关
-- `chore` - 构建/工具相关
+Types:
+- `feat` - New feature
+- `fix` - Bug fix
+- `docs` - Documentation update
+- `style` - Code formatting (no functional change)
+- `refactor` - Refactoring
+- `test` - Test related
+- `chore` - Build/tooling related
 
-示例：
+Example:
 
 ```
-feat(scheduler): 添加 decode 优先调度
+feat(scheduler): add decode priority scheduling
 
-实现 decode 请求优先于 prefill 请求的调度策略，
-以降低正在处理请求的延迟。
+Implement decode request priority over prefill requests in scheduling
+to reduce latency of in-progress requests.
 
 Closes #123
 ```
 
-### Pull Request 流程
+### Pull Request Process
 
-1. Fork 仓库
-2. 创建功能分支 (`git checkout -b feature/my-feature`)
-3. 提交更改 (`git commit -m 'feat: 添加某功能'`)
-4. 推送到分支 (`git push origin feature/my-feature`)
-5. 创建 Pull Request
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Commit your changes (`git commit -m 'feat: add feature'`)
+4. Push to the branch (`git push origin feature/my-feature`)
+5. Create a Pull Request
 
-### PR 检查清单
+### PR Checklist
 
-- [ ] 代码通过 `cargo fmt --check`
-- [ ] 代码通过 `cargo clippy`
-- [ ] 所有测试通过 `cargo test`
-- [ ] 新功能有对应的测试
-- [ ] 公共 API 有文档注释
-- [ ] 更新相关文档
+- [ ] Code passes `cargo fmt --check`
+- [ ] Code passes `cargo clippy`
+- [ ] All tests pass `cargo test`
+- [ ] New features have corresponding tests
+- [ ] Public APIs have doc comments
+- [ ] Related specs updated (see `/specs/`)
+- [ ] Documentation updated
 
-## 测试要求
+## Testing Requirements
 
-### 单元测试
+### Unit Tests
 
-每个模块应有单元测试覆盖核心功能：
+Each module should have unit test coverage for core functionality:
 
 ```rust
 #[cfg(test)]
@@ -145,9 +170,9 @@ mod tests {
 }
 ```
 
-### 属性测试
+### Property Tests
 
-使用 `proptest` 进行属性测试：
+Use `proptest` for property-based testing:
 
 ```rust
 #[cfg(test)]
@@ -157,37 +182,77 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_my_property(input in 0..100) {
-            // 测试属性
+            // Test property
         }
     }
 }
 ```
 
-## 项目结构
+### Integration Tests
+
+End-to-end tests validating complete system behavior must be in `/tests/`:
+
+```rust
+#[test]
+fn test_end_to_end_flow() {
+    // Integration test
+}
+```
+
+## Project Structure
 
 ```
 src/
-├── lib.rs           # 库入口
-├── main.rs          # CLI 入口
-├── config.rs        # 配置
-├── engine.rs        # 推理引擎
-├── error.rs         # 错误类型
-├── types.rs         # 核心类型
-├── kv_cache.rs      # KV Cache 管理
-├── scheduler.rs     # 调度器
-├── tokenizer.rs     # 分词器
-└── gpu_executor.rs  # GPU 执行器
+├── lib.rs           # Library entry point
+├── main.rs          # CLI entry point
+├── config.rs        # Configuration
+├── engine.rs        # Inference engine
+├── error.rs         # Error types
+├── types.rs         # Core types
+├── kv_cache.rs      # KV Cache manager
+├── scheduler.rs     # Scheduler
+├── tokenizer.rs     # Tokenizer
+└── gpu_executor.rs  # GPU executor
+
+specs/
+├── product/         # Product requirements
+├── rfc/             # Technical design documents
+├── api/             # API specifications
+├── db/              # Database schema specifications
+└── testing/         # BDD test specifications
 
 tests/
-└── integration_tests.rs  # 集成测试
+└── integration_tests.rs  # Integration tests
+
+docs/
+├── en/              # English documentation
+└── zh/              # Chinese documentation
 ```
 
-## 获取帮助
+## Documentation
 
-如有问题，可以：
-- 在 GitHub 上开 Issue
-- 查看现有代码和测试作为参考
+### Updating Specs
 
-## 许可证
+When proposing changes:
 
-本项目采用 MIT 许可证。提交代码即表示同意以相同许可发布。
+1. Create or update the relevant spec in `/specs/`
+2. Use clear, testable acceptance criteria
+3. Reference requirements by ID (e.g., REQ-1, REQ-2.3)
+4. For RFCs, use numbered naming: `NNNN-short-description.md`
+
+### Updating User Documentation
+
+- User guides go in `/docs/en/` (English) and `/docs/zh/` (Chinese)
+- Keep both language versions in sync
+- Use MkDocs for documentation site generation
+
+## Getting Help
+
+If you have questions:
+- Open an issue on GitHub
+- Review existing code and tests as references
+- Read the relevant specs in `/specs/` for design intent
+
+## License
+
+This project is licensed under the MIT License. By contributing code, you agree to release it under the same license.
