@@ -179,10 +179,10 @@ extra_javascript:
 # Page tree
 nav:
   - Home: index.md
-  - Getting Started:
-    - Quick Start: getting-started/quickstart.md
-    - Installation: getting-started/installation.md
-    - Configuration: getting-started/configuration.md
+  - Setup:
+    - Quick Start: setup/quickstart.md
+    - Installation: setup/installation.md
+    - Configuration: setup/configuration.md
   - Architecture:
     - Overview: architecture/overview.md
   - API Reference:
@@ -195,5 +195,3 @@ nav:
 
 copyright: |
   Copyright &copy; 2026 LessUp – <a href="#__consent">Change cookie settings</a>
-
-code_line_numbers: true

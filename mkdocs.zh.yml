@@ -164,10 +164,10 @@ extra_javascript:
 # Page tree
 nav:
   - 首页: index.md
-  - 快速开始:
-    - 快速入门: getting-started/quickstart.md
-    - 安装指南: getting-started/installation.md
-    - 配置说明: getting-started/configuration.md
+  - 环境搭建:
+    - 快速入门: setup/quickstart.md
+    - 安装指南: setup/installation.md
+    - 配置说明: setup/configuration.md
   - 架构设计:
     - 概览: architecture/overview.md
   - API 参考:
@@ -180,5 +180,3 @@ nav:
 
 copyright: |
   Copyright &copy; 2026 LessUp – <a href="#__consent">更改 Cookie 设置</a>
-
-code_line_numbers: true
