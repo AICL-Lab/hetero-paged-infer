@@ -158,7 +158,7 @@ extra:
   
   analytics:
     provider: google
-    property: G-XXXXXXXXXX
+    property: !ENV [GOOGLE_ANALYTICS_ID, ""]
   
   # Version information
   version:
@@ -185,19 +185,12 @@ nav:
     - Configuration: getting-started/configuration.md
   - Architecture:
     - Overview: architecture/overview.md
-    - Components: architecture/components.md
-    - Data Flow: architecture/dataflow.md
   - API Reference:
     - Core Types: api/core-types.md
-    - Traits: api/traits.md
-    - Error Handling: api/errors.md
   - Deployment:
     - Docker: deployment/docker.md
-    - Kubernetes: deployment/kubernetes.md
-    - Systemd: deployment/systemd.md
   - Development:
     - Contributing: development/contributing.md
-    - Testing: development/testing.md
   - Changelog: changelog/index.md
 
 copyright: |

@@ -170,19 +170,12 @@ nav:
     - 配置说明: getting-started/configuration.md
   - 架构设计:
     - 概览: architecture/overview.md
-    - 组件说明: architecture/components.md
-    - 数据流: architecture/dataflow.md
   - API 参考:
     - 核心类型: api/core-types.md
-    - Trait 接口: api/traits.md
-    - 错误处理: api/errors.md
   - 部署运维:
     - Docker: deployment/docker.md
-    - Kubernetes: deployment/kubernetes.md
-    - Systemd: deployment/systemd.md
   - 开发指南:
     - 贡献指南: development/contributing.md
-    - 测试指南: development/testing.md
   - 变更日志: changelog/index.md
 
 copyright: |
