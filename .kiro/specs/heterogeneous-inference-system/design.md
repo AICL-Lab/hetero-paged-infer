@@ -1,242 +1,269 @@
-# Design Document: Heterogeneous Inference System
+# 设计文档：异构推理系统
 
-## Overview
+## 概述
 
-This document describes the design of a heterogeneous inference microservice that leverages CPU-GPU co-execution for efficient LLM inference. The system implements PagedAttention for memory-efficient KV cache management and Continuous Batching for high throughput.
+本文档描述一个异构推理微服务的设计，利用 CPU-GPU 协同执行实现高效的 LLM 推理。系统实现 PagedAttention 进行内存高效的 KV cache 管理，以及 Continuous Batching 实现高吞吐量。
 
-The architecture follows a pipeline design where:
-- **CPU** handles: Tokenization, Request Scheduling, KV Cache page management, Batch preparation
-- **GPU** handles: Attention computation, Matrix operations, Token generation
+### 架构原则
 
-Key innovations:
-1. PagedAttention with virtual memory-like block management
-2. Continuous Batching mixing Prefill and Decode phases
-3. CUDA Graphs for reduced kernel launch overhead
-4. Double-buffered batch preparation for latency hiding
+- **CPU 负责**：分词、请求调度、KV Cache 页管理、批次准备
+- **GPU 负责**：Attention 计算、矩阵运算、Token 生成
 
-## Architecture
+### 核心创新
+
+1. **PagedAttention** - 类虚拟内存的块管理
+2. **Continuous Batching** - Prefill 和 Decode 阶段混合
+3. **CUDA Graphs** - 减少 kernel 启动开销
+4. **双缓冲批次准备** - 延迟隐藏
+
+## 架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         Inference Engine                                 │
+│                           InferenceEngine                                │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐  │
 │  │   Tokenizer  │    │   Scheduler  │    │    KV Cache Manager      │  │
 │  │    (CPU)     │    │    (CPU)     │    │        (CPU)             │  │
+│  │  (分词/解码)  │    │ (prefill/    │    │  (BlockPool/PageTable)   │  │
+│  │              │    │   decode)    │    │                          │  │
 │  └──────┬───────┘    └──────┬───────┘    └───────────┬──────────────┘  │
 │         │                   │                        │                  │
 │         │            ┌──────▼───────┐               │                  │
 │         │            │ Batch Builder│◄──────────────┘                  │
 │         │            │    (CPU)     │                                  │
+│         │            │  批次构建器   │                                  │
 │         │            └──────┬───────┘                                  │
 │         │                   │                                          │
-│  ───────┼───────────────────┼──────────────────────────────────────── │
+│  ───────┼───────────────────┼────────────────────────────────────────  │
 │         │            ┌──────▼───────┐                                  │
 │         │            │ GPU Executor │                                  │
 │         │            │  (CUDA/GPU)  │                                  │
+│         │            │  GPU 执行器   │                                  │
 │         │            └──────┬───────┘                                  │
 │         │                   │                                          │
 │         │            ┌──────▼───────┐                                  │
 │         │            │  KV Cache    │                                  │
 │         │            │ (GPU Memory) │                                  │
+│         │            │  GPU 显存     │                                  │
 │         │            └──────────────┘                                  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Pipeline Flow
+### 推理流程
 
 ```
 ┌─────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌──────────┐
-│ Request │──▶│ Tokenize  │──▶│ Schedule  │──▶│  Execute  │──▶│ Detokenize│
-│  Input  │   │   (CPU)   │   │   (CPU)   │   │   (GPU)   │   │   (CPU)   │
+│  请求   │──▶│   分词    │──▶│   调度    │──▶│   执行    │──▶│   解码   │
+│  输入   │   │  (CPU)    │   │  (CPU)    │   │  (GPU)    │   │  (CPU)   │
 └─────────┘   └───────────┘   └───────────┘   └───────────┘   └──────────┘
-                                    │               │
-                                    │    ┌──────────┘
-                                    ▼    ▼
-                              ┌───────────────┐
-                              │  KV Cache Mgr │
-                              │     (CPU)     │
-                              └───────────────┘
+                                  │               │
+                                  │    ┌──────────┘
+                                  ▼    ▼
+                            ┌───────────────┐
+                            │ KV Cache 管理器│
+                            │     (CPU)     │
+                            └───────────────┘
 ```
 
-## Components and Interfaces
+### 状态机
 
-### 1. Request
+```
+                    ┌─────────────┐
+                    │   Pending   │  (等待调度)
+                    └──────┬──────┘
+                           │ schedule()
+                           ▼
+                    ┌─────────────┐
+            ┌───────│   Prefill   │  (处理输入 tokens)
+            │       └──────┬──────┘
+            │              │ prefill 完成
+            │              ▼
+            │       ┌─────────────┐
+            │       │   Decode    │◄────┐ (生成 tokens)
+            │       └──────┬──────┘     │
+            │              │            │ 生成下一个 token
+            │              ├────────────┘
+            │              │ EOS 或 max_tokens
+            │              ▼
+            │       ┌─────────────┐
+            └──────▶│  Completed  │  (完成)
+                    └─────────────┘
+```
+
+## 组件与接口
+
+### 1. Request（请求）
 
 ```rust
 struct Request {
-    id: u64,
-    input_tokens: Vec<u32>,
-    output_tokens: Vec<u32>,
-    max_tokens: u32,
-    temperature: f32,
-    top_p: f32,
-    state: RequestState,
-    created_at: Instant,
+    id: u64,                    // 请求唯一标识符
+    input_tokens: Vec<u32>,     // 输入 token 序列
+    output_tokens: Vec<u32>,    // 输出 token 序列
+    max_tokens: u32,            // 最大生成 token 数
+    temperature: f32,           // 采样温度
+    top_p: f32,                 // Top-p 采样参数
+    state: RequestState,        // 当前状态
+    created_at: Instant,        // 创建时间
 }
 
 enum RequestState {
-    Pending,
-    Prefill,
-    Decode,
-    Completed,
-    Failed(String),
+    Pending,                    // 等待调度
+    Prefill,                    // Prefill 阶段
+    Decode,                     // Decode 阶段
+    Completed,                  // 已完成
+    Failed(String),             // 失败
 }
 ```
 
-### 2. Sequence (Active Request with KV Cache)
+### 2. Sequence（序列）
+
+活跃请求及其 KV Cache 块的集合：
 
 ```rust
 struct Sequence {
-    seq_id: u64,
-    request: Request,
-    logical_blocks: Vec<LogicalBlock>,
-    num_computed_tokens: u32,
-    num_generated_tokens: u32,
+    seq_id: u64,                        // 序列唯一标识符
+    request: Request,                   // 关联的请求
+    logical_blocks: Vec<LogicalBlock>,  // 逻辑块列表
+    num_computed_tokens: u32,           // 已计算的 token 数
+    num_generated_tokens: u32,          // 已生成的 token 数
 }
 
 struct LogicalBlock {
-    block_idx: u32,
-    physical_block: Option<PhysicalBlockRef>,
+    block_idx: u32,                     // 逻辑块索引
+    physical_block: Option<PhysicalBlockRef>,  // 物理块引用
 }
 ```
 
-### 3. KV Cache Manager Interface
+### 3. KVCacheManager 接口
 
 ```rust
-trait KVCacheManager {
-    /// Allocate blocks for a new sequence
+trait KVCacheManagerTrait {
+    /// 为新序列分配块
     fn allocate_sequence(&mut self, seq_id: u64, num_tokens: u32) -> Result<(), MemoryError>;
     
-    /// Allocate additional block when sequence grows
+    /// 序列增长时分配额外块
     fn allocate_block(&mut self, seq_id: u64) -> Result<PhysicalBlockRef, MemoryError>;
     
-    /// Free all blocks for a completed sequence
+    /// 释放序列的所有块
     fn free_sequence(&mut self, seq_id: u64);
     
-    /// Get block table for GPU execution
-    fn get_block_table(&self, seq_id: u64) -> &[u32];
+    /// 获取块表用于 GPU 执行
+    fn get_block_table(&self, seq_id: u64) -> Option<Vec<u32>>;
     
-    /// Query memory status
+    /// 查询内存状态
     fn get_memory_stats(&self) -> MemoryStats;
     
-    /// Check if can allocate n blocks
+    /// 检查是否可分配 n 个块
     fn can_allocate(&self, num_blocks: u32) -> bool;
 }
 
 struct MemoryStats {
-    total_blocks: u32,
-    used_blocks: u32,
-    free_blocks: u32,
-    num_sequences: u32,
+    total_blocks: u32,      // 总块数
+    used_blocks: u32,       // 已用块数
+    free_blocks: u32,       // 空闲块数
+    num_sequences: u32,     // 活跃序列数
 }
 ```
 
-### 4. Scheduler Interface
+### 4. Scheduler 接口
 
 ```rust
-trait Scheduler {
-    /// Add new request to pending queue
-    fn add_request(&mut self, request: Request);
+trait SchedulerTrait {
+    /// 添加新请求到待处理队列
+    fn add_request(&mut self, request: Request) -> Result<u64, SchedulerError>;
     
-    /// Schedule next batch for execution
+    /// 调度下一批次用于执行
     fn schedule(&mut self) -> SchedulerOutput;
     
-    /// Update sequences after GPU execution
+    /// GPU 执行后更新序列状态
     fn update_sequences(&mut self, outputs: &ExecutionOutput);
     
-    /// Get completed requests
+    /// 获取已完成的请求
     fn get_completed(&mut self) -> Vec<Request>;
     
-    /// Check if scheduler has work
+    /// 检查是否有待处理的工作
     fn has_pending_work(&self) -> bool;
 }
 
 struct SchedulerOutput {
-    prefill_sequences: Vec<SequenceRef>,
-    decode_sequences: Vec<SequenceRef>,
-    block_tables: HashMap<u64, Vec<u32>>,
-    total_tokens: u32,
+    prefill_sequences: Vec<SequenceRef>,   // Prefill 序列
+    decode_sequences: Vec<SequenceRef>,    // Decode 序列
+    block_tables: HashMap<u64, Vec<u32>>,  // 块表
+    total_tokens: u32,                     // 总 token 数
 }
 ```
 
-### 5. GPU Executor Interface
+### 5. GPUExecutor 接口
 
 ```rust
-trait GPUExecutor {
-    /// Execute a batch of sequences
+trait GPUExecutorTrait {
+    /// 执行一批序列
     fn execute(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
     
-    /// Capture CUDA graph for decode phase
+    /// 捕获 decode 阶段的 CUDA Graph
     fn capture_decode_graph(&mut self, batch_size: u32);
     
-    /// Execute using captured CUDA graph
+    /// 使用捕获的 CUDA Graph 执行
     fn execute_graph(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
 }
 
 struct ExecutionBatch {
-    /// Token IDs for all sequences (flattened)
-    input_tokens: Vec<u32>,
-    /// Position IDs for each token
-    positions: Vec<u32>,
-    /// Sequence lengths for attention masking
-    seq_lens: Vec<u32>,
-    /// Block tables for paged attention (seq_id -> block indices)
-    block_tables: Vec<Vec<u32>>,
-    /// Flags indicating prefill vs decode
-    is_prefill: Vec<bool>,
+    input_tokens: Vec<u32>,        // 所有序列的 token（扁平化）
+    positions: Vec<u32>,           // 每个 token 的位置
+    seq_lens: Vec<u32>,            // 各序列长度
+    block_tables: Vec<Vec<u32>>,   // Paged Attention 块表
+    is_prefill: Vec<bool>,         // Prefill/Decode 标志
 }
 
 struct ExecutionOutput {
-    /// Next token for each sequence
-    next_tokens: Vec<u32>,
-    /// Logits if needed for sampling
-    logits: Option<Vec<f32>>,
+    next_tokens: Vec<u32>,         // 各序列的下一个 token
+    logits: Option<Vec<f32>>,      // Logits（可选）
 }
 ```
 
-### 6. Tokenizer Interface
+### 6. Tokenizer 接口
 
 ```rust
-trait Tokenizer {
-    fn encode(&self, text: &str) -> Vec<u32>;
-    fn decode(&self, tokens: &[u32]) -> String;
-    fn vocab_size(&self) -> u32;
-    fn bos_token_id(&self) -> u32;
-    fn eos_token_id(&self) -> u32;
-    fn pad_token_id(&self) -> u32;
+trait TokenizerTrait {
+    fn encode(&self, text: &str) -> Vec<u32>;   // 文本 → token
+    fn decode(&self, tokens: &[u32]) -> String; // token → 文本
+    fn vocab_size(&self) -> u32;                // 词表大小
+    fn bos_token_id(&self) -> u32;              // BOS token ID
+    fn eos_token_id(&self) -> u32;              // EOS token ID
+    fn pad_token_id(&self) -> u32;              // PAD token ID
 }
 ```
 
-### 7. Inference Engine (Main Orchestrator)
+### 7. InferenceEngine（主编排器）
 
 ```rust
 struct InferenceEngine {
     config: EngineConfig,
-    tokenizer: Box<dyn Tokenizer>,
-    scheduler: Box<dyn Scheduler>,
-    kv_cache_manager: Box<dyn KVCacheManager>,
-    gpu_executor: Box<dyn GPUExecutor>,
+    tokenizer: Box<dyn TokenizerTrait>,
+    scheduler: Box<dyn SchedulerTrait>,
+    kv_cache_manager: Box<dyn KVCacheManagerTrait>,
+    gpu_executor: Box<dyn GPUExecutorTrait>,
 }
 
 impl InferenceEngine {
     fn submit_request(&mut self, text: &str, params: GenerationParams) -> RequestId;
-    fn step(&mut self) -> Vec<CompletedRequest>;
-    fn run(&mut self);  // Main loop
+    fn step(&mut self) -> Vec<CompletedRequest>;  // 单步执行
+    fn run(&mut self);                            // 主循环
 }
 
 struct EngineConfig {
-    block_size: u32,          // Tokens per block (e.g., 16)
-    max_num_blocks: u32,      // Total KV cache blocks
-    max_batch_size: u32,      // Max sequences per batch
-    max_num_seqs: u32,        // Max concurrent sequences
-    max_model_len: u32,       // Max sequence length
+    block_size: u32,          // 每块 token 数（如 16）
+    max_num_blocks: u32,      // KV cache 总块数
+    max_batch_size: u32,      // 最大批次大小
+    max_num_seqs: u32,        // 最大并发序列数
+    max_model_len: u32,       // 最大序列长度
 }
 ```
 
-## Data Models
+## 数据模型
 
-### Physical Block Layout (GPU Memory)
+### 物理块布局（GPU 显存）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -249,12 +276,12 @@ struct EngineConfig {
 │ └─────────┘ │ └─────────┘ │ └─────────┘ │       │ └─────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 
-Each block stores:
+每个块存储：
 - K cache: [block_size, num_heads, head_dim]
 - V cache: [block_size, num_heads, head_dim]
 ```
 
-### Page Table Structure
+### 页表结构
 
 ```
 Sequence 0:                    Sequence 1:
@@ -266,183 +293,157 @@ Sequence 0:                    Sequence 1:
 │   2   →   12  │              │   2   →   9   │
 └──────────────┘              └──────────────┘
 
-Physical blocks can be non-contiguous, enabling efficient memory utilization.
+物理块可以不连续，实现高效的内存利用。
 ```
 
-### Batch Data Layout for GPU
+### GPU 批次数据布局
 
 ```rust
 struct GPUBatchData {
-    // Pinned host memory for fast transfer
+    // Pinned host memory 用于快速传输
     input_ids: PinnedBuffer<u32>,      // [total_tokens]
     positions: PinnedBuffer<u32>,       // [total_tokens]
     
-    // Sequence metadata
-    seq_start_locs: PinnedBuffer<u32>,  // [num_seqs + 1] cumulative
+    // 序列元数据
+    seq_start_locs: PinnedBuffer<u32>,  // [num_seqs + 1] 累积
     seq_lens: PinnedBuffer<u32>,        // [num_seqs]
     
-    // Block tables (padded to max_blocks_per_seq)
+    // 块表（填充到 max_blocks_per_seq）
     block_tables: PinnedBuffer<u32>,    // [num_seqs, max_blocks_per_seq]
     
-    // Context lengths for attention
+    // Attention 上下文长度
     context_lens: PinnedBuffer<u32>,    // [num_seqs]
 }
 ```
 
-### Continuous Batching State Machine
+## 正确性属性
 
-```
-                    ┌─────────────┐
-                    │   Pending   │
-                    └──────┬──────┘
-                           │ schedule()
-                           ▼
-                    ┌─────────────┐
-            ┌───────│   Prefill   │
-            │       └──────┬──────┘
-            │              │ prefill complete
-            │              ▼
-            │       ┌─────────────┐
-            │       │   Decode    │◄────┐
-            │       └──────┬──────┘     │
-            │              │            │ generate token
-            │              ├────────────┘
-            │              │ EOS or max_tokens
-            │              ▼
-            │       ┌─────────────┐
-            └──────▶│  Completed  │
-                    └─────────────┘
-```
+属性是系统在所有有效执行中应保持的特征或行为。
 
-## Correctness Properties
+### 属性 1：请求 ID 唯一性
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+*对于任意* 提交到调度器的请求集合，所有分配的序列 ID 应唯一无重复。
 
+**验证：需求 1.2**
 
-### Property 1: Request ID Uniqueness
+### 属性 2：参数验证正确性
 
-*For any* set of requests submitted to the Scheduler, all assigned sequence IDs shall be unique with no collisions.
+*对于任意* 生成参数 (max_tokens, temperature, top_p)，验证函数返回 true 当且仅当所有参数在有效范围内（max_tokens > 0, 0 < temperature ≤ 2.0, 0 < top_p ≤ 1.0）。
 
-**Validates: Requirements 1.2**
+**验证：需求 1.3**
 
-### Property 2: Parameter Validation Correctness
+### 属性 3：序列启动时的块分配
 
-*For any* generation parameters (max_tokens, temperature, top_p), the validation function shall return true if and only if all parameters are within their acceptable ranges (max_tokens > 0, 0 < temperature <= 2.0, 0 < top_p <= 1.0).
+*对于任意* 具有 n 个输入 token 的新序列，KV Cache 管理器应分配 ceil(n / block_size) 个逻辑块，每个映射到不同的物理块。
 
-**Validates: Requirements 1.3**
+**验证：需求 2.2**
 
-### Property 3: Block Allocation on Sequence Start
+### 属性 4：增长时的块分配
 
-*For any* new sequence with n input tokens, the KV_Cache_Manager shall allocate ceil(n / block_size) logical blocks, each mapped to a distinct physical block.
+*对于任意* 超出当前块容量的序列，当 token 数跨越块边界时，KV Cache 管理器应恰好分配一个额外的物理块。
 
-**Validates: Requirements 2.2**
+**验证：需求 2.3**
 
-### Property 4: Block Allocation on Growth
+### 属性 5：块计数不变量
 
-*For any* sequence that grows beyond its current block capacity, the KV_Cache_Manager shall allocate exactly one additional physical block when the token count crosses a block boundary.
+*对于任意* KV Cache 管理器状态，不变量 `used_blocks + free_blocks == total_blocks` 应成立。此外，序列释放时，所有块应返回空闲池。
 
-**Validates: Requirements 2.3**
+**验证：需求 2.4, 2.5**
 
-### Property 5: Block Count Invariant
+### 属性 6：调度器队列状态一致性
 
-*For any* state of the KV_Cache_Manager, the invariant `used_blocks + free_blocks == total_blocks` shall hold. Additionally, when a sequence is freed, all its blocks shall return to the free pool.
+*对于任意* 调度器中的请求，它应恰好在一个队列中：pending、prefill 或 decode。
 
-**Validates: Requirements 2.4, 2.5**
+**验证：需求 3.1**
 
-### Property 6: Scheduler Queue State Consistency
+### 属性 7：批次大小约束
 
-*For any* request in the scheduler, it shall be in exactly one queue: pending (if not yet scheduled), prefill (if in prefill phase), or decode (if in decode phase).
+*对于任意* 调度的批次，序列数不应超过 max_batch_size，token 总数不应超过 max_total_tokens。
 
-**Validates: Requirements 3.1**
+**验证：需求 3.5**
 
-### Property 7: Batch Size Constraints
+### 属性 8：Decode 优先于 Prefill
 
-*For any* scheduled batch, the number of sequences shall not exceed max_batch_size, and the total number of tokens shall not exceed max_total_tokens.
+*对于任意* prefill 和 decode 请求都待处理且批次容量允许的调度决策，所有合格的 decode 请求应在 prefill 请求之前调度。
 
-**Validates: Requirements 3.5**
+**验证：需求 3.7**
 
-### Property 8: Decode Priority Over Prefill
+### 属性 9：Prefill 到 Decode 转换
 
-*For any* scheduling decision where both prefill and decode requests are pending and batch capacity allows, all eligible decode requests shall be scheduled before any prefill requests.
+*对于任意* 完成 prefill 阶段的序列，它应在同一调度周期内立即转换到 decode 状态。
 
-**Validates: Requirements 3.7**
+**验证：需求 3.3**
 
-### Property 9: Prefill to Decode Transition
+### 属性 10：完成条件
 
-*For any* sequence that completes its prefill phase, it shall immediately transition to decode state in the same scheduling cycle.
+*对于任意* decode 阶段的序列，它当且仅当生成 EOS token 或达到 max_tokens 时转换到完成状态。
 
-**Validates: Requirements 3.3**
+**验证：需求 3.4**
 
-### Property 10: Completion Conditions
+### 属性 11：可变序列长度处理
 
-*For any* sequence in decode phase, it shall transition to completed state if and only if it generates an EOS token or reaches max_tokens.
+*对于任意* 包含不同长度序列的批次，GPU 执行器应为每个序列独立产生正确的 attention 输出。
 
-**Validates: Requirements 3.4**
+**验证：需求 4.2**
 
-### Property 11: Variable Sequence Length Handling
+### 属性 12：内存统计不变量
 
-*For any* batch containing sequences of different lengths, the GPU_Executor shall produce correct attention outputs for each sequence independently.
+*对于任意* KV Cache 管理器状态，报告的内存统计应满足：`total_blocks == used_blocks + free_blocks` 且 `num_sequences == 已分配块的序列数`。
 
-**Validates: Requirements 4.2**
+**验证：需求 6.2**
 
-### Property 12: Memory Statistics Invariant
+### 属性 13：内存压力响应
 
-*For any* state of the KV_Cache_Manager, the reported memory statistics shall satisfy: `total_blocks == used_blocks + free_blocks` and `num_sequences == count of sequences with allocated blocks`.
+*对于任意* 内存利用率超过配置阈值的状态，调度器应拒绝新的 prefill 请求直到内存释放。
 
-**Validates: Requirements 6.2**
+**验证：需求 6.3**
 
-### Property 13: Memory Pressure Response
+### 属性 14：配置验证
 
-*For any* state where memory utilization exceeds the configured threshold, the Scheduler shall reject new prefill requests until memory is freed.
+*对于任意* 配置输入，验证应拒绝 block_size ≤ 0, max_num_blocks ≤ 0, max_batch_size ≤ 0, 或 max_num_seqs ≤ 0 的配置。
 
-**Validates: Requirements 6.3**
+**验证：需求 7.2**
 
-### Property 14: Configuration Validation
+### 属性 15：分词器往返
 
-*For any* configuration input, the validation shall reject configurations where block_size <= 0, max_num_blocks <= 0, max_batch_size <= 0, or max_num_seqs <= 0.
+*对于任意* 有效文本输入，解码编码后的 token 应产生与原始输入等价的文本（考虑规范化）。
 
-**Validates: Requirements 7.2**
+**验证：需求 8.4**
 
-### Property 15: Tokenizer Round-Trip
+## 错误处理
 
-*For any* valid text input, decoding the encoded tokens shall produce text equivalent to the original input (accounting for normalization).
+### 内存错误
 
-**Validates: Requirements 8.4**
+| 错误条件 | 处理策略 |
+|----------|----------|
+| 无空闲块 | 返回 `MemoryError::OutOfBlocks`，调度器停止接受新 prefill |
+| 块分配失败 | 记录错误，标记请求失败，释放部分分配 |
+| GPU 内存分配失败 | 优雅降级，减少 max_num_blocks 并重试 |
 
-## Error Handling
+### 请求错误
 
-### Memory Errors
+| 错误条件 | 处理策略 |
+|----------|----------|
+| 无效参数 | 立即返回验证错误，不排队请求 |
+| 分词失败 | 返回带详情的错误，不创建序列 |
+| 超过最大序列长度 | 根据配置截断或拒绝 |
 
-| Error Condition | Handling Strategy |
-|----------------|-------------------|
-| No free blocks available | Return `MemoryError::OutOfBlocks`, scheduler stops accepting new prefills |
-| Block allocation fails | Log error, mark request as failed, free partial allocations |
-| GPU memory allocation fails | Graceful degradation, reduce max_num_blocks and retry |
+### 执行错误
 
-### Request Errors
+| 错误条件 | 处理策略 |
+|----------|----------|
+| CUDA kernel 错误 | 记录错误，标记受影响序列为失败，继续处理其他 |
+| GPU 超时 | 记录警告，重试一次，然后标记为失败 |
+| 输出含 NaN/Inf | 检测并标记序列为失败 |
 
-| Error Condition | Handling Strategy |
-|----------------|-------------------|
-| Invalid parameters | Return validation error immediately, do not queue request |
-| Tokenization fails | Return error with details, do not create sequence |
-| Max sequence length exceeded | Truncate or reject based on configuration |
-
-### Execution Errors
-
-| Error Condition | Handling Strategy |
-|----------------|-------------------|
-| CUDA kernel error | Log error, mark affected sequences as failed, continue with others |
-| GPU timeout | Log warning, retry once, then mark as failed |
-| NaN/Inf in outputs | Detect and mark sequence as failed |
-
-### Recovery Strategies
+### 恢复策略
 
 ```rust
 enum RecoveryAction {
-    Retry { max_attempts: u32 },
-    SkipSequence,
-    ResetBatch,
-    Shutdown,
+    Retry { max_attempts: u32 },   // 重试
+    SkipSequence,                  // 跳过序列
+    ResetBatch,                    // 重置批次
+    Shutdown,                      // 关闭引擎
 }
 
 impl InferenceEngine {
@@ -456,122 +457,87 @@ impl InferenceEngine {
 }
 ```
 
-## Testing Strategy
+## 测试策略
 
-### Unit Tests
+### 单元测试
 
-Unit tests focus on specific examples and edge cases:
+单元测试关注具体示例和边界情况：
 
-1. **KV Cache Manager**
-   - Allocate single sequence, verify block mapping
-   - Allocate multiple sequences, verify isolation
-   - Free sequence, verify blocks returned
-   - Edge case: allocate when exactly at capacity
+1. **KV Cache 管理器**
+   - 分配单个序列，验证块映射
+   - 分配多个序列，验证隔离
+   - 释放序列，验证块返回
+   - 边界：恰好在容量时分配
 
-2. **Scheduler**
-   - Add single request, verify queued
-   - Schedule batch with only prefill requests
-   - Schedule batch with only decode requests
-   - Edge case: empty scheduler returns empty batch
+2. **调度器**
+   - 添加单个请求，验证排队
+   - 调度仅 prefill 请求的批次
+   - 调度仅 decode 请求的批次
+   - 边界：空调度器返回空批次
 
-3. **Tokenizer**
-   - Encode known text, verify expected tokens
-   - Decode known tokens, verify expected text
-   - Handle empty string
-   - Handle special characters
+3. **分词器**
+   - 编码已知文本，验证预期 token
+   - 解码已知 token，验证预期文本
+   - 处理空字符串
+   - 处理特殊字符
 
-4. **Configuration**
-   - Load valid config file
-   - Reject invalid config values
-   - Apply default values for missing fields
+4. **配置**
+   - 加载有效配置文件
+   - 拒绝无效配置值
+   - 对缺失字段应用默认值
 
-### Property-Based Tests
+### 属性测试
 
-Property-based tests validate universal properties across many generated inputs. We will use the `proptest` crate for Rust.
+属性测试验证跨多个生成输入的通用属性。使用 `proptest` crate。
 
-Each property test must:
-- Run minimum 100 iterations
-- Reference the design document property
-- Use tag format: **Feature: heterogeneous-inference-system, Property N: [property_text]**
+每个属性测试必须：
+- 最少运行 100 次迭代
+- 引用设计文档属性
+- 使用标签格式：**Feature: heterogeneous-inference-system, Property N: [属性文本]**
 
-**Test Configuration:**
+**测试配置：**
 ```rust
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
     
-    // Property tests here
+    // 属性测试
 }
 ```
 
-**Property Test Implementations:**
+### 集成测试
 
-1. **Property 1: Request ID Uniqueness**
-   - Generate N random requests
-   - Submit all to scheduler
-   - Assert all sequence IDs are unique
+1. **端到端请求流**
+   - 提交请求，运行直到完成
+   - 验证输出 token 已生成
+   - 验证完成后 KV cache 已释放
 
-2. **Property 2: Parameter Validation**
-   - Generate random (max_tokens, temperature, top_p) tuples
-   - Assert validation result matches expected based on ranges
+2. **连续批处理**
+   - 以交错时间提交多个请求
+   - 验证全部正确完成
+   - 验证形成混合 prefill/decode 批次
 
-3. **Property 5: Block Count Invariant**
-   - Generate sequence of allocate/free operations
-   - After each operation, assert used + free == total
+3. **内存压力**
+   - 填充内存到阈值
+   - 验证新 prefill 被拒绝
+   - 完成一些请求
+   - 验证新 prefill 再次被接受
 
-4. **Property 7: Batch Size Constraints**
-   - Generate random request workload
-   - Schedule batches
-   - Assert each batch respects size limits
+## 当前实现状态
 
-5. **Property 15: Tokenizer Round-Trip**
-   - Generate random valid text strings
-   - Assert decode(encode(text)) == normalize(text)
+### 已实现 ✅
 
-### Integration Tests
+- PagedAttention KV Cache 管理
+- Continuous Batching 调度器
+- 内存压力感知
+- 模块化 trait 抽象
+- 完整的属性测试
+- Mock GPU 执行器
 
-1. **End-to-End Request Flow**
-   - Submit request, run until completion
-   - Verify output tokens generated
-   - Verify KV cache freed after completion
+### 未实现 ❌
 
-2. **Continuous Batching**
-   - Submit multiple requests with staggered timing
-   - Verify all complete correctly
-   - Verify mixed prefill/decode batches formed
+- 真实 CUDA kernel
+- 真实 pinned memory
+- Copy-on-write KV 共享
+- 异步 CPU/GPU overlap
 
-3. **Memory Pressure**
-   - Fill memory to threshold
-   - Verify new prefills rejected
-   - Complete some requests
-   - Verify new prefills accepted again
-
-### Test Data Generators
-
-```rust
-// Generate valid generation parameters
-fn arb_valid_params() -> impl Strategy<Value = GenerationParams> {
-    (1u32..1000, 0.1f32..2.0, 0.1f32..1.0)
-        .prop_map(|(max_tokens, temp, top_p)| GenerationParams {
-            max_tokens,
-            temperature: temp,
-            top_p,
-        })
-}
-
-// Generate sequence of cache operations
-fn arb_cache_ops() -> impl Strategy<Value = Vec<CacheOp>> {
-    prop::collection::vec(
-        prop_oneof![
-            any::<u64>().prop_map(CacheOp::Allocate),
-            any::<u64>().prop_map(CacheOp::Free),
-            (any::<u64>(), 1u32..100).prop_map(|(id, n)| CacheOp::Grow(id, n)),
-        ],
-        0..50
-    )
-}
-
-// Generate valid text for tokenizer testing
-fn arb_valid_text() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9 .,!?]{1,100}"
-}
-```
+`GPUExecutor` 目前是 **mock 实现**，用于测试和验证调度逻辑。

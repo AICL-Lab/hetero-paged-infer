@@ -1,10 +1,53 @@
-//! Inference Engine - Main orchestrator
+//! 推理引擎 - 主编排器
 //!
-//! Coordinates all components for end-to-end inference:
-//! - Tokenizer for text processing
-//! - Scheduler for request management
-//! - GPU Executor for computation
-//! - KV Cache Manager for memory
+//! 协调所有组件实现端到端推理：
+//! - Tokenizer 用于文本处理
+//! - Scheduler 用于请求管理
+//! - GPU Executor 用于计算
+//! - KV Cache Manager 用于内存管理
+//!
+//! # 架构
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │            InferenceEngine              │
+//! │  ┌──────────┐  ┌──────────┐  ┌───────┐  │
+//! │  │Tokenizer │  │Scheduler │  │  GPU  │  │
+//! │  │          │  │          │  │Executor│ │
+//! │  └──────────┘  └────┬─────┘  └───────┘  │
+//! │                     │                    │
+//! │              ┌──────▼──────┐            │
+//! │              │ KV Cache    │            │
+//! │              │ Manager     │            │
+//! │              └─────────────┘            │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! # 示例
+//!
+//! ```rust
+//! use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+//!
+//! // 创建引擎
+//! let config = EngineConfig::default();
+//! let mut engine = InferenceEngine::new(config)?;
+//!
+//! // 提交请求
+//! let params = GenerationParams {
+//!     max_tokens: 50,
+//!     temperature: 1.0,
+//!     top_p: 0.9,
+//! };
+//! let request_id = engine.submit_request("你好，世界！", params)?;
+//!
+//! // 运行推理
+//! let completed = engine.run();
+//!
+//! for result in completed {
+//!     println!("输出: {}", result.output_text);
+//! }
+//! # Ok::<(), hetero_infer::EngineError>(())
+//! ```
 
 use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
@@ -13,36 +56,73 @@ use crate::scheduler::{Scheduler, SchedulerTrait};
 use crate::tokenizer::{SimpleTokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
 
-/// Main inference engine orchestrating all components
+/// 推理引擎
+///
+/// 主编排器，协调所有组件实现端到端推理。
+///
+/// # 组件
+///
+/// - **Tokenizer** - 文本与 token 之间的转换
+/// - **Scheduler** - 请求调度和批次管理
+/// - **GPU Executor** - GPU 计算执行
+/// - **KV Cache Manager** - KV Cache 内存管理
+///
+/// # 示例
+///
+/// ```rust
+/// use hetero_infer::{EngineConfig, InferenceEngine};
+///
+/// let config = EngineConfig::default();
+/// let engine = InferenceEngine::new(config)?;
+/// # Ok::<(), hetero_infer::EngineError>(())
+/// ```
 pub struct InferenceEngine {
-    /// Engine configuration
+    /// 引擎配置
     config: EngineConfig,
-    /// Tokenizer for text processing
+    /// 文本处理器
     tokenizer: Box<dyn TokenizerTrait>,
-    /// Scheduler for request management
+    /// 请求调度器
     scheduler: Scheduler,
-    /// GPU executor for computation
+    /// GPU 执行器
     gpu_executor: Box<dyn GPUExecutorTrait>,
-    /// EOS token ID for completion detection
+    /// EOS token ID（用于检测完成）
     eos_token_id: u32,
-    /// Running flag
+    /// 运行标志
     running: bool,
-    /// Maximum steps (for testing, 0 = unlimited)
+    /// 最大步数（用于测试，0 = 无限制）
     max_steps: usize,
-    /// Total requests submitted
+    /// 已提交请求总数
     total_requests: u64,
-    /// Total requests completed successfully
+    /// 成功完成请求总数
     completed_requests_count: u64,
-    /// Total requests failed
+    /// 失败请求总数
     failed_requests_count: u64,
-    /// Total tokens generated
+    /// 已生成 token 总数
     total_tokens_generated: u64,
-    /// Request ID counter (instance-level, avoids global state leaking across tests)
+    /// 请求 ID 计数器（实例级，避免全局状态在测试间泄漏）
     next_request_id: RequestId,
 }
 
 impl InferenceEngine {
-    /// Create a new inference engine with default components
+    /// 创建新的推理引擎（使用默认组件）
+    ///
+    /// # 参数
+    ///
+    /// * `config` - 引擎配置
+    ///
+    /// # 错误
+    ///
+    /// 如果配置无效，返回 [`EngineError::Config`]。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{EngineConfig, InferenceEngine};
+    ///
+    /// let config = EngineConfig::default();
+    /// let engine = InferenceEngine::new(config)?;
+    /// # Ok::<(), hetero_infer::EngineError>(())
+    /// ```
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
 
@@ -69,7 +149,14 @@ impl InferenceEngine {
         })
     }
 
-    /// Create engine with custom components (for testing)
+    /// 使用自定义组件创建引擎（用于测试）
+    ///
+    /// # 参数
+    ///
+    /// * `config` - 引擎配置
+    /// * `tokenizer` - 自定义分词器
+    /// * `scheduler` - 自定义调度器
+    /// * `gpu_executor` - 自定义 GPU 执行器
     pub fn with_components(
         config: EngineConfig,
         tokenizer: Box<dyn TokenizerTrait>,
@@ -96,29 +183,65 @@ impl InferenceEngine {
         })
     }
 
-    /// Set maximum steps for testing
+    /// 设置最大步数（用于测试）
+    ///
+    /// # 参数
+    ///
+    /// * `max_steps` - 最大执行步数，0 表示无限制
     pub fn set_max_steps(&mut self, max_steps: usize) {
         self.max_steps = max_steps;
     }
 
-    /// Submit a new inference request
+    /// 提交新的推理请求
+    ///
+    /// # 参数
+    ///
+    /// * `text` - 输入文本
+    /// * `params` - 生成参数
+    ///
+    /// # 返回
+    ///
+    /// 请求的唯一标识符。
+    ///
+    /// # 错误
+    ///
+    /// - [`EngineError::Validation`] - 参数无效或输入为空
+    /// - [`EngineError::Scheduler`] - 内存压力或达到序列上限
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+    ///
+    /// let config = EngineConfig::default();
+    /// let mut engine = InferenceEngine::new(config)?;
+    ///
+    /// let params = GenerationParams {
+    ///     max_tokens: 50,
+    ///     temperature: 1.0,
+    ///     top_p: 0.9,
+    /// };
+    ///
+    /// let request_id = engine.submit_request("你好", params)?;
+    /// # Ok::<(), hetero_infer::EngineError>(())
+    /// ```
     pub fn submit_request(
         &mut self,
         text: &str,
         params: GenerationParams,
     ) -> Result<RequestId, EngineError> {
-        // Validate parameters
+        // 验证参数
         params.validate()?;
 
-        // Validate input
+        // 验证输入
         if text.is_empty() {
             return Err(ValidationError::EmptyInput.into());
         }
 
-        // Tokenize input
+        // 分词
         let input_tokens = self.tokenizer.encode(text);
 
-        // Check prompt length
+        // 检查 prompt 长度
         if input_tokens.len() > self.config.max_model_len as usize {
             return Err(ValidationError::InputTooLong(
                 input_tokens.len(),
@@ -136,28 +259,34 @@ impl InferenceEngine {
             .into());
         }
 
-        // Create request with instance-level ID
+        // 创建请求（使用实例级 ID）
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         let request = Request::new(request_id, input_tokens, params);
 
-        // Add to scheduler
+        // 添加到调度器
         self.scheduler.add_request(request)?;
         self.total_requests += 1;
 
         Ok(request_id)
     }
 
-    /// Execute one inference step
+    /// 执行一步推理
+    ///
+    /// 调度下一批次并执行 GPU 计算。
+    ///
+    /// # 返回
+    ///
+    /// 本次步骤完成的请求列表。
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError> {
-        // Schedule next batch
+        // 调度下一批次
         let scheduler_output = self.scheduler.schedule();
 
         if !scheduler_output.is_empty() {
-            // Build execution batch
+            // 构建执行批次
             let execution_batch = build_execution_batch(&scheduler_output);
 
-            // Execute on GPU
+            // 执行 GPU 计算
             match self.execute_batch(&execution_batch) {
                 Ok(execution_output) => {
                     self.scheduler
@@ -195,7 +324,7 @@ impl InferenceEngine {
                         RecoveryAction::Retry { max_attempts } if retries < max_attempts => {
                             retries += 1;
                             log::warn!(
-                                "Retrying batch execution after error (attempt {}/{}): {}",
+                                "重试批次执行 (尝试 {}/{}): {}",
                                 retries,
                                 max_attempts,
                                 engine_error
@@ -243,7 +372,29 @@ impl InferenceEngine {
             .collect()
     }
 
-    /// Run the inference loop until all requests complete
+    /// 运行推理循环直到所有请求完成
+    ///
+    /// # 返回
+    ///
+    /// 所有完成的请求列表。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+    ///
+    /// let config = EngineConfig::default();
+    /// let mut engine = InferenceEngine::new(config)?;
+    ///
+    /// let params = GenerationParams::default();
+    /// engine.submit_request("测试", params)?;
+    ///
+    /// let completed = engine.run();
+    /// for result in completed {
+    ///     println!("输出: {}", result.output_text);
+    /// }
+    /// # Ok::<(), hetero_infer::EngineError>(())
+    /// ```
     pub fn run(&mut self) -> Vec<CompletedRequest> {
         self.running = true;
         let mut all_completed = Vec::new();
@@ -255,7 +406,7 @@ impl InferenceEngine {
                     all_completed.extend(completed);
                 }
                 Err(e) => {
-                    log::error!("Inference step failed: {}", e);
+                    log::error!("推理步骤失败: {}", e);
                     match self.handle_error(&e) {
                         RecoveryAction::Shutdown => {
                             self.running = false;
@@ -281,42 +432,55 @@ impl InferenceEngine {
         all_completed
     }
 
-    /// Stop the inference loop
+    /// 停止推理循环
     pub fn stop(&mut self) {
         self.running = false;
     }
 
-    /// Check if engine has pending work
+    /// 检查是否有待处理的工作
     pub fn has_pending_work(&self) -> bool {
         self.scheduler.has_pending_work()
     }
 
-    /// Get memory utilization
+    /// 获取内存利用率
     pub fn memory_utilization(&self) -> f32 {
         self.scheduler.get_memory_utilization()
     }
 
-    /// Get configuration
+    /// 获取配置
     pub fn config(&self) -> &EngineConfig {
         &self.config
     }
 }
 
-/// Recovery action for error handling
+/// 错误恢复策略
+///
+/// 定义执行错误发生时的恢复行为。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecoveryAction {
-    /// Retry the operation
-    Retry { max_attempts: u32 },
-    /// Skip the problematic sequence
+    /// 重试操作
+    Retry {
+        /// 最大重试次数
+        max_attempts: u32,
+    },
+    /// 跳过问题序列
     SkipSequence,
-    /// Reset the current batch
+    /// 重置当前批次
     ResetBatch,
-    /// Shutdown the engine
+    /// 关闭引擎
     Shutdown,
 }
 
 impl InferenceEngine {
-    /// Handle execution error and determine recovery action
+    /// 处理执行错误并确定恢复策略
+    ///
+    /// # 参数
+    ///
+    /// * `error` - 发生的错误
+    ///
+    /// # 返回
+    ///
+    /// 推荐的恢复策略。
     pub fn handle_error(&self, error: &EngineError) -> RecoveryAction {
         match error {
             EngineError::Execution(exec_err) => match exec_err {
@@ -336,25 +500,40 @@ impl InferenceEngine {
     }
 }
 
-/// Metrics for monitoring
+/// 引擎指标
+///
+/// 运行时统计信息。
 #[derive(Debug, Clone, Default)]
 pub struct EngineMetrics {
-    /// Total requests submitted
+    /// 已提交请求总数
     pub total_requests: u64,
-    /// Total requests completed
+    /// 成功完成请求总数
     pub completed_requests: u64,
-    /// Total requests failed
+    /// 失败请求总数
     pub failed_requests: u64,
-    /// Total tokens generated
+    /// 已生成 token 总数
     pub total_tokens_generated: u64,
-    /// Current memory utilization
+    /// 当前内存利用率
     pub memory_utilization: f32,
-    /// Current active sequences
+    /// 当前活跃序列数
     pub active_sequences: u32,
 }
 
 impl InferenceEngine {
-    /// Get current metrics
+    /// 获取当前指标
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{EngineConfig, InferenceEngine};
+    ///
+    /// let config = EngineConfig::default();
+    /// let engine = InferenceEngine::new(config)?;
+    ///
+    /// let metrics = engine.get_metrics();
+    /// println!("完成请求: {}", metrics.completed_requests);
+    /// # Ok::<(), hetero_infer::EngineError>(())
+    /// ```
     pub fn get_metrics(&self) -> EngineMetrics {
         EngineMetrics {
             total_requests: self.total_requests,
@@ -498,7 +677,9 @@ mod tests {
         let result = engine.submit_request("Hello", params);
         assert!(matches!(
             result,
-            Err(EngineError::Validation(ValidationError::TotalLengthTooLong(_, 8)))
+            Err(EngineError::Validation(
+                ValidationError::TotalLengthTooLong(_, 8)
+            ))
         ));
     }
 
@@ -578,7 +759,10 @@ mod tests {
 
         let cuda_error =
             EngineError::Execution(crate::error::ExecutionError::CudaError("test".to_string()));
-        assert_eq!(engine.handle_error(&cuda_error), RecoveryAction::SkipSequence);
+        assert_eq!(
+            engine.handle_error(&cuda_error),
+            RecoveryAction::SkipSequence
+        );
 
         let timeout_error = EngineError::Execution(crate::error::ExecutionError::GpuTimeout);
         assert_eq!(
@@ -621,7 +805,9 @@ mod tests {
         )
         .unwrap();
 
-        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
 
         let completed = engine.run();
 
@@ -643,7 +829,9 @@ mod tests {
         )
         .unwrap();
 
-        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
         let _ = engine.run();
 
         let metrics = engine.get_metrics();
@@ -664,7 +852,9 @@ mod tests {
         .unwrap();
         engine.set_max_steps(200);
 
-        engine.submit_request("Hello", GenerationParams::default()).unwrap();
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
         let completed = engine.run();
 
         assert_eq!(completed.len(), 1);

@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 permissions:
   contents: read
@@ -18,17 +19,17 @@ concurrency:
 
 jobs:
   check:
-    name: Check & Test
+    name: 检查与测试
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry & build
+      - name: 缓存 cargo 注册表与构建
         uses: actions/cache@v4
         with:
           path: |
@@ -38,18 +39,61 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Check formatting
+      - name: 检查格式
         run: cargo fmt --all -- --check
 
-      - name: Clippy lint
+      - name: Clippy 静态检查
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
+      - name: 构建
         run: cargo build --verbose
 
-      - name: Run tests
+      - name: 运行测试
         run: cargo test --verbose
 
-      - name: Run tests (with cuda feature)
-        if: false  # Disabled: requires CUDA environment not available on GitHub-hosted runners
+      - name: 运行文档测试
+        run: cargo test --doc --verbose
+
+      - name: 运行 CUDA feature 测试
+        if: false  # 已禁用：需要 GitHub Hosted Runner 上不可用的 CUDA 环境
         run: cargo test --verbose --features cuda
+
+  docs:
+    name: 文档构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 注册表与构建
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: 构建文档
+        run: cargo doc --no-deps --verbose
+
+      - name: 检查文档警告
+        run: cargo doc --no-deps 2>&1 | grep -E "warning:" && exit 1 || exit 0
+
+  security:
+    name: 安全审计
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: 运行安全审计
+        run: cargo audit

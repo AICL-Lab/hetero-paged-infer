@@ -1,7 +1,19 @@
-//! Continuous Batching Scheduler
+//! Continuous Batching 调度器
 //!
-//! Implements request scheduling with prefill/decode phase management
-//! and memory-aware batch formation.
+//! 实现请求调度，支持 prefill/decode 阶段管理和内存感知的批次构建。
+//!
+//! # 核心特性
+//!
+//! - **Decode 优先调度** - 优先调度 decode 请求以降低延迟
+//! - **内存压力感知** - 内存超阈值时拒绝新 prefill
+//! - **连续批处理** - 动态组合 prefill 和 decode 请求
+//!
+//! # 状态机
+//!
+//! ```text
+//! Pending → Prefill → Decode → Completed
+//!                   ↘ Failed
+//! ```
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -13,24 +25,26 @@ use crate::types::{
     ExecutionOutput, Request, RequestState, SchedulerOutput, SeqId, Sequence, TokenId,
 };
 
-/// Scheduler trait defining the interface
+/// 调度器 trait 接口
+///
+/// 定义调度器的标准接口，便于替换实现。
 pub trait SchedulerTrait {
-    /// Add new request to pending queue
+    /// 添加新请求到待处理队列
     fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError>;
 
-    /// Schedule next batch for execution
+    /// 调度下一批次用于执行
     fn schedule(&mut self) -> SchedulerOutput;
 
-    /// Update sequences after GPU execution
+    /// GPU 执行后更新序列状态
     fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId);
 
-    /// Get completed requests
+    /// 获取已完成的请求
     fn get_completed(&mut self) -> Vec<Request>;
 
-    /// Check if scheduler has work
+    /// 检查是否有待处理的工作
     fn has_pending_work(&self) -> bool;
 
-    /// Get memory stats from KV cache
+    /// 获取 KV Cache 内存利用率
     fn get_memory_utilization(&self) -> f32;
 }
 
@@ -40,7 +54,21 @@ struct PendingRequest {
     request: Request,
 }
 
-/// Continuous batching scheduler implementation
+/// Continuous Batching 调度器
+///
+/// 实现请求调度，支持 prefill/decode 分阶段管理和内存感知。
+///
+/// # 调度策略
+///
+/// 1. **Decode 优先** - 优先调度 decode 请求
+/// 2. **Prefill 次之** - 在 decode 调度完成后处理 prefill
+/// 3. **新请求入队** - 内存压力低时接受新请求
+///
+/// # 约束
+///
+/// - 批次序列数不超过 `max_batch_size`
+/// - 批次 token 总数不超过 `max_total_tokens`
+/// - 内存利用率超阈值时拒绝新 prefill
 pub struct Scheduler {
     /// Configuration
     config: EngineConfig,
@@ -176,7 +204,11 @@ impl Scheduler {
             return;
         }
 
-        if let Some(index) = self.pending_queue.iter().position(|pending| pending.seq_id == seq_id) {
+        if let Some(index) = self
+            .pending_queue
+            .iter()
+            .position(|pending| pending.seq_id == seq_id)
+        {
             if let Some(mut pending) = self.pending_queue.remove(index) {
                 pending.request.state = RequestState::Failed(reason);
                 self.completed_requests.push(pending.request);
@@ -237,7 +269,8 @@ impl SchedulerTrait for Scheduler {
         }
 
         let seq_id = self.generate_seq_id();
-        self.pending_queue.push_back(PendingRequest { seq_id, request });
+        self.pending_queue
+            .push_back(PendingRequest { seq_id, request });
 
         Ok(seq_id)
     }
@@ -654,7 +687,10 @@ mod tests {
         assert_eq!(scheduled.decode_sequences.len(), 1);
         assert_eq!(scheduled.prefill_sequences.len(), 0);
         assert_eq!(scheduled.decode_sequences[0].seq_id, decode_seq_id);
-        assert!(scheduler.pending_queue.iter().any(|pending| pending.seq_id == pending_seq_id));
+        assert!(scheduler
+            .pending_queue
+            .iter()
+            .any(|pending| pending.seq_id == pending_seq_id));
     }
 }
 

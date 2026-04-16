@@ -1,127 +1,170 @@
-# Requirements Document
+# 需求文档
 
-## Introduction
+## 介绍
 
-This document defines the requirements for a Heterogeneous Inference Microservice - a high-performance inference engine that leverages CPU-GPU co-execution for Large Language Model (LLM) inference. The system implements PagedAttention for efficient KV Cache management and Continuous Batching for optimal throughput.
+本文档定义异构推理微服务的需求——一个利用 CPU-GPU 协同执行进行大语言模型 (LLM) 推理的高性能推理引擎。系统实现 PagedAttention 进行高效的 KV Cache 管理，以及 Continuous Batching 实现最优吞吐量。
 
-## Glossary
+## 术语表
 
-- **Inference_Engine**: The core system that orchestrates CPU and GPU resources for LLM inference
-- **Scheduler**: CPU component responsible for request scheduling and batch organization
-- **KV_Cache_Manager**: CPU component managing Key-Value cache memory using paged allocation
-- **GPU_Executor**: GPU component executing CUDA/Triton kernels for attention and matrix operations
-- **Tokenizer**: CPU component for text-to-token and token-to-text conversion
-- **Request**: A single inference request containing input tokens and generation parameters
-- **Batch**: A collection of requests processed together on GPU
-- **Prefill_Phase**: Initial phase where all input tokens are processed to populate KV cache
-- **Decode_Phase**: Autoregressive generation phase producing one token per step
-- **Physical_Block**: A contiguous GPU memory region holding KV cache for fixed number of tokens
-- **Logical_Block**: Virtual block mapped to physical blocks via page table
-- **Page_Table**: Mapping structure from logical blocks to physical blocks per sequence
+| 术语 | 说明 |
+|------|------|
+| **Inference_Engine** | 编排 CPU 和 GPU 资源进行 LLM 推理的核心系统 |
+| **Scheduler** | CPU 组件，负责请求调度和批次组织 |
+| **KV_Cache_Manager** | CPU 组件，使用分页分配管理 KV Cache 内存 |
+| **GPU_Executor** | GPU 组件，执行 CUDA/Triton kernel 进行 attention 和矩阵运算 |
+| **Tokenizer** | CPU 组件，进行文本与 token 之间的转换 |
+| **Request** | 单个推理请求，包含输入 token 和生成参数 |
+| **Batch** | 一起在 GPU 上处理的请求集合 |
+| **Prefill_Phase** | 初始阶段，处理所有输入 token 以填充 KV cache |
+| **Decode_Phase** | 自回归生成阶段，每步产生一个 token |
+| **Physical_Block** | GPU 显存中的连续区域，存储固定数量 token 的 KV cache |
+| **Logical_Block** | 通过页表映射到物理块的虚拟块 |
+| **Page_Table** | 每个序列的逻辑块到物理块的映射结构 |
 
-## Requirements
+## 需求
 
-> Note: this document describes the target architecture. Parts of Requirement 4-7 are not fully implemented in the current codebase yet; the current repository mainly provides a validated scheduler/KV-cache prototype with a mock GPU executor.
+> 注意：本文档描述目标架构。需求 4-7 的部分内容在当前代码库中尚未完全实现；当前仓库主要提供经过验证的调度器/KV-cache 原型和一个 mock GPU 执行器。
 
+---
 
-### Requirement 1: Request Management
+### 需求 1：请求管理
 
-**User Story:** As a client, I want to submit inference requests to the system, so that I can get generated text responses.
+**用户故事：** 作为客户端，我希望向系统提交推理请求，以便获得生成的文本响应。
 
-#### Acceptance Criteria
+#### 验收标准
 
-1. WHEN a client submits a request with input text and generation parameters THEN THE Inference_Engine SHALL tokenize the input and create a pending request entry
-2. WHEN a request is created THEN THE Scheduler SHALL assign a unique sequence ID and initialize request state
-3. WHEN generation parameters include max_tokens, temperature, and top_p THEN THE Inference_Engine SHALL validate parameters are within acceptable ranges
-4. IF a request contains invalid parameters THEN THE Inference_Engine SHALL return a descriptive error without processing
-5. WHEN a request completes generation THEN THE Inference_Engine SHALL detokenize output and return the response to client
+1. 当客户端提交包含输入文本和生成参数的请求时，推理引擎应分词输入并创建待处理请求条目
+2. 当请求创建时，调度器应分配唯一的序列 ID 并初始化请求状态
+3. 当生成参数包含 max_tokens、temperature 和 top_p 时，推理引擎应验证参数在可接受范围内
+4. 如果请求包含无效参数，推理引擎应返回描述性错误而不处理
+5. 当请求完成生成时，推理引擎应解码输出并将响应返回给客户端
 
-### Requirement 2: KV Cache Management with PagedAttention
+---
 
-**User Story:** As a system operator, I want efficient GPU memory utilization for KV cache, so that I can serve more concurrent requests.
+### 需求 2：PagedAttention KV Cache 管理
 
-#### Acceptance Criteria
+**用户故事：** 作为系统运维者，我希望高效的 GPU 显存利用，以便服务更多并发请求。
 
-1. THE KV_Cache_Manager SHALL divide GPU memory into fixed-size physical blocks (e.g., 16 tokens per block)
-2. WHEN a new sequence starts THEN THE KV_Cache_Manager SHALL allocate logical blocks and map them to available physical blocks via page table
-3. WHEN a sequence generates tokens beyond current block capacity THEN THE KV_Cache_Manager SHALL allocate additional physical blocks on demand
-4. WHEN a sequence completes THEN THE KV_Cache_Manager SHALL release all physical blocks back to free pool
-5. THE KV_Cache_Manager SHALL maintain a free block list and track block usage per sequence
-6. WHEN no free physical blocks are available THEN THE KV_Cache_Manager SHALL signal memory pressure to Scheduler
-7. FOR ALL sequences, THE KV_Cache_Manager SHALL provide O(1) lookup from logical block index to physical block pointer
+#### 验收标准
 
-### Requirement 3: Continuous Batching Scheduler
+1. KV Cache 管理器应将 GPU 显存划分为固定大小的物理块（如每块 16 个 token）
+2. 当新序列启动时，KV Cache 管理器应分配逻辑块并通过页表映射到可用物理块
+3. 当序列生成的 token 超出当前块容量时，KV Cache 管理器应按需分配额外的物理块
+4. 当序列完成时，KV Cache 管理器应将所有物理块释放回空闲池
+5. KV Cache 管理器应维护空闲块列表并追踪每个序列的块使用情况
+6. 当没有可用物理块时，KV Cache 管理器应向调度器发出内存压力信号
+7. 对于所有序列，KV Cache 管理器应提供从逻辑块索引到物理块指针的 O(1) 查找
 
-**User Story:** As a system operator, I want to maximize GPU utilization through continuous batching, so that I can achieve high throughput.
+---
 
-#### Acceptance Criteria
+### 需求 3：Continuous Batching 调度器
 
-1. THE Scheduler SHALL maintain separate queues for prefill requests and decode requests
-2. WHEN scheduling a batch THEN THE Scheduler SHALL combine prefill and decode requests into a single GPU execution
-3. WHEN a prefill request completes THEN THE Scheduler SHALL immediately transition it to decode phase without waiting for batch completion
-4. WHEN a decode request generates EOS token or reaches max_tokens THEN THE Scheduler SHALL mark it complete and remove from active set
-5. THE Scheduler SHALL respect maximum batch size and maximum total tokens constraints
-6. WHEN new requests arrive THEN THE Scheduler SHALL insert them into next available batch slot (continuous insertion)
-7. THE Scheduler SHALL prioritize decode requests over prefill requests to minimize latency for in-flight requests
+**用户故事：** 作为系统运维者，我希望通过连续批处理最大化 GPU 利用率，以实现高吞吐量。
 
-### Requirement 4: GPU Kernel Execution
+#### 验收标准
 
-**User Story:** As a developer, I want optimized GPU kernels for attention computation, so that inference is fast.
+1. 调度器应维护 prefill 请求和 decode 请求的独立队列
+2. 调度批次时，调度器应将 prefill 和 decode 请求组合到单次 GPU 执行中
+3. 当 prefill 请求完成时，调度器应立即将其转换到 decode 阶段，无需等待批次完成
+4. 当 decode 请求生成 EOS token 或达到 max_tokens 时，调度器应标记其完成并从活跃集合中移除
+5. 调度器应遵守最大批次大小和最大 token 总数约束
+6. 当新请求到达时，调度器应将其插入下一个可用的批次槽位（连续插入）
+7. 调度器应优先调度 decode 请求而非 prefill 请求，以最小化正在处理请求的延迟
 
-#### Acceptance Criteria
+---
 
-1. THE GPU_Executor SHALL implement paged attention kernel that reads KV cache via block table indirection
-2. WHEN executing attention THEN THE GPU_Executor SHALL support variable sequence lengths within a batch
-3. THE GPU_Executor SHALL implement fused operations to minimize GPU memory bandwidth
-4. WHEN a batch contains mixed prefill and decode requests THEN THE GPU_Executor SHALL handle different attention patterns appropriately
-5. THE GPU_Executor SHALL use CUDA Graphs to reduce kernel launch overhead for decode phase
-6. THE GPU_Executor SHALL support FP16/BF16 computation with FP32 accumulation for numerical stability
+### 需求 4：GPU Kernel 执行
 
-### Requirement 5: CPU-GPU Pipeline Coordination
+**用户故事：** 作为开发者，我希望优化的 GPU kernel 进行 attention 计算，以便推理快速。
 
-**User Story:** As a system architect, I want efficient CPU-GPU coordination, so that neither processor becomes a bottleneck.
+#### 验收标准
 
-#### Acceptance Criteria
+1. GPU 执行器应实现 paged attention kernel，通过块表间接读取 KV cache
+2. 执行 attention 时，GPU 执行器应支持批次内的可变序列长度
+3. GPU 执行器应实现融合操作以最小化 GPU 显存带宽
+4. 当批次包含混合 prefill 和 decode 请求时，GPU 执行器应适当处理不同的 attention 模式
+5. GPU 执行器应使用 CUDA Graph 减少 decode 阶段的 kernel 启动开销
+6. GPU 执行器应支持 FP16/BF16 计算并使用 FP32 累加以保证数值稳定性
 
-1. THE Inference_Engine SHALL use asynchronous CUDA streams for overlapping CPU and GPU work
-2. WHEN CPU prepares next batch THEN THE GPU_Executor SHALL be executing current batch concurrently
-3. THE Inference_Engine SHALL use pinned (page-locked) host memory for CPU-GPU data transfers
-4. WHEN transferring batch metadata THEN THE Inference_Engine SHALL minimize transfer size by sending only block table updates
-5. THE Inference_Engine SHALL implement double buffering for batch preparation to hide latency
-6. IF GPU execution stalls THEN THE Inference_Engine SHALL log warning and continue processing
+---
 
-### Requirement 6: Memory Pool Management
+### 需求 5：CPU-GPU 流水线协调
 
-**User Story:** As a system operator, I want predictable memory usage, so that the system runs stably under load.
+**用户故事：** 作为系统架构师，我希望高效的 CPU-GPU 协调，以便两者都不成为瓶颈。
 
-#### Acceptance Criteria
+#### 验收标准
 
-1. WHEN the system starts THEN THE KV_Cache_Manager SHALL pre-allocate a configurable percentage of GPU memory for KV cache blocks
-2. THE KV_Cache_Manager SHALL track memory statistics including total blocks, used blocks, and fragmentation ratio
-3. WHEN memory utilization exceeds threshold THEN THE Scheduler SHALL stop accepting new prefill requests
-4. THE Inference_Engine SHALL provide memory usage metrics for monitoring
-5. IF memory allocation fails THEN THE Inference_Engine SHALL gracefully reject new requests rather than crash
+1. 推理引擎应使用异步 CUDA 流重叠 CPU 和 GPU 工作
+2. 当 CPU 准备下一批次时，GPU 执行器应并发执行当前批次
+3. 推理引擎应使用 pinned（页锁定）主机内存进行 CPU-GPU 数据传输
+4. 传输批次元数据时，推理引擎应仅发送块表更新以最小化传输大小
+5. 推理引擎应实现双缓冲批次准备以隐藏延迟
+6. 如果 GPU 执行停滞，推理引擎应记录警告并继续处理
 
-### Requirement 7: Configuration and Initialization
+---
 
-**User Story:** As a deployer, I want configurable system parameters, so that I can tune for different hardware and workloads.
+### 需求 6：内存池管理
 
-#### Acceptance Criteria
+**用户故事：** 作为系统运维者，我希望可预测的内存使用，以便系统在负载下稳定运行。
 
-1. THE Inference_Engine SHALL accept configuration for: block_size, max_num_blocks, max_batch_size, max_num_seqs
-2. WHEN configuration is loaded THEN THE Inference_Engine SHALL validate all parameters and report errors
-3. THE Inference_Engine SHALL support configuration via file or command-line arguments
-4. WHEN initialized THEN THE Inference_Engine SHALL log system configuration and detected GPU capabilities
-5. THE Inference_Engine SHALL detect and report available GPU memory and compute capability
+#### 验收标准
 
-### Requirement 8: Tokenization
+1. 系统启动时，KV Cache 管理器应预分配可配置百分比的 GPU 显存用于 KV cache 块
+2. KV Cache 管理器应追踪内存统计，包括总块数、已用块数和碎片率
+3. 当内存利用率超过阈值时，调度器应停止接受新的 prefill 请求
+4. 推理引擎应提供内存使用指标用于监控
+5. 如果内存分配失败，推理引擎应优雅拒绝新请求而非崩溃
 
-**User Story:** As a client, I want accurate text tokenization, so that my inputs are correctly processed.
+---
 
-#### Acceptance Criteria
+### 需求 7：配置与初始化
 
-1. THE Tokenizer SHALL encode input text to token IDs using a configurable vocabulary
-2. THE Tokenizer SHALL decode token IDs back to text accurately
-3. WHEN encoding THEN THE Tokenizer SHALL handle special tokens (BOS, EOS, PAD) correctly
-4. FOR ALL valid text inputs, encoding then decoding SHALL produce equivalent text (round-trip property)
-5. THE Tokenizer SHALL operate on CPU to avoid GPU memory overhead
+**用户故事：** 作为部署者，我希望可配置的系统参数，以便针对不同硬件和工作负载调优。
+
+#### 验收标准
+
+1. 推理引擎应接受以下配置：block_size、max_num_blocks、max_batch_size、max_num_seqs
+2. 加载配置时，推理引擎应验证所有参数并报告错误
+3. 推理引擎应支持通过文件或命令行参数配置
+4. 初始化时，推理引擎应记录系统配置和检测到的 GPU 能力
+5. 推理引擎应检测并报告可用 GPU 显存和计算能力
+
+---
+
+### 需求 8：分词
+
+**用户故事：** 作为客户端，我希望准确的文本分词，以便输入被正确处理。
+
+#### 验收标准
+
+1. 分词器应使用可配置词表将输入文本编码为 token ID
+2. 分词器应准确地将 token ID 解码回文本
+3. 编码时，分词器应正确处理特殊 token（BOS、EOS、PAD）
+4. 对于所有有效文本输入，编码后解码应产生等价文本（往返属性）
+5. 分词器应在 CPU 上运行以避免 GPU 显存开销
+
+---
+
+## 实现状态
+
+| 需求 | 状态 | 说明 |
+|------|------|------|
+| 需求 1 | ✅ 完成 | 请求管理已实现 |
+| 需求 2 | ✅ 完成 | KV Cache 管理已实现 |
+| 需求 3 | ✅ 完成 | 调度器已实现 |
+| 需求 4 | ⚠️ Mock | GPU kernel 为 mock 实现 |
+| 需求 5 | ⚠️ Mock | 异步重叠未实现 |
+| 需求 6 | ✅ 完成 | 内存池管理已实现 |
+| 需求 7 | ✅ 完成 | 配置系统已实现 |
+| 需求 8 | ✅ 完成 | 分词器已实现（简单实现） |
+
+---
+
+## 测试覆盖
+
+| 测试类型 | 数量 | 说明 |
+|----------|------|------|
+| 单元测试 | 78 | 每个模块独立测试 |
+| 属性测试 | 15 | 使用 proptest 验证不变量 |
+| 集成测试 | 13 | 端到端流程验证 |
+| 文档测试 | 29 | API 示例验证 |

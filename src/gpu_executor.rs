@@ -1,12 +1,24 @@
-//! GPU Executor for inference computation
+//! GPU 执行器 - 推理计算
 //!
-//! Provides an abstraction over GPU execution with support for:
-//! - Paged attention with block table indirection
-//! - Variable sequence lengths in batches
-//! - CUDA graph capture for decode optimization
+//! 提供 GPU 执行的抽象接口，支持：
+//! - Paged Attention 块表间接访问
+//! - 批次内可变序列长度
+//! - CUDA Graph 捕获用于 decode 优化
 //!
-//! Note: This implementation provides a mock executor for testing.
-//! Real GPU execution requires CUDA toolkit and appropriate kernels.
+//! # 当前实现
+//!
+//! 当前为 **Mock 实现**，用于测试。
+//! 真实 GPU 执行需要 CUDA toolkit 和相应的 kernel。
+//!
+//! # 接口
+//!
+//! ```rust,ignore
+//! trait GPUExecutorTrait {
+//!     fn execute(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
+//!     fn capture_decode_graph(&mut self, batch_size: u32);
+//!     fn execute_graph(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
+//! }
+//! ```
 
 use crate::config::EngineConfig;
 use crate::error::ExecutionError;
@@ -430,7 +442,11 @@ mod tests {
 
     #[test]
     fn test_decode_batch_uses_last_generated_token_and_position() {
-        let mut request = Request::new(1, vec![10, 11, 12], crate::types::GenerationParams::default());
+        let mut request = Request::new(
+            1,
+            vec![10, 11, 12],
+            crate::types::GenerationParams::default(),
+        );
         request.output_tokens = vec![20, 21];
         request.state = RequestState::Decode;
 
@@ -458,7 +474,11 @@ mod tests {
 
     #[test]
     fn test_decode_batch_falls_back_to_last_prompt_token() {
-        let mut request = Request::new(1, vec![30, 31, 32], crate::types::GenerationParams::default());
+        let mut request = Request::new(
+            1,
+            vec![30, 31, 32],
+            crate::types::GenerationParams::default(),
+        );
         request.state = RequestState::Decode;
 
         let sequence = Sequence {

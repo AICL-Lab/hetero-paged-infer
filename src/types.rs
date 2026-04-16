@@ -1,53 +1,143 @@
-//! Core types and data structures for the inference system
+//! 核心类型和数据结构
+//!
+//! 本模块定义了推理系统的核心数据结构，包括：
+//!
+//! - 请求和序列表示
+//! - 生成参数
+//! - 执行批次
+//! - 内存统计
+//!
+//! # 类型概览
+//!
+//! | 类型 | 说明 |
+//! |------|------|
+//! | [`Request`] | 推理请求 |
+//! | [`Sequence`] | 活跃序列（含 KV Cache） |
+//! | [`GenerationParams`] | 生成参数 |
+//! | [`ExecutionBatch`] | GPU 执行批次 |
+//! | [`ExecutionOutput`] | GPU 执行输出 |
+//! | [`CompletedRequest`] | 完成的请求 |
+//! | [`MemoryStats`] | 内存统计 |
 
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Unique identifier for requests
+/// 请求唯一标识符
 pub type RequestId = u64;
 
-/// Unique identifier for sequences
+/// 序列唯一标识符
 pub type SeqId = u64;
 
-/// Token ID type
+/// Token ID 类型
 pub type TokenId = u32;
 
-/// Physical block index
+/// 物理块索引
 pub type BlockIdx = u32;
 
-/// Request state in the inference pipeline
+/// 请求状态
+///
+/// 表示请求在推理流水线中的当前状态。
+///
+/// # 状态转换
+///
+/// ```text
+/// Pending → Prefill → Decode → Completed
+///                     ↘ Failed
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum RequestState {
-    /// Request is queued, waiting to be scheduled
+    /// 等待调度
     Pending,
-    /// Request is in prefill phase (processing input tokens)
+
+    /// Prefill 阶段（处理输入 tokens）
     Prefill,
-    /// Request is in decode phase (generating tokens)
+
+    /// Decode 阶段（生成 tokens）
     Decode,
-    /// Request has completed successfully
+
+    /// 成功完成
     Completed,
-    /// Request failed with an error message
+
+    /// 失败，包含错误信息
     Failed(String),
 }
 
 impl RequestState {
+    /// 检查请求是否处于活跃状态（Prefill 或 Decode）
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::RequestState;
+    ///
+    /// assert!(!RequestState::Pending.is_active());
+    /// assert!(RequestState::Prefill.is_active());
+    /// assert!(RequestState::Decode.is_active());
+    /// assert!(!RequestState::Completed.is_active());
+    /// ```
     pub fn is_active(&self) -> bool {
         matches!(self, RequestState::Prefill | RequestState::Decode)
     }
 
+    /// 检查请求是否处于终态（Completed 或 Failed）
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::RequestState;
+    ///
+    /// assert!(!RequestState::Decode.is_terminal());
+    /// assert!(RequestState::Completed.is_terminal());
+    /// assert!(RequestState::Failed("error".to_string()).is_terminal());
+    /// ```
     pub fn is_terminal(&self) -> bool {
         matches!(self, RequestState::Completed | RequestState::Failed(_))
     }
 }
 
-/// Generation parameters for a request
+/// 生成参数
+///
+/// 控制文本生成的采样参数。
+///
+/// # 参数范围
+///
+/// | 参数 | 有效范围 |
+/// |------|----------|
+/// | `max_tokens` | > 0 |
+/// | `temperature` | (0.0, 2.0] |
+/// | `top_p` | (0.0, 1.0] |
+///
+/// # 示例
+///
+/// ```rust
+/// use hetero_infer::GenerationParams;
+///
+/// // 使用默认参数
+/// let params = GenerationParams::default();
+///
+/// // 自定义参数
+/// let params = GenerationParams {
+///     max_tokens: 100,
+///     temperature: 0.8,
+///     top_p: 0.95,
+/// };
+///
+/// assert!(params.validate().is_ok());
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct GenerationParams {
-    /// Maximum number of tokens to generate
+    /// 最大生成 token 数
     pub max_tokens: u32,
-    /// Sampling temperature (0.0, 2.0]
+
+    /// 采样温度 (0.0, 2.0]
+    ///
+    /// - 较低的值（如 0.1）产生更确定的输出
+    /// - 较高的值（如 1.5）产生更多样化的输出
     pub temperature: f32,
-    /// Top-p (nucleus) sampling parameter (0.0, 1.0]
+
+    /// Top-p（核采样）参数 (0.0, 1.0]
+    ///
+    /// 从累积概率达到 top_p 的最小 token 集合中采样
     pub top_p: f32,
 }
 
@@ -62,7 +152,33 @@ impl Default for GenerationParams {
 }
 
 impl GenerationParams {
-    /// Validate generation parameters
+    /// 验证生成参数
+    ///
+    /// # 错误
+    ///
+    /// - [`crate::ValidationError::InvalidMaxTokens`] `max_tokens` 为 0
+    /// - [`crate::ValidationError::InvalidTemperature`] `temperature` 不在有效范围内
+    /// - [`crate::ValidationError::InvalidTopP`] `top_p` 不在有效范围内
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::GenerationParams;
+    ///
+    /// let valid = GenerationParams {
+    ///     max_tokens: 100,
+    ///     temperature: 1.0,
+    ///     top_p: 0.9,
+    /// };
+    /// assert!(valid.validate().is_ok());
+    ///
+    /// let invalid = GenerationParams {
+    ///     max_tokens: 0,
+    ///     temperature: 1.0,
+    ///     top_p: 0.9,
+    /// };
+    /// assert!(invalid.validate().is_err());
+    /// ```
     pub fn validate(&self) -> Result<(), crate::ValidationError> {
         if self.max_tokens == 0 {
             return Err(crate::ValidationError::InvalidMaxTokens(self.max_tokens));
@@ -76,7 +192,20 @@ impl GenerationParams {
         Ok(())
     }
 
-    /// Check if parameters are valid
+    /// 检查参数是否有效
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::GenerationParams;
+    ///
+    /// let params = GenerationParams {
+    ///     max_tokens: 100,
+    ///     temperature: 1.0,
+    ///     top_p: 0.9,
+    /// };
+    /// assert!(params.is_valid());
+    /// ```
     pub fn is_valid(&self) -> bool {
         self.max_tokens > 0
             && self.temperature > 0.0
@@ -86,25 +215,70 @@ impl GenerationParams {
     }
 }
 
-/// A single inference request
+/// 推理请求
+///
+/// 表示单个推理请求，包含输入 tokens 和生成参数。
+///
+/// # 生命周期
+///
+/// 1. 通过 [`Request::new`] 创建，状态为 `Pending`
+/// 2. 调度器处理后进入 `Prefill` 状态
+/// 3. Prefill 完成后进入 `Decode` 状态
+/// 4. 生成完成后进入 `Completed` 状态
+///
+/// # 示例
+///
+/// ```rust
+/// use hetero_infer::{Request, GenerationParams};
+///
+/// let request = Request::new(
+///     1,                          // request_id
+///     vec![1, 2, 3, 4, 5],        // input_tokens
+///     GenerationParams::default(),
+/// );
+///
+/// assert_eq!(request.id, 1);
+/// assert_eq!(request.input_tokens.len(), 5);
+/// assert!(request.output_tokens.is_empty());
+/// ```
 #[derive(Debug, Clone)]
 pub struct Request {
-    /// Unique request identifier
+    /// 请求唯一标识符
     pub id: RequestId,
-    /// Input tokens after tokenization
+
+    /// 输入 tokens（分词后）
     pub input_tokens: Vec<TokenId>,
-    /// Generated output tokens
+
+    /// 生成的输出 tokens
     pub output_tokens: Vec<TokenId>,
-    /// Generation parameters
+
+    /// 生成参数
     pub params: GenerationParams,
-    /// Current state
+
+    /// 当前状态
     pub state: RequestState,
-    /// Creation timestamp
+
+    /// 创建时间戳
     pub created_at: Instant,
 }
 
 impl Request {
-    /// Create a new request
+    /// 创建新请求
+    ///
+    /// # 参数
+    ///
+    /// * `id` - 请求唯一标识符
+    /// * `input_tokens` - 输入 token 序列
+    /// * `params` - 生成参数
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{Request, GenerationParams};
+    ///
+    /// let request = Request::new(42, vec![1, 2, 3], GenerationParams::default());
+    /// assert_eq!(request.id, 42);
+    /// ```
     pub fn new(id: RequestId, input_tokens: Vec<TokenId>, params: GenerationParams) -> Self {
         Self {
             id,
@@ -116,18 +290,57 @@ impl Request {
         }
     }
 
-    /// Total number of tokens (input + output)
+    /// 计算总 token 数（输入 + 输出）
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{Request, GenerationParams};
+    ///
+    /// let mut request = Request::new(1, vec![1, 2, 3], GenerationParams::default());
+    /// assert_eq!(request.total_tokens(), 3);
+    ///
+    /// request.output_tokens.push(4);
+    /// assert_eq!(request.total_tokens(), 4);
+    /// ```
     pub fn total_tokens(&self) -> usize {
         self.input_tokens.len() + self.output_tokens.len()
     }
 
-    /// Check if generation is complete
+    /// 检查生成是否完成
+    ///
+    /// 完成条件：
+    /// - 输出 token 数达到 `max_tokens`
+    /// - 生成了 EOS token
+    ///
+    /// # 参数
+    ///
+    /// * `eos_token_id` - EOS token 的 ID
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::{Request, GenerationParams};
+    ///
+    /// let mut request = Request::new(
+    ///     1,
+    ///     vec![1, 2, 3],
+    ///     GenerationParams { max_tokens: 5, ..Default::default() },
+    /// );
+    ///
+    /// let eos_token = 0;
+    /// assert!(!request.is_complete(eos_token));
+    ///
+    /// // 达到 max_tokens
+    /// request.output_tokens = vec![10, 11, 12, 13, 14];
+    /// assert!(request.is_complete(eos_token));
+    /// ```
     pub fn is_complete(&self, eos_token_id: TokenId) -> bool {
-        // Complete if reached max tokens
+        // 达到 max_tokens
         if self.output_tokens.len() >= self.params.max_tokens as usize {
             return true;
         }
-        // Complete if generated EOS token
+        // 生成了 EOS token
         if let Some(&last_token) = self.output_tokens.last() {
             if last_token == eos_token_id {
                 return true;
@@ -137,23 +350,29 @@ impl Request {
     }
 }
 
-/// Reference to a physical block in GPU memory
+/// 物理块引用
+///
+/// 表示对 GPU 显存中物理块的引用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PhysicalBlockRef {
-    /// Index of the physical block
+    /// 物理块索引
     pub block_idx: BlockIdx,
 }
 
-/// Logical block mapped to a physical block
+/// 逻辑块
+///
+/// 表示映射到物理块的逻辑块。
 #[derive(Debug, Clone)]
 pub struct LogicalBlock {
-    /// Logical block index within the sequence
+    /// 序列内的逻辑块索引
     pub block_idx: u32,
-    /// Mapped physical block (None if not yet allocated)
+
+    /// 映射的物理块（未分配时为 None）
     pub physical_block: Option<PhysicalBlockRef>,
 }
 
 impl LogicalBlock {
+    /// 创建未映射的逻辑块
     pub fn new(block_idx: u32) -> Self {
         Self {
             block_idx,
@@ -161,6 +380,7 @@ impl LogicalBlock {
         }
     }
 
+    /// 创建已映射的逻辑块
     pub fn with_physical(block_idx: u32, physical: PhysicalBlockRef) -> Self {
         Self {
             block_idx,
@@ -169,23 +389,39 @@ impl LogicalBlock {
     }
 }
 
-/// A sequence is an active request with allocated KV cache
+/// 序列
+///
+/// 活跃请求及其 KV Cache 块的集合。
+///
+/// 序列是调度和执行的基本单位，包含：
+/// - 原始请求
+/// - 逻辑块到物理块的映射
+/// - 计算进度追踪
 #[derive(Debug, Clone)]
 pub struct Sequence {
-    /// Unique sequence identifier
+    /// 序列唯一标识符
     pub seq_id: SeqId,
-    /// The underlying request
+
+    /// 关联的请求
     pub request: Request,
-    /// Logical blocks for KV cache
+
+    /// KV Cache 的逻辑块
     pub logical_blocks: Vec<LogicalBlock>,
-    /// Number of tokens that have been computed (KV cached)
+
+    /// 已计算的 token 数（已缓存在 KV Cache 中）
     pub num_computed_tokens: u32,
-    /// Number of tokens generated so far
+
+    /// 已生成的 token 数
     pub num_generated_tokens: u32,
 }
 
 impl Sequence {
-    /// Create a new sequence from a request
+    /// 从请求创建序列
+    ///
+    /// # 参数
+    ///
+    /// * `seq_id` - 序列唯一标识符
+    /// * `request` - 关联的请求
     pub fn new(seq_id: SeqId, request: Request) -> Self {
         Self {
             seq_id,
@@ -196,7 +432,7 @@ impl Sequence {
         }
     }
 
-    /// Get the block table (physical block indices) for GPU execution
+    /// 获取块表（物理块索引列表）用于 GPU 执行
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
         self.logical_blocks
             .iter()
@@ -204,12 +440,12 @@ impl Sequence {
             .collect()
     }
 
-    /// Total context length (input + generated)
+    /// 计算上下文长度（输入 + 已生成）
     pub fn context_len(&self) -> u32 {
         self.request.input_tokens.len() as u32 + self.num_generated_tokens
     }
 
-    /// Number of tokens to process in current step
+    /// 计算当前步骤需要处理的 token 数
     pub fn num_tokens_to_process(&self) -> u32 {
         match self.request.state {
             RequestState::Prefill => self.request.input_tokens.len() as u32,
@@ -218,7 +454,9 @@ impl Sequence {
         }
     }
 
-    /// Input token for the next decode step.
+    /// 获取 decode 阶段的输入 token
+    ///
+    /// 返回最后一个生成的 token，如果没有则返回输入的最后一个 token。
     pub fn decode_input_token(&self) -> Option<TokenId> {
         self.request
             .output_tokens
@@ -227,27 +465,48 @@ impl Sequence {
             .or_else(|| self.request.input_tokens.last().copied())
     }
 
-    /// Position for the next decode step.
+    /// 获取 decode 阶段的位置
+    ///
+    /// 返回下一个 token 的位置索引。
     pub fn decode_position(&self) -> Option<u32> {
         self.context_len().checked_sub(1)
     }
 }
 
-/// Memory statistics for KV cache
+/// KV Cache 内存统计
+///
+/// 提供内存使用情况的快照。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MemoryStats {
-    /// Total number of physical blocks
+    /// 物理块总数
     pub total_blocks: u32,
-    /// Number of blocks currently in use
+
+    /// 已使用的物理块数
     pub used_blocks: u32,
-    /// Number of free blocks
+
+    /// 空闲物理块数
     pub free_blocks: u32,
-    /// Number of active sequences
+
+    /// 活跃序列数
     pub num_sequences: u32,
 }
 
 impl MemoryStats {
-    /// Memory utilization ratio
+    /// 计算内存利用率
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::MemoryStats;
+    ///
+    /// let stats = MemoryStats {
+    ///     total_blocks: 100,
+    ///     used_blocks: 25,
+    ///     free_blocks: 75,
+    ///     num_sequences: 5,
+    /// };
+    /// assert!((stats.utilization() - 0.25).abs() < 0.001);
+    /// ```
     pub fn utilization(&self) -> f32 {
         if self.total_blocks == 0 {
             0.0
@@ -257,85 +516,113 @@ impl MemoryStats {
     }
 }
 
-/// Output from the scheduler
+/// 调度器输出
+///
+/// 包含一个调度周期内待执行的序列。
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerOutput {
-    /// Sequences in prefill phase
+    /// Prefill 阶段的序列
     pub prefill_sequences: Vec<Arc<Sequence>>,
-    /// Sequences in decode phase
+
+    /// Decode 阶段的序列
     pub decode_sequences: Vec<Arc<Sequence>>,
-    /// Total number of tokens in this batch
+
+    /// 批次总 token 数
     pub total_tokens: u32,
 }
 
 impl SchedulerOutput {
+    /// 检查输出是否为空
     pub fn is_empty(&self) -> bool {
         self.prefill_sequences.is_empty() && self.decode_sequences.is_empty()
     }
 
+    /// 计算序列总数
     pub fn num_sequences(&self) -> usize {
         self.prefill_sequences.len() + self.decode_sequences.len()
     }
 }
 
-/// Batch data for GPU execution
+/// GPU 执行批次
+///
+/// 包含一次 GPU 执行所需的所有数据。
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionBatch {
-    /// Token IDs for all sequences (flattened)
+    /// 所有序列的 token ID（扁平化）
     pub input_tokens: Vec<TokenId>,
-    /// Position IDs for each token
+
+    /// 每个 token 的位置 ID
     pub positions: Vec<u32>,
-    /// Sequence lengths for attention masking
+
+    /// 各序列的长度（用于 attention mask）
     pub seq_lens: Vec<u32>,
-    /// Block tables for paged attention
+
+    /// Paged Attention 的块表
     pub block_tables: Vec<Vec<BlockIdx>>,
-    /// Flags indicating prefill vs decode
+
+    /// Prefill/Decode 标志
     pub is_prefill: Vec<bool>,
-    /// Sequence IDs for result mapping
+
+    /// 序列 ID（用于结果映射）
     pub seq_ids: Vec<SeqId>,
-    /// Context lengths for each sequence
+
+    /// 各序列的上下文长度
     pub context_lens: Vec<u32>,
 }
 
 impl ExecutionBatch {
+    /// 检查批次是否为空
     pub fn is_empty(&self) -> bool {
         self.seq_ids.is_empty()
     }
 
+    /// 计算序列数
     pub fn num_sequences(&self) -> usize {
         self.seq_ids.len()
     }
 
+    /// 计算 token 总数
     pub fn total_tokens(&self) -> usize {
         self.input_tokens.len()
     }
 }
 
-/// Output from GPU execution
+/// GPU 执行输出
+///
+/// 包含 GPU 执行的结果。
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionOutput {
-    /// Next token for each sequence
+    /// 各序列的下一个 token
     pub next_tokens: Vec<TokenId>,
-    /// Logits if needed for sampling (optional)
+
+    /// Logits（可选，用于采样）
     pub logits: Option<Vec<f32>>,
-    /// Sequence IDs corresponding to outputs
+
+    /// 对应的序列 ID
     pub seq_ids: Vec<SeqId>,
 }
 
-/// Completed request with output
+/// 完成的请求
+///
+/// 包含已完成请求的输出结果。
 #[derive(Debug, Clone)]
 pub struct CompletedRequest {
-    /// Original request ID
+    /// 原始请求 ID
     pub request_id: RequestId,
-    /// Input text (if available)
+
+    /// 输入文本（可选）
     pub input_text: Option<String>,
-    /// Generated output text
+
+    /// 生成的输出文本
     pub output_text: String,
-    /// Generated tokens
+
+    /// 生成的 tokens
     pub output_tokens: Vec<TokenId>,
-    /// Whether completed successfully
+
+    /// 是否成功完成
     pub success: bool,
-    /// Error message if failed
+
+    /// 错误信息（失败时）
     pub error: Option<String>,
 }
 
@@ -399,18 +686,18 @@ mod tests {
 
         let eos_token = 0;
 
-        // Not complete initially
+        // 初始未完成
         assert!(!request.is_complete(eos_token));
 
-        // Add some tokens
+        // 添加一些 tokens
         request.output_tokens = vec![10, 11, 12];
         assert!(!request.is_complete(eos_token));
 
-        // Add EOS token
+        // 添加 EOS token
         request.output_tokens.push(eos_token);
         assert!(request.is_complete(eos_token));
 
-        // Or reach max tokens
+        // 达到 max_tokens
         request.output_tokens = vec![10, 11, 12, 13, 14];
         assert!(request.is_complete(eos_token));
     }
@@ -439,10 +726,9 @@ mod property_tests {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
         /// **Feature: heterogeneous-inference-system, Property 2: Parameter Validation Correctness**
-        /// *For any* generation parameters (max_tokens, temperature, top_p), the validation
-        /// function shall return true if and only if all parameters are within their acceptable
-        /// ranges (max_tokens > 0, 0 < temperature <= 2.0, 0 < top_p <= 1.0).
-        /// **Validates: Requirements 1.3**
+        /// *对于任意* 生成参数 (max_tokens, temperature, top_p)，验证函数返回 true 当且仅当
+        /// 所有参数都在有效范围内 (max_tokens > 0, 0 < temperature <= 2.0, 0 < top_p <= 1.0)。
+        /// **验证: Requirements 1.3**
         #[test]
         fn prop_parameter_validation(
             max_tokens in 0u32..1000,
@@ -458,36 +744,36 @@ mod property_tests {
             let validation_result = params.validate();
             let is_valid = params.is_valid();
 
-            // Expected validity based on parameter ranges
+            // 基于参数范围的预期有效性
             let expected_valid = max_tokens > 0
                 && temperature > 0.0
                 && temperature <= 2.0
                 && top_p > 0.0
                 && top_p <= 1.0;
 
-            // Property: validation result matches expected validity
+            // 属性: 验证结果与预期有效性一致
             prop_assert_eq!(
                 validation_result.is_ok(),
                 expected_valid,
-                "Validation mismatch for params: max_tokens={}, temp={}, top_p={}",
+                "验证不匹配，参数: max_tokens={}, temp={}, top_p={}",
                 max_tokens, temperature, top_p
             );
 
-            // Property: is_valid() is consistent with validate()
+            // 属性: is_valid() 与 validate() 一致
             prop_assert_eq!(
                 is_valid,
                 expected_valid,
-                "is_valid() inconsistent with validate() for params: {:?}",
+                "is_valid() 与 validate() 不一致，参数: {:?}",
                 params
             );
         }
 
-        /// Property test for boundary conditions
+        /// 边界条件属性测试
         #[test]
         fn prop_parameter_boundaries(
             valid_max_tokens in 1u32..1000,
         ) {
-            // Test exact boundary: temperature = 2.0 should be valid
+            // 边界测试: temperature = 2.0 应有效
             let params_temp_boundary = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 2.0,
@@ -495,7 +781,7 @@ mod property_tests {
             };
             prop_assert!(params_temp_boundary.is_valid());
 
-            // Test exact boundary: top_p = 1.0 should be valid
+            // 边界测试: top_p = 1.0 应有效
             let params_top_p_boundary = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 1.0,
@@ -503,7 +789,7 @@ mod property_tests {
             };
             prop_assert!(params_top_p_boundary.is_valid());
 
-            // Test just above boundary: temperature > 2.0 should be invalid
+            // 边界测试: temperature > 2.0 应无效
             let params_temp_over = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 2.001,
@@ -511,7 +797,7 @@ mod property_tests {
             };
             prop_assert!(!params_temp_over.is_valid());
 
-            // Test just above boundary: top_p > 1.0 should be invalid
+            // 边界测试: top_p > 1.0 应无效
             let params_top_p_over = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 1.0,
@@ -519,7 +805,7 @@ mod property_tests {
             };
             prop_assert!(!params_top_p_over.is_valid());
 
-            // Test zero boundaries
+            // 零值边界测试
             let params_zero_temp = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 0.0,

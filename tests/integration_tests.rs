@@ -20,7 +20,10 @@ impl GPUExecutorTrait for FailingExecutor {
         Ok(())
     }
 
-    fn execute_graph(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+    fn execute_graph(
+        &mut self,
+        _batch: &ExecutionBatch,
+    ) -> Result<ExecutionOutput, ExecutionError> {
         Err(ExecutionError::KernelLaunchFailed(
             "integration executor failure".to_string(),
         ))

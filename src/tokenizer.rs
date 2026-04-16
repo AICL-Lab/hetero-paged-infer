@@ -1,7 +1,27 @@
-//! Tokenizer for text-to-token and token-to-text conversion
+//! 分词器 - 文本与 Token 转换
 //!
-//! Provides a simple character-level tokenizer for testing purposes.
-//! Can be replaced with a real tokenizer (e.g., SentencePiece, tiktoken) for production.
+//! 提供简单的字符级分词器，用于测试目的。
+//! 生产环境可替换为真实分词器（如 SentencePiece、tiktoken）。
+//!
+//! # 特殊 Token
+//!
+//! | Token ID | 名称 | 说明 |
+//! |----------|------|------|
+//! | 0 | PAD | 填充 token |
+//! | 1 | BOS | 句首 token |
+//! | 2 | EOS | 句尾 token |
+//! | 3 | UNK | 未知 token |
+//!
+//! # 示例
+//!
+//! ```rust
+//! use hetero_infer::{SimpleTokenizer, TokenizerTrait};
+//!
+//! let tokenizer = SimpleTokenizer::new();
+//!
+//! let tokens = tokenizer.encode("Hello");
+//! let text = tokenizer.decode(&tokens);
+//! ```
 
 use crate::types::TokenId;
 use std::collections::{hash_map::Entry, HashMap};
@@ -12,32 +32,34 @@ pub const EOS_TOKEN_ID: TokenId = 2;
 pub const PAD_TOKEN_ID: TokenId = 0;
 pub const UNK_TOKEN_ID: TokenId = 3;
 
-/// Tokenizer trait defining the interface
+/// 分词器 trait 接口
+///
+/// 定义分词器的标准接口。
 pub trait TokenizerTrait: Send + Sync {
-    /// Encode text to token IDs
+    /// 将文本编码为 token ID 序列
     fn encode(&self, text: &str) -> Vec<TokenId>;
 
-    /// Decode token IDs back to text
+    /// 将 token ID 序列解码为文本
     fn decode(&self, tokens: &[TokenId]) -> String;
 
-    /// Get vocabulary size
+    /// 获取词表大小
     fn vocab_size(&self) -> u32;
 
-    /// Get BOS token ID
+    /// 获取 BOS token ID
     fn bos_token_id(&self) -> TokenId;
 
-    /// Get EOS token ID
+    /// 获取 EOS token ID
     fn eos_token_id(&self) -> TokenId;
 
-    /// Get PAD token ID
+    /// 获取 PAD token ID
     fn pad_token_id(&self) -> TokenId;
 }
 
-/// Simple character-level tokenizer for testing
+/// 简单字符级分词器
 ///
-/// This tokenizer maps each ASCII character to a unique token ID.
-/// Special tokens: PAD=0, BOS=1, EOS=2, UNK=3
-/// Regular characters start at ID 4.
+/// 将每个 ASCII 字符映射为唯一的 token ID。
+/// 特殊 token: PAD=0, BOS=1, EOS=2, UNK=3
+/// 常规字符从 ID 4 开始。
 #[derive(Debug, Clone)]
 pub struct SimpleTokenizer {
     /// Character to token ID mapping

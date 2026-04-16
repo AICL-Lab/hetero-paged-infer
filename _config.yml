@@ -1,27 +1,53 @@
+# 站点配置
 title: Hetero-Paged-Infer
 description: >-
-  PagedAttention + Continuous Batching 推理引擎 — Rust 实现的 CPU-GPU 协同推理系统
+  异构推理系统 — 基于 PagedAttention 和 Continuous Batching 的 CPU-GPU 协同推理引擎
+author: LessUp
+
+# 主题
 remote_theme: pages-themes/cayman@v0.2.0
+
+# 插件
 plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
-repository: LessUp/hetero-paged-infer
-show_downloads: false
+  - jekyll-sitemap
+  - jekyll-feed
 
-# SEO & metadata
+# 仓库信息
+repository: LessUp/hetero-paged-infer
+
+# URL 配置
 url: https://lessup.github.io
 baseurl: /hetero-paged-infer
 lang: zh-CN
-author: LessUp
 
-# Markdown rendering
+# 显示设置
+show_downloads: true
+google_analytics: false
+
+# Markdown 渲染
 markdown: kramdown
 kramdown:
   input: GFM
   hard_wrap: false
   syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: true
 
-# Default layout for all pages
+# 导航菜单
+navigation:
+  - title: 首页
+    url: /
+  - title: README
+    url: /README
+  - title: 变更日志
+    url: /CHANGELOG
+  - title: 贡献指南
+    url: /CONTRIBUTING
+
+# 默认布局
 defaults:
   - scope:
       path: ""
@@ -31,8 +57,9 @@ defaults:
       path: "changelog"
     values:
       layout: default
+      category: 变更日志
 
-# Exclude irrelevant files from Jekyll build
+# 排除文件
 exclude:
   - .git
   - .github
@@ -50,3 +77,32 @@ exclude:
   - Gemfile.lock
   - vendor
   - "*.rs"
+  - config.example.json
+
+# 包含文件
+include:
+  - README.md
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - index.md
+
+# 集合
+collections:
+  changelog:
+    output: true
+    permalink: /:collection/:name
+
+# 社交链接
+social:
+  github: LessUp/hetero-paged-infer
+
+# SEO
+twitter:
+  card: summary
+
+# 时间 zone
+timezone: Asia/Shanghai
+
+# 分页
+paginate: 10
+paginate_path: "/blog/page:num/"

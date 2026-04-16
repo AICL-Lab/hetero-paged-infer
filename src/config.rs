@@ -1,25 +1,110 @@
-//! Configuration types and validation
+//! 引擎配置类型与验证
+//!
+//! 本模块提供推理引擎的配置管理，包括：
+//! - 配置参数定义
+//! - 参数验证
+//! - JSON 序列化/反序列化
+//! - 文件加载/保存
+//!
+//! # 示例
+//!
+//! ```rust
+//! use hetero_infer::EngineConfig;
+//! use std::path::Path;
+//!
+//! // 使用默认配置
+//! let config = EngineConfig::default();
+//!
+//! // 创建自定义配置
+//! let config = EngineConfig::new(
+//!     16,    // block_size
+//!     1024,  // max_num_blocks
+//!     32,    // max_batch_size
+//!     256,   // max_num_seqs
+//!     2048,  // max_model_len
+//!     4096,  // max_total_tokens
+//!     0.9,   // memory_threshold
+//! )?;
+//!
+//! // 验证配置
+//! config.validate()?;
+//! # Ok::<(), hetero_infer::ConfigError>(())
+//! ```
 
 use crate::error::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Engine configuration
+/// 引擎配置
+///
+/// 包含推理引擎的所有可配置参数。
+///
+/// # 参数说明
+///
+/// | 参数 | 说明 | 建议值 |
+/// |------|------|--------|
+/// | `block_size` | 每个物理块容纳的 token 数 | 16 |
+/// | `max_num_blocks` | 最大物理块数量 | 根据 GPU 显存调整 |
+/// | `max_batch_size` | 单次调度最大序列数 | 32 |
+/// | `max_num_seqs` | 系统最大并发序列数 | 256 |
+/// | `max_model_len` | 模型最大上下文长度 | 2048 |
+/// | `max_total_tokens` | 单批次最大 token 总数 | 4096 |
+/// | `memory_threshold` | 内存压力阈值 | 0.9 |
+///
+/// # 示例
+///
+/// ```rust
+/// use hetero_infer::EngineConfig;
+///
+/// let config = EngineConfig {
+///     block_size: 16,
+///     max_num_blocks: 1024,
+///     max_batch_size: 32,
+///     max_num_seqs: 256,
+///     max_model_len: 2048,
+///     max_total_tokens: 4096,
+///     memory_threshold: 0.9,
+/// };
+///
+/// assert!(config.is_valid());
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
-    /// Number of tokens per KV cache block
+    /// 每个 KV Cache 块容纳的 token 数
+    ///
+    /// 较小的块大小提供更细粒度的内存管理，但增加页表开销。
+    /// 常见值为 16 或 32。
     pub block_size: u32,
-    /// Maximum number of physical blocks for KV cache
+
+    /// 物理块最大数量
+    ///
+    /// 决定 KV Cache 总容量。总 token 容量 = `max_num_blocks * block_size`。
     pub max_num_blocks: u32,
-    /// Maximum number of sequences per batch
+
+    /// 单次调度最大序列数
+    ///
+    /// 限制单次 GPU 执行的序列数量，影响 GPU 利用率和延迟。
     pub max_batch_size: u32,
-    /// Maximum number of concurrent sequences
+
+    /// 系统最大并发序列数
+    ///
+    /// 包括 pending、prefill、decode 各阶段的序列总数上限。
     pub max_num_seqs: u32,
-    /// Maximum sequence length (input + output)
+
+    /// 最大序列长度（输入 + 输出）
+    ///
+    /// 单个请求的 token 数上限。
     pub max_model_len: u32,
-    /// Maximum total tokens per batch
+
+    /// 单批次最大 token 总数
+    ///
+    /// 限制单次 GPU 执行的 token 总量，防止显存溢出。
     pub max_total_tokens: u32,
-    /// Memory pressure threshold (0.0 - 1.0)
+
+    /// 内存压力阈值 (0.0 - 1.0)
+    ///
+    /// 当内存利用率超过此阈值时，调度器将拒绝新的 prefill 请求。
+    /// 建议设置在 0.8-0.95 之间，留出安全余量。
     pub memory_threshold: f32,
 }
 
@@ -38,7 +123,31 @@ impl Default for EngineConfig {
 }
 
 impl EngineConfig {
-    /// Create a new configuration with validation
+    /// 创建新配置并验证
+    ///
+    /// # 参数
+    ///
+    /// * `block_size` - 每块 token 数
+    /// * `max_num_blocks` - 最大块数
+    /// * `max_batch_size` - 最大批次大小
+    /// * `max_num_seqs` - 最大并发序列数
+    /// * `max_model_len` - 最大序列长度
+    /// * `max_total_tokens` - 单批次最大 token 数
+    /// * `memory_threshold` - 内存阈值
+    ///
+    /// # 错误
+    ///
+    /// 如果任何参数无效，返回 [`ConfigError`]。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::EngineConfig;
+    ///
+    /// let config = EngineConfig::new(16, 1024, 32, 256, 2048, 4096, 0.9)?;
+    /// assert!(config.is_valid());
+    /// # Ok::<(), hetero_infer::ConfigError>(())
+    /// ```
     pub fn new(
         block_size: u32,
         max_num_blocks: u32,
@@ -61,7 +170,31 @@ impl EngineConfig {
         Ok(config)
     }
 
-    /// Validate configuration parameters
+    /// 验证配置参数
+    ///
+    /// 检查所有参数是否在有效范围内。
+    ///
+    /// # 错误
+    ///
+    /// - [`ConfigError::InvalidBlockSize`] `block_size` 为 0
+    /// - [`ConfigError::InvalidMaxNumBlocks`] `max_num_blocks` 为 0
+    /// - [`ConfigError::InvalidMaxBatchSize`] `max_batch_size` 为 0
+    /// - [`ConfigError::InvalidMaxNumSeqs`] `max_num_seqs` 为 0
+    /// - [`ConfigError::InvalidMaxModelLen`] `max_model_len` 为 0
+    /// - [`ConfigError::InvalidMaxTotalTokens`] `max_total_tokens` 为 0
+    /// - [`ConfigError::InvalidMemoryThreshold`] `memory_threshold` 不在 (0.0, 1.0] 范围内
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::EngineConfig;
+    ///
+    /// let config = EngineConfig::default();
+    /// assert!(config.validate().is_ok());
+    ///
+    /// let invalid_config = EngineConfig { block_size: 0, ..Default::default() };
+    /// assert!(invalid_config.validate().is_err());
+    /// ```
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.block_size == 0 {
             return Err(ConfigError::InvalidBlockSize(self.block_size));
@@ -87,7 +220,20 @@ impl EngineConfig {
         Ok(())
     }
 
-    /// Check if configuration is valid
+    /// 检查配置是否有效
+    ///
+    /// 返回 `true` 表示所有参数都在有效范围内。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::EngineConfig;
+    ///
+    /// assert!(EngineConfig::default().is_valid());
+    ///
+    /// let invalid = EngineConfig { block_size: 0, ..Default::default() };
+    /// assert!(!invalid.is_valid());
+    /// ```
     pub fn is_valid(&self) -> bool {
         self.block_size > 0
             && self.max_num_blocks > 0
@@ -99,7 +245,27 @@ impl EngineConfig {
             && self.memory_threshold <= 1.0
     }
 
-    /// Load configuration from a JSON file
+    /// 从 JSON 文件加载配置
+    ///
+    /// # 参数
+    ///
+    /// * `path` - 配置文件路径
+    ///
+    /// # 错误
+    ///
+    /// - [`ConfigError::FileLoadError`] 文件读取失败
+    /// - [`ConfigError::ParseError`] JSON 解析失败
+    /// - [`ConfigError`] 参数验证失败
+    ///
+    /// # 示例
+    ///
+    /// ```rust,no_run
+    /// use hetero_infer::EngineConfig;
+    /// use std::path::Path;
+    ///
+    /// let config = EngineConfig::from_file(Path::new("config.json"))?;
+    /// # Ok::<(), hetero_infer::ConfigError>(())
+    /// ```
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let content =
             std::fs::read_to_string(path).map_err(|e| ConfigError::FileLoadError(e.to_string()))?;
@@ -109,7 +275,27 @@ impl EngineConfig {
         Ok(config)
     }
 
-    /// Save configuration to a JSON file
+    /// 保存配置到 JSON 文件
+    ///
+    /// # 参数
+    ///
+    /// * `path` - 目标文件路径
+    ///
+    /// # 错误
+    ///
+    /// - [`ConfigError::ParseError`] JSON 序列化失败
+    /// - [`ConfigError::FileSaveError`] 文件写入失败
+    ///
+    /// # 示例
+    ///
+    /// ```rust,no_run
+    /// use hetero_infer::EngineConfig;
+    /// use std::path::Path;
+    ///
+    /// let config = EngineConfig::default();
+    /// config.to_file(Path::new("config.json"))?;
+    /// # Ok::<(), hetero_infer::ConfigError>(())
+    /// ```
     pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| ConfigError::ParseError(e.to_string()))?;
@@ -117,12 +303,41 @@ impl EngineConfig {
         Ok(())
     }
 
-    /// Calculate maximum blocks needed for a sequence of given length
+    /// 计算指定 token 数量需要的块数
+    ///
+    /// 返回 `ceil(num_tokens / block_size)`。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::EngineConfig;
+    ///
+    /// let config = EngineConfig { block_size: 16, ..Default::default() };
+    ///
+    /// assert_eq!(config.blocks_for_tokens(0), 0);
+    /// assert_eq!(config.blocks_for_tokens(1), 1);
+    /// assert_eq!(config.blocks_for_tokens(16), 1);
+    /// assert_eq!(config.blocks_for_tokens(17), 2);
+    /// ```
     pub fn blocks_for_tokens(&self, num_tokens: u32) -> u32 {
         num_tokens.div_ceil(self.block_size)
     }
 
-    /// Calculate maximum tokens that can fit in given blocks
+    /// 计算指定块数可容纳的 token 数
+    ///
+    /// 返回 `num_blocks * block_size`。
+    ///
+    /// # 示例
+    ///
+    /// ```rust
+    /// use hetero_infer::EngineConfig;
+    ///
+    /// let config = EngineConfig { block_size: 16, ..Default::default() };
+    ///
+    /// assert_eq!(config.tokens_in_blocks(0), 0);
+    /// assert_eq!(config.tokens_in_blocks(1), 16);
+    /// assert_eq!(config.tokens_in_blocks(2), 32);
+    /// ```
     pub fn tokens_in_blocks(&self, num_blocks: u32) -> u32 {
         num_blocks * self.block_size
     }
@@ -247,9 +462,8 @@ mod property_tests {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
         /// **Feature: heterogeneous-inference-system, Property 14: Configuration Validation**
-        /// *For any* configuration input, the validation shall reject configurations where
-        /// block_size <= 0, max_num_blocks <= 0, max_batch_size <= 0, or max_num_seqs <= 0.
-        /// **Validates: Requirements 7.2**
+        /// *对于任意* 配置输入，验证应拒绝 block_size <= 0, max_num_blocks <= 0, max_batch_size <= 0, 或 max_num_seqs <= 0 的配置。
+        /// **验证: Requirements 7.2**
         #[test]
         fn prop_config_validation(
             block_size in 0u32..100,
@@ -273,7 +487,7 @@ mod property_tests {
             let validation_result = config.validate();
             let is_valid = config.is_valid();
 
-            // Expected validity based on parameter ranges
+            // 基于参数范围的预期有效性
             let expected_valid = block_size > 0
                 && max_num_blocks > 0
                 && max_batch_size > 0
@@ -283,24 +497,24 @@ mod property_tests {
                 && memory_threshold > 0.0
                 && memory_threshold <= 1.0;
 
-            // Property: validation result matches expected validity
+            // 属性: 验证结果与预期有效性一致
             prop_assert_eq!(
                 validation_result.is_ok(),
                 expected_valid,
-                "Validation mismatch for config: {:?}",
+                "验证不匹配，配置: {:?}",
                 config
             );
 
-            // Property: is_valid() is consistent with validate()
+            // 属性: is_valid() 与 validate() 一致
             prop_assert_eq!(
                 is_valid,
                 expected_valid,
-                "is_valid() inconsistent with validate() for config: {:?}",
+                "is_valid() 与 validate() 不一致，配置: {:?}",
                 config
             );
         }
 
-        /// Property test for specific invalid configurations
+        /// 特定无效配置的属性测试
         #[test]
         fn prop_invalid_configs_rejected(
             valid_block_size in 1u32..100,
@@ -311,7 +525,7 @@ mod property_tests {
             valid_max_total_tokens in 1u32..10000,
             valid_memory_threshold in 0.01f32..1.0,
         ) {
-            // Test with zero block_size
+            // 测试 block_size = 0
             let config_zero_block = EngineConfig {
                 block_size: 0,
                 max_num_blocks: valid_max_num_blocks,
@@ -323,7 +537,7 @@ mod property_tests {
             };
             prop_assert!(config_zero_block.validate().is_err());
 
-            // Test with zero max_num_blocks
+            // 测试 max_num_blocks = 0
             let config_zero_blocks = EngineConfig {
                 block_size: valid_block_size,
                 max_num_blocks: 0,
@@ -335,7 +549,7 @@ mod property_tests {
             };
             prop_assert!(config_zero_blocks.validate().is_err());
 
-            // Test with zero max_batch_size
+            // 测试 max_batch_size = 0
             let config_zero_batch = EngineConfig {
                 block_size: valid_block_size,
                 max_num_blocks: valid_max_num_blocks,
@@ -347,7 +561,7 @@ mod property_tests {
             };
             prop_assert!(config_zero_batch.validate().is_err());
 
-            // Test with zero max_num_seqs
+            // 测试 max_num_seqs = 0
             let config_zero_seqs = EngineConfig {
                 block_size: valid_block_size,
                 max_num_blocks: valid_max_num_blocks,
@@ -359,7 +573,7 @@ mod property_tests {
             };
             prop_assert!(config_zero_seqs.validate().is_err());
 
-            // Test with all valid parameters
+            // 测试所有有效参数
             let valid_config = EngineConfig {
                 block_size: valid_block_size,
                 max_num_blocks: valid_max_num_blocks,

@@ -1,7 +1,23 @@
-//! KV Cache Manager with PagedAttention support
+//! KV Cache 管理器 - PagedAttention 实现
 //!
-//! Implements efficient GPU memory management using paged allocation
-//! for Key-Value cache in transformer inference.
+//! 使用分页分配实现高效的 GPU 显存管理，用于 Transformer 推理中的 KV Cache。
+//!
+//! # 核心概念
+//!
+//! - **物理块 (Physical Block)** - GPU 显存中的连续区域
+//! - **逻辑块 (Logical Block)** - 序列视角的虚拟块
+//! - **页表 (Page Table)** - 逻辑块到物理块的映射
+//!
+//! # 内存模型
+//!
+//! ```text
+//! GPU 显存池:
+//! ┌────────┬────────┬────────┬─────┬──────────┐
+//! │ Block 0│ Block 1│ Block 2│ ... │ Block N-1│
+//! │ K[0:16]│ K[0:16]│ K[0:16]│     │ K[0:16]  │
+//! │ V[0:16]│ V[0:16]│ V[0:16]│     │ V[0:16]  │
+//! └────────┴────────┴────────┴─────┴──────────┘
+//! ```
 
 use crate::error::MemoryError;
 use crate::types::{BlockIdx, LogicalBlock, MemoryStats, PhysicalBlockRef, SeqId};
