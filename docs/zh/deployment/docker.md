@@ -1,6 +1,6 @@
-# Docker Deployment
+# Docker 部署
 
-## Quick Start with Docker
+## 使用 Docker 快速启动
 
 ```bash
 docker run -d \
@@ -63,16 +63,16 @@ services:
               capabilities: [gpu]
 ```
 
-## Build and Run
+## 构建与运行
 
 ```bash
-# Build image
+# 构建镜像
 docker build -t hetero-infer:latest .
 
-# Run with GPU
+# 使用 GPU 运行
 docker run -d --gpus all hetero-infer:latest
 
-# Run with custom config
+# 使用自定义配置运行
 docker run -d \
   --gpus all \
   -v $(pwd)/config.json:/etc/hetero-infer/config.json \

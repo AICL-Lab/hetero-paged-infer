@@ -1,41 +1,41 @@
-# Architecture Overview
+# 架构概览
 
-## Design Philosophy
+## 设计理念
 
-Hetero-Paged-Infer implements a **heterogeneous computing architecture** that separates control flow (CPU) from compute-intensive operations (GPU).
+Hetero-Paged-Infer 实现了一种**异构计算架构**，将控制流（CPU）与计算密集型操作（GPU）分离。
 
-### Core Principles
+### 核心原则
 
-1. **CPU Orchestration** - Scheduling, memory management, batch preparation
-2. **GPU Computation** - Attention kernels, matrix operations, token generation
-3. **Memory Efficiency** - PagedAttention eliminates memory waste
-4. **Throughput Optimization** - Continuous batching maximizes GPU utilization
+1. **CPU 协调** — 调度、内存管理、批处理准备
+2. **GPU 计算** — Attention 内核、矩阵运算、Token 生成
+3. **内存效率** — PagedAttention 消除内存浪费
+4. **吞吐优化** — 连续批处理最大化 GPU 利用率
 
-## High-Level Architecture
+## 高层架构
 
 ```mermaid
 flowchart TB
-    subgraph Client["Client Layer"]
-        Req[HTTP/gRPC Requests]
+    subgraph Client["客户端层"]
+        Req[HTTP/gRPC 请求]
     end
-    
-    subgraph Engine["Inference Engine"]
-        API[API Handler]
-        ORCH[Orchestrator]
+
+    subgraph Engine["推理引擎"]
+        API[API 处理]
+        ORCH[编排器]
     end
-    
-    subgraph CPU["CPU Control Plane"]
+
+    subgraph CPU["CPU 控制面"]
         T[Tokenizer]
-        S[Scheduler]
-        KVM[KV Cache Manager]
-        BB[Batch Builder]
+        S[调度器]
+        KVM[KV Cache 管理器]
+        BB[批处理构建器]
     end
-    
-    subgraph GPU["GPU Compute Plane"]
-        GE[GPU Executor]
-        KC[(KV Cache Memory)]
+
+    subgraph GPU["GPU 计算面"]
+        GE[GPU 执行器]
+        KC[(KV Cache 内存)]
     end
-    
+
     Req --> API
     API --> ORCH
     ORCH --> T
@@ -49,11 +49,11 @@ flowchart TB
     KVM -.-> KC
 ```
 
-## Component Breakdown
+## 组件详解
 
-### 1. Inference Engine
+### 1. 推理引擎
 
-The main orchestrator that coordinates all components:
+协调所有组件的主编排器：
 
 ```rust
 pub struct InferenceEngine {
@@ -65,72 +65,72 @@ pub struct InferenceEngine {
 }
 ```
 
-**Responsibilities:**
-- Request lifecycle management
-- Step-by-step execution loop
-- Error recovery strategies
-- Metrics collection
+**职责：**
+- 请求生命周期管理
+- 逐步执行循环
+- 错误恢复策略
+- 指标数据收集
 
-### 2. Scheduler
+### 2. 调度器
 
-Implements **Continuous Batching** with decode priority:
+实现带有 Decode 优先的**连续批处理**：
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: Submit
-    Pending --> Prefill: Schedule
-    Prefill --> Decode: Tokens Ready
-    Decode --> Decode: Generate Next
-    Decode --> Completed: EOS/Max Tokens
-    Prefill --> Failed: Error
-    Decode --> Failed: Error
-    Completed --> [*]: Return
-    Failed --> [*]: Error Response
+    [*] --> Pending: 提交
+    Pending --> Prefill: 调度
+    Prefill --> Decode: Token 就绪
+    Decode --> Decode: 生成下一个
+    Decode --> Completed: EOS/达到最大 Token
+    Prefill --> Failed: 错误
+    Decode --> Failed: 错误
+    Completed --> [*]: 返回结果
+    Failed --> [*]: 错误响应
 ```
 
-**Scheduling Algorithm:**
+**调度算法：**
 
 ```
-1. Collect decode requests (highest priority)
-2. Fill remaining batch slots with prefill
-3. Respect memory and size constraints
-4. Update request states
+1. 收集 Decode 请求（最高优先级）
+2. 用 Prefill 请求填充剩余批处理槽位
+3. 遵守内存和大小约束
+4. 更新请求状态
 ```
 
-### 3. KV Cache Manager
+### 3. KV Cache 管理器
 
-Implements **PagedAttention** memory management:
+实现 **PagedAttention** 内存管理：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    GPU Memory Pool                           │
+│                    GPU 内存池                                │
 ├─────────────────────────────────────────────────────────────┤
 │ Block 0 │ Block 1 │ Block 2 │ ... │ Block N                  │
 │ [K,V]   │ [K,V]   │ [K,V]   │     │ [K,V]                    │
 └─────────────────────────────────────────────────────────────┘
       ↑
-Page Table Mapping:
+页表映射：
   Sequence 0: [Block 3] → [Block 7] → [Block 12]
   Sequence 1: [Block 1] → [Block 5] → [Block 9]
 ```
 
-### 4. GPU Executor
+### 4. GPU 执行器
 
-Abstracts GPU computation:
+抽象 GPU 计算：
 
 ```rust
 pub trait GPUExecutorTrait {
-    fn execute(&mut self, batch: &ExecutionBatch) 
+    fn execute(&mut self, batch: &ExecutionBatch)
         -> ExecutionOutput;
     fn capture_decode_graph(&mut self, batch_size: u32);
-    fn execute_graph(&mut self, batch: &ExecutionBatch) 
+    fn execute_graph(&mut self, batch: &ExecutionBatch)
         -> ExecutionOutput;
 }
 ```
 
-## Data Flow
+## 数据流
 
-### Request Processing Pipeline
+### 请求处理流水线
 
 ```mermaid
 sequenceDiagram
@@ -146,7 +146,7 @@ sequenceDiagram
     T-->>E: Token IDs
     E->>S: Add Request
     S->>S: Queue Request
-    
+
     loop Schedule Loop
         S->>S: Build Batch
         S->>KVM: Allocate Blocks
@@ -155,16 +155,16 @@ sequenceDiagram
         GPU-->>S: Next Tokens
         S->>S: Update States
     end
-    
+
     S->>T: Decode Tokens
     T-->>S: Text Output
     S-->>E: Completed
     E-->>C: Response
 ```
 
-## Memory Model
+## 内存模型
 
-### Block Structure
+### 块结构
 
 ```rust
 pub struct PhysicalBlock {
@@ -179,7 +179,7 @@ pub struct LogicalBlock {
 }
 ```
 
-### Memory Layout
+### 内存布局
 
 ```
 Token Positions:
@@ -202,44 +202,44 @@ Attention Mask (Causal):
 └───┴───┴───┴───┴───┘
 ```
 
-## Performance Characteristics
+## 性能特征
 
-### Throughput vs Latency
+### 吞吐 vs 延迟
 
 ```mermaid
 xychart-beta
-    title "Throughput vs Batch Size"
+    title "吞吐量 vs 批处理大小"
     x-axis [1, 8, 16, 32, 64, 128]
-    y-axis "Throughput (tokens/s)" 0 --> 10000
+    y-axis "吞吐量 (tokens/s)" 0 --> 10000
     bar [500, 2000, 4000, 7000, 9500, 9800]
     line [800, 1500, 2500, 4000, 6000, 7000]
 ```
 
-### Memory Efficiency
+### 内存效率
 
-| Method | Internal Waste | External Frag | Total |
-|--------|---------------|---------------|-------|
-| Static | 45% | 10% | 55% |
-| Dynamic | 20% | 8% | 28% |
+| 方法 | 内部浪费 | 外部碎片 | 总计 |
+|------|---------|---------|------|
+| 静态 | 45% | 10% | 55% |
+| 动态 | 20% | 8% | 28% |
 | **Paged** | **<5%** | **<2%** | **<7%** |
 
-## Scalability
+## 可扩展性
 
-### Horizontal Scaling
+### 水平扩展
 
 ```mermaid
 flowchart LR
-    subgraph LB[Load Balancer]
+    subgraph LB[负载均衡器]
         nginx[Nginx/Envoy]
     end
-    
-    subgraph Workers[Inference Workers]
+
+    subgraph Workers[推理工作节点]
         W1[Worker 1]
         W2[Worker 2]
         W3[Worker 3]
         WN[Worker N]
     end
-    
+
     Client --> LB
     LB --> W1
     LB --> W2
@@ -247,19 +247,19 @@ flowchart LR
     LB --> WN
 ```
 
-### Vertical Scaling
+### 垂直扩展
 
-- More GPU memory → More concurrent sequences
-- More CPU cores → Faster batch preparation
-- Larger batch size → Better GPU utilization
+- 更多 GPU 内存 → 更多并发序列
+- 更多 CPU 核心 → 更快的批处理准备
+- 更大的批处理大小 → 更好的 GPU 利用率
 
-## Security Considerations
+## 安全考量
 
-1. **Resource Isolation** - Per-request memory limits
-2. **Input Validation** - Token count limits
-3. **Timeout Handling** - Prevent hung requests
-4. **Error Boundaries** - Isolate failed requests
+1. **资源隔离** — 每个请求的内存限制
+2. **输入验证** — Token 数量限制
+3. **超时处理** — 防止请求挂起
+4. **错误边界** — 隔离失败的请求
 
 ---
 
-Next: [Component Details](components.md)
+下一步：[组件详情](components.md)

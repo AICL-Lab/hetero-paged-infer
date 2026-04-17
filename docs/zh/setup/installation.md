@@ -1,33 +1,33 @@
-# Installation Guide
+# 安装指南
 
-Complete installation instructions for various environments.
+各种环境的完整安装说明。
 
-## System Requirements
+## 系统要求
 
-### Minimum Requirements
+### 最低要求
 
-| Component | Specification |
+| 组件 | 规格 |
 |-----------|--------------|
-| OS | Linux (Ubuntu 20.04+, CentOS 8+) |
-| CPU | x86_64 with AVX2 support |
-| RAM | 8 GB |
-| GPU | Optional (NVIDIA with CUDA 11.x) |
-| Disk | 2 GB free space |
+| 操作系统 | Linux (Ubuntu 20.04+, CentOS 8+) |
+| CPU | x86_64，支持 AVX2 |
+| 内存 | 8 GB |
+| GPU | 可选（NVIDIA，需支持 CUDA 11.x） |
+| 磁盘 | 2 GB 可用空间 |
 
-### Recommended for Production
+### 生产环境推荐配置
 
-| Component | Specification |
+| 组件 | 规格 |
 |-----------|--------------|
-| OS | Ubuntu 22.04 LTS |
-| CPU | 16+ cores, AVX-512 preferred |
-| RAM | 32+ GB |
-| GPU | NVIDIA A100, H100, or RTX 4090 |
-| Disk | NVMe SSD |
-| Network | 1 Gbps+ |
+| 操作系统 | Ubuntu 22.04 LTS |
+| CPU | 16+ 核心，推荐支持 AVX-512 |
+| 内存 | 32+ GB |
+| GPU | NVIDIA A100、H100 或 RTX 4090 |
+| 磁盘 | NVMe SSD |
+| 网络 | 1 Gbps+ |
 
-## Install Rust
+## 安装 Rust
 
-### Using rustup (Recommended)
+### 使用 rustup（推荐）
 
 ```bash
 # Install rustup
@@ -39,7 +39,7 @@ rustc --version
 cargo --version
 ```
 
-### Required Components
+### 必需组件
 
 ```bash
 # Add required components for development
@@ -49,9 +49,9 @@ rustup component add rustfmt clippy
 rustup target add x86_64-unknown-linux-musl
 ```
 
-## Install CUDA (Optional)
+## 安装 CUDA（可选）
 
-For GPU acceleration:
+用于 GPU 加速：
 
 ### Ubuntu 22.04
 
@@ -87,9 +87,9 @@ sudo dnf install cuda-toolkit-12-1
 nvcc --version
 ```
 
-## Build Hetero-Paged-Infer
+## 构建 Hetero-Paged-Infer
 
-### Method 1: From Source (Recommended)
+### 方法 1：从源码构建（推荐）
 
 ```bash
 # Clone repository
@@ -103,7 +103,7 @@ cargo build --release
 # Binary: ./target/release/hetero-infer
 ```
 
-### Method 2: Using Make
+### 方法 2：使用 Make
 
 ```bash
 # Build with Makefile (if available)
@@ -113,16 +113,16 @@ make build
 sudo make install
 ```
 
-### Method 3: Cargo Install
+### 方法 3：使用 Cargo Install
 
 ```bash
 # Install directly from crates.io (when published)
 cargo install hetero-infer
 ```
 
-## Docker Installation
+## Docker 安装
 
-### Using Docker
+### 使用 Docker
 
 ```bash
 # Pull image
@@ -135,7 +135,7 @@ docker run -it --rm \
   ghcr.io/lessup/hetero-paged-infer:latest
 ```
 
-### Build Docker Image
+### 构建 Docker 镜像
 
 ```bash
 # Clone repo
@@ -179,9 +179,9 @@ services:
               capabilities: [gpu]
 ```
 
-## Kubernetes Deployment
+## Kubernetes 部署
 
-### Helm Chart (Planned)
+### Helm Chart（计划中）
 
 ```bash
 # Add Helm repo (when available)
@@ -194,7 +194,7 @@ helm install hetero-infer hetero-infer/hetero-infer \
   --set resources.limits.memory=32Gi
 ```
 
-### Raw Kubernetes Manifest
+### 原始 Kubernetes 清单
 
 ```yaml
 apiVersion: apps/v1
@@ -229,9 +229,9 @@ spec:
           name: hetero-infer-config
 ```
 
-## Verification
+## 验证安装
 
-### Test Installation
+### 测试安装
 
 ```bash
 # Check version
@@ -246,7 +246,7 @@ spec:
 cargo test --release
 ```
 
-### Check CUDA Support (if applicable)
+### 检查 CUDA 支持（如适用）
 
 ```bash
 # Verify CUDA is available
@@ -256,16 +256,16 @@ nvidia-smi
 cargo test --features cuda --release
 ```
 
-## Troubleshooting
+## 故障排除
 
-### Common Issues
+### 常见问题
 
-#### Build Failures
+#### 构建失败
 
 ```
 error: could not compile
 ```
-**Solutions:**
+**解决方案：**
 ```bash
 # Update Rust
 rustup update
@@ -275,7 +275,7 @@ cargo clean
 cargo build --release
 ```
 
-#### Missing Dependencies
+#### 缺少依赖
 
 ```
 error: linker cc not found
@@ -288,7 +288,7 @@ sudo apt-get install build-essential
 sudo dnf install gcc gcc-c++ make
 ```
 
-#### CUDA Not Found
+#### 找不到 CUDA
 
 ```
 nvcc: command not found
@@ -299,7 +299,7 @@ export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ```
 
-## Uninstallation
+## 卸载
 
 ```bash
 # Remove binary
@@ -314,4 +314,4 @@ cargo uninstall hetero-infer
 
 ---
 
-Next: [Configuration Guide](configuration.md)
+下一步：[配置指南](configuration.md)

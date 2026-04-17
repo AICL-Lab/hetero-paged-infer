@@ -1,70 +1,102 @@
-# MkDocs Material Configuration - Chinese
+# Hetero-Paged-Infer 文档 (中文)
+# 由 MkDocs Material + i18n 插件构建
+
 site_name: Hetero-Paged-Infer 异构推理系统
-site_description: 高性能异构推理引擎，支持大语言模型 CPU-GPU 协同执行
-site_author: LessUp
+site_description: 面向大语言模型的高性能异构推理引擎
 site_url: https://lessup.github.io/hetero-paged-infer/zh/
+site_author: LessUp
 
 docs_dir: docs/zh
 site_dir: _site/zh
 
+repo_url: https://github.com/LessUp/hetero-paged-infer
+repo_name: LessUp/hetero-paged-infer
+edit_uri: edit/master/docs/zh/
+
 theme:
   name: material
   language: zh
-  
-  # Advanced theming
+  custom_dir: docs/overrides
+  logo: ../assets/images/logo.svg
+  favicon: ../assets/images/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
   palette:
-    # Palette toggle for automatic mode
-    - media: "(prefers-color-scheme)"
-      toggle:
-        icon: material/brightness-auto
-        name: 切换到浅色模式
-    # Palette toggle for light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    - scheme: default
       primary: indigo
-      accent: indigo
+      accent: pink
       toggle:
         icon: material/brightness-7
         name: 切换到深色模式
-    # Palette toggle for dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: indigo
-      accent: indigo
+      accent: pink
       toggle:
         icon: material/brightness-4
-        name: 切换到系统偏好
-  
+        name: 切换到浅色模式
   font:
     text: Noto Sans SC
     code: JetBrains Mono
-  
-  icon:
-    logo: material/memory
-    repo: fontawesome/brands/github
-  
-  favicon: assets/favicon.png
-  
   features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.sections
     - navigation.expand
-    - navigation.path
-    - navigation.top
-    - navigation.footer
     - navigation.indexes
-    - toc.follow
-    - toc.integrate
+    - navigation.top
     - search.suggest
     - search.highlight
     - search.share
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
-    - content.tooltips
-    - header.autohide
-    - announce.dismiss
+    - toc.follow
+
+extra_css:
+  - ../../assets/stylesheets/extra.css
+
+extra_javascript:
+  - ../../assets/javascripts/mathjax.js
+  - ../../assets/javascripts/extra.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_numbers: true
+      use_pygments: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
 
 plugins:
   - search:
@@ -94,99 +126,38 @@ plugins:
       htmlmin_opts:
         remove_comments: true
 
-markdown_extensions:
-  # Python Markdown
-  - abbr
-  - admonition
-  - attr_list
-  - def_list
-  - footnotes
-  - md_in_html
-  - toc:
-      permalink: true
-      permalink_title: 链接到本章节
-      toc_depth: 4
-  
-  # PyMdown Extensions
-  - pymdownx.arithmatex:
-      generic: true
-  - pymdownx.betterem:
-      smart_enable: all
-  - pymdownx.caret
-  - pymdownx.critic
-  - pymdownx.details
-  - pymdownx.emoji:
-      emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:material.extensions.emoji.to_svg
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
-  - pymdownx.inlinehilite
-  - pymdownx.keys
-  - pymdownx.mark
-  - pymdownx.smartsymbols
-  - pymdownx.snippets:
-      auto_append:
-        - includes/abbreviations.md
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.tabbed:
-      alternate_style: true
-      combine_header_slug: true
-  - pymdownx.tasklist:
-      custom_checkbox: true
-  - pymdownx.tilde
-
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/LessUp/hetero-paged-infer
-      name: GitHub 仓库
-    - icon: fontawesome/solid/book
-      link: /en/
-      name: English Docs
-  
-  alternate:
-    - name: English
-      link: /en/
-      lang: en
-    - name: 中文
-      link: /zh/
-      lang: zh
-  
-  # Version information
-  version:
-    provider: mike
-
-extra_css:
-  - stylesheets/extra.css
-
-extra_javascript:
-  - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
-  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
-  - javascripts/extra.js
-
-# Page tree
-nav:
-  - 首页: index.md
-  - 环境搭建:
-    - 快速入门: setup/quickstart.md
-    - 安装指南: setup/installation.md
-    - 配置说明: setup/configuration.md
-  - 架构设计:
-    - 概览: architecture/overview.md
-  - API 参考:
-    - 核心类型: api/core-types.md
-  - 部署运维:
-    - Docker: deployment/docker.md
-  - 开发指南:
-    - 贡献指南: development/contributing.md
-  - 变更日志: changelog/index.md
+      name: LessUp on GitHub
+    - icon: fontawesome/brands/rust
+      link: https://crates.io/crates/hetero-paged-infer
+      name: Crates.io
+  generator: false
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
 
 copyright: |
   Copyright &copy; 2026 LessUp – <a href="#__consent">更改 Cookie 设置</a>
+
+nav:
+  - 首页: index.md
+  - 环境搭建:
+      - 快速入门: setup/quickstart.md
+      - 安装指南: setup/installation.md
+      - 配置说明: setup/configuration.md
+      - 高级配置: setup/advanced-config.md
+  - 架构设计:
+      - 系统概览: architecture/overview.md
+      - 设计原则: architecture/design.md
+  - API 参考:
+      - 核心类型: api/core-types.md
+      - 完整参考: api/reference.md
+  - 部署运维:
+      - Docker 部署: deployment/docker.md
+      - 生产部署: deployment/production.md
+  - 开发指南:
+      - 贡献指南: development/contributing.md
+  - 变更日志: changelog/index.md

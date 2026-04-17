@@ -1,42 +1,40 @@
-/* Hetero-Paged-Infer Custom Styles */
+/* ==========================================================================
+   Hetero-Paged-Infer — Unified Custom Styles
+   Shared between English and Chinese MkDocs builds.
+   ========================================================================== */
 
-/* Custom color scheme */
+/* -- Color palette -------------------------------------------------------- */
 :root {
   --md-primary-fg-color: #3949ab;
   --md-primary-fg-color--light: #5c6bc0;
   --md-primary-fg-color--dark: #283593;
   --md-accent-fg-color: #ff4081;
   --md-accent-fg-color--transparent: #ff40811a;
-  
-  /* Custom admonition colors */
   --md-admonition-icon--rust: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>');
 }
 
-/* Hero section styling */
+/* -- Header --------------------------------------------------------------- */
 .md-header {
   backdrop-filter: blur(10px);
   background-color: rgba(57, 73, 171, 0.95) !important;
 }
-
 [data-md-color-scheme="slate"] .md-header {
   background-color: rgba(40, 53, 147, 0.95) !important;
 }
 
-/* Custom hero for landing page */
+/* -- Hero / landing page -------------------------------------------------- */
 .hero {
   background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-primary-fg-color--dark) 100%);
-  color: white;
+  color: #fff;
   padding: 4rem 2rem;
   text-align: center;
   margin: -2rem -2rem 2rem -2rem;
 }
-
 .hero h1 {
   font-size: 3rem;
   font-weight: 700;
   margin-bottom: 1rem;
 }
-
 .hero .tagline {
   font-size: 1.25rem;
   opacity: 0.9;
@@ -45,16 +43,14 @@
   margin-left: auto;
   margin-right: auto;
 }
-
 .hero .buttons {
   display: flex;
   gap: 1rem;
   justify-content: center;
   flex-wrap: wrap;
 }
-
 .hero .md-button {
-  background-color: white;
+  background-color: #fff;
   color: var(--md-primary-fg-color);
   font-weight: 600;
   padding: 0.75rem 2rem;
@@ -62,74 +58,72 @@
   text-decoration: none;
   transition: all 0.3s ease;
 }
-
 .hero .md-button:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
-
 .hero .md-button--secondary {
   background-color: transparent;
-  color: white;
-  border: 2px solid white;
+  color: #fff;
+  border: 2px solid #fff;
 }
 
-/* Feature grid */
+/* -- Feature grid --------------------------------------------------------- */
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 2rem;
   margin: 3rem 0;
 }
-
 .feature-card {
   padding: 2rem;
   border-radius: 8px;
   background: var(--md-code-bg-color);
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
-
 .feature-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
 }
-
 .feature-card .icon {
   font-size: 3rem;
   margin-bottom: 1rem;
 }
-
 .feature-card h3 {
   margin-top: 0;
   color: var(--md-primary-fg-color);
 }
 
-/* Code block enhancements */
+/* -- Code blocks ---------------------------------------------------------- */
 .md-typeset code {
   border-radius: 4px;
   padding: 0.2em 0.4em;
 }
-
 .md-typeset pre > code {
   border-radius: 8px;
 }
+.md-clipboard {
+  color: var(--md-default-fg-color--lighter);
+  transition: color 0.3s;
+}
+.md-clipboard:hover {
+  color: var(--md-accent-fg-color);
+}
 
-/* Highlight current section in TOC */
+/* -- Navigation ----------------------------------------------------------- */
 .md-nav__link--active {
   font-weight: 600;
 }
 
-/* Custom admonitions */
+/* -- Custom admonitions (Rust) ------------------------------------------- */
 .md-typeset .admonition.rust,
 .md-typeset details.rust {
   border-color: #dea584;
 }
-
 .md-typeset .admonition.rust > .admonition-title,
 .md-typeset details.rust > summary {
   background-color: rgba(222, 165, 132, 0.1);
 }
-
 .md-typeset .admonition.rust > .admonition-title::before,
 .md-typeset details.rust > summary::before {
   background-color: #dea584;
@@ -137,57 +131,22 @@
           mask-image: var(--md-admonition-icon--rust);
 }
 
-/* Architecture diagram styling */
-.mermaid {
-  background: transparent !important;
-}
-
-/* Tables */
+/* -- Tables --------------------------------------------------------------- */
 .md-typeset table:not([class]) {
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
-
 .md-typeset table:not([class]) th {
   background-color: var(--md-primary-fg-color);
-  color: white;
+  color: #fff;
   font-weight: 600;
 }
-
 .md-typeset table:not([class]) tr:hover {
   background-color: var(--md-accent-fg-color--transparent);
 }
 
-/* Language switcher in header */
-.md-header__language {
-  display: flex;
-  align-items: center;
-  margin-left: 1rem;
-}
-
-.md-header__language a {
-  color: white;
-  text-decoration: none;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  opacity: 0.8;
-  transition: opacity 0.3s;
-}
-
-.md-header__language a:hover {
-  opacity: 1;
-  background-color: rgba(255,255,255,0.1);
-}
-
-.md-header__language a.active {
-  opacity: 1;
-  font-weight: 600;
-  background-color: rgba(255,255,255,0.2);
-}
-
-/* Performance badge */
+/* -- Badges / indicators -------------------------------------------------- */
 .perf-badge {
   display: inline-flex;
   align-items: center;
@@ -197,30 +156,37 @@
   font-size: 0.85rem;
   font-weight: 500;
 }
+.perf-badge.success { background-color: #4caf50; color: #fff; }
+.perf-badge.warning { background-color: #ff9800; color: #fff; }
+.perf-badge.info    { background-color: #2196f3; color: #fff; }
 
-.perf-badge.success {
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.status-indicator::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+.status-indicator.ready::before {
   background-color: #4caf50;
-  color: white;
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.3);
 }
-
-.perf-badge.warning {
+.status-indicator.planned::before {
   background-color: #ff9800;
-  color: white;
 }
 
-.perf-badge.info {
-  background-color: #2196f3;
-  color: white;
-}
-
-/* Animated gradient border for important sections */
+/* -- Gradient border animation ------------------------------------------- */
 .gradient-border {
   position: relative;
   border-radius: 8px;
   padding: 2rem;
   background: var(--md-code-bg-color);
 }
-
 .gradient-border::before {
   content: '';
   position: absolute;
@@ -231,84 +197,43 @@
   z-index: -1;
   animation: gradient 3s ease infinite;
 }
-
 @keyframes gradient {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
 }
 
-/* Status indicators */
-.status-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.status-indicator::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: currentColor;
-}
-
-.status-indicator.ready::before {
-  background-color: #4caf50;
-  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.3);
-}
-
-.status-indicator.planned::before {
-  background-color: #ff9800;
-}
-
-/* Copy button enhancement */
-.md-clipboard {
-  color: var(--md-default-fg-color--lighter);
-  transition: color 0.3s;
-}
-
-.md-clipboard:hover {
-  color: var(--md-accent-fg-color);
-}
-
-/* Search result highlighting */
+/* -- Search --------------------------------------------------------------- */
 .md-search-result mark {
   background-color: var(--md-accent-fg-color--transparent);
   color: var(--md-accent-fg-color);
 }
 
-/* Footer links */
+/* -- Mermaid diagrams ----------------------------------------------------- */
+.mermaid {
+  background: transparent !important;
+}
+
+/* -- Footer --------------------------------------------------------------- */
 .md-footer-meta__inner {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-/* Responsive adjustments */
+/* -- Responsive ----------------------------------------------------------- */
 @media screen and (max-width: 768px) {
-  .hero h1 {
-    font-size: 2rem;
-  }
-  
-  .hero .tagline {
-    font-size: 1rem;
-  }
-  
-  .feature-grid {
-    grid-template-columns: 1fr;
-  }
+  .hero h1           { font-size: 2rem; }
+  .hero .tagline     { font-size: 1rem; }
+  .feature-grid      { grid-template-columns: 1fr; }
 }
 
-/* Print styles */
+/* -- Print ---------------------------------------------------------------- */
 @media print {
   .md-header,
   .md-footer,
   .md-tabs,
-  .md-sidebar {
-    display: none;
-  }
-  
+  .md-sidebar { display: none; }
   .md-content {
     margin-left: 0 !important;
     max-width: 100% !important;

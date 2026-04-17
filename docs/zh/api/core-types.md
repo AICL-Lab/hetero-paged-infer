@@ -1,8 +1,8 @@
-# Core Types
+# 核心类型
 
 ## InferenceEngine
 
-Main orchestrator for inference operations.
+推理操作的主要编排器。
 
 ```rust
 pub struct InferenceEngine {
@@ -15,7 +15,7 @@ pub struct InferenceEngine {
 }
 ```
 
-### Methods
+### 方法
 
 #### `new()`
 
@@ -23,7 +23,7 @@ pub struct InferenceEngine {
 pub fn new(config: EngineConfig) -> Result<Self, EngineError>
 ```
 
-Create a new inference engine with the given configuration.
+使用给定配置创建一个新的推理引擎。
 
 ```rust
 let config = EngineConfig::default();
@@ -40,7 +40,7 @@ pub fn submit_request(
 ) -> Result<u64, EngineError>
 ```
 
-Submit a text generation request.
+提交文本生成请求。
 
 ```rust
 let params = GenerationParams {
@@ -57,7 +57,7 @@ let request_id = engine.submit_request("Hello", params)?;
 pub fn run(&mut self) -> Vec<CompletedRequest>
 ```
 
-Run the main inference loop until all requests complete.
+运行主推理循环，直到所有请求完成。
 
 ```rust
 let completed = engine.run();
@@ -72,7 +72,7 @@ for result in completed {
 pub fn step(&mut self) -> Vec<CompletedRequest>
 ```
 
-Execute a single scheduling and inference step.
+执行单次调度和推理步骤。
 
 ```rust
 while engine.has_pending_work() {
@@ -83,7 +83,7 @@ while engine.has_pending_work() {
 
 ## EngineConfig
 
-Configuration for the inference engine.
+推理引擎的配置。
 
 ```rust
 pub struct EngineConfig {
@@ -97,15 +97,15 @@ pub struct EngineConfig {
 }
 ```
 
-| Field | Default | Description |
+| 字段 | 默认值 | 描述 |
 |-------|---------|-------------|
-| block_size | 16 | Tokens per physical block |
-| max_num_blocks | 1024 | Total physical blocks |
-| max_batch_size | 32 | Max sequences per batch |
-| max_num_seqs | 256 | Max concurrent sequences |
-| max_model_len | 2048 | Max context length |
-| max_total_tokens | 4096 | Max tokens per batch |
-| memory_threshold | 0.9 | Memory pressure threshold |
+| block_size | 16 | 每个物理块包含的 token 数 |
+| max_num_blocks | 1024 | 物理块总数 |
+| max_batch_size | 32 | 每批次最大序列数 |
+| max_num_seqs | 256 | 最大并发序列数 |
+| max_model_len | 2048 | 最大上下文长度 |
+| max_total_tokens | 4096 | 每批次最大 token 数 |
+| memory_threshold | 0.9 | 内存压力阈值 |
 
 ```rust
 impl Default for EngineConfig {
@@ -125,7 +125,7 @@ impl Default for EngineConfig {
 
 ## GenerationParams
 
-Parameters for text generation.
+文本生成参数。
 
 ```rust
 pub struct GenerationParams {
@@ -135,15 +135,15 @@ pub struct GenerationParams {
 }
 ```
 
-| Field | Default | Range | Description |
+| 字段 | 默认值 | 范围 | 描述 |
 |-------|---------|-------|-------------|
-| max_tokens | 100 | 1+ | Maximum tokens to generate |
-| temperature | 1.0 | 0.0-2.0 | Sampling temperature |
-| top_p | 0.9 | 0.0-1.0 | Nucleus sampling threshold |
+| max_tokens | 100 | 1+ | 最大生成 token 数 |
+| temperature | 1.0 | 0.0-2.0 | 采样温度 |
+| top_p | 0.9 | 0.0-1.0 | 核采样阈值 |
 
 ## Request
 
-Represents an inference request.
+表示一个推理请求。
 
 ```rust
 pub struct Request {
@@ -168,7 +168,7 @@ pub enum RequestState {
 
 ## Sequence
 
-Active request with KV Cache allocation.
+已分配 KV Cache 的活跃请求。
 
 ```rust
 pub struct Sequence {
@@ -182,7 +182,7 @@ pub struct Sequence {
 
 ## CompletedRequest
 
-Result of completed inference.
+已完成的推理结果。
 
 ```rust
 pub struct CompletedRequest {
@@ -197,7 +197,7 @@ pub struct CompletedRequest {
 
 ## EngineMetrics
 
-Runtime performance metrics.
+运行时性能指标。
 
 ```rust
 pub struct EngineMetrics {
@@ -208,57 +208,57 @@ pub struct EngineMetrics {
 }
 ```
 
-## Usage Examples
+## 使用示例
 
-### Complete Workflow
+### 完整工作流
 
 ```rust
 use hetero_infer::*;
 use std::time::Duration;
 
 fn main() -> Result<(), EngineError> {
-    // Configure
+    // 配置
     let config = EngineConfig {
         max_batch_size: 64,
         max_num_blocks: 2048,
         ..Default::default()
     };
-    
-    // Create engine
+
+    // 创建引擎
     let mut engine = InferenceEngine::new(config)?;
-    
-    // Submit multiple requests
+
+    // 提交多个请求
     let params = GenerationParams {
         max_tokens: 100,
         temperature: 0.8,
         ..Default::default()
     };
-    
+
     engine.submit_request("First prompt", params.clone())?;
     engine.submit_request("Second prompt", params.clone())?;
     engine.submit_request("Third prompt", params)?;
-    
-    // Run inference
+
+    // 运行推理
     let completed = engine.run();
-    
-    // Process results
+
+    // 处理结果
     for result in completed {
-        println!("Request {}: {}", 
-            result.request_id, 
+        println!("Request {}: {}",
+            result.request_id,
             result.output_text
         );
     }
-    
-    // Check metrics
+
+    // 查看指标
     let metrics = &engine.metrics;
-    println!("Throughput: {:.2} tok/s", 
+    println!("Throughput: {:.2} tok/s",
         metrics.throughput_tok_per_sec
     );
-    
+
     Ok(())
 }
 ```
 
 ---
 
-Next: [Trait Interfaces](traits.md)
+下一篇: [Trait 接口](traits.md)
