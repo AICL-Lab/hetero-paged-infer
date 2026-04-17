@@ -80,25 +80,69 @@ pub fn my_function() -> i32 {
 
 This project follows **Spec-Driven Development (SDD)**. All changes must start with updating specifications before code implementation.
 
+### Specification Directory Structure
+
+```
+specs/
+├── product/     # Product Requirements Documents (PRDs)
+├── rfc/         # Technical Design Documents (RFCs)
+├── api/         # API Interface Specifications
+├── db/          # Database Schema Specifications
+└── testing/     # BDD Test Specifications
+```
+
 ### Workflow for Contributors
 
 1. **Identify the relevant spec** in `/specs/`:
    - Product requirements: `/specs/product/`
    - Technical designs: `/specs/rfc/`
+   - API specifications: `/specs/api/`
    - Test specifications: `/specs/testing/`
 
 2. **Update the spec first** before writing any code:
    - If adding a feature, propose the change in the appropriate spec document
    - If fixing a bug, verify the spec accurately describes the expected behavior
    - Get review on spec changes before implementation
+   - Use requirement IDs (e.g., REQ-1, REQ-2.3) for traceability
 
 3. **Implement according to spec**:
    - Follow the interfaces, types, and constraints defined in specs
-   - Do not add functionality not specified in the spec
+   - Do not add functionality not specified in the spec (No Gold-Plating)
 
 4. **Test against spec**:
    - Ensure tests cover acceptance criteria from specs
    - Property tests must validate invariants defined in RFCs
+   - Reference requirements in test comments
+
+### Creating New Specifications
+
+#### Product Requirements
+Add to `/specs/product/` with:
+- Clear user stories: "As a [role], I want [feature] so that [benefit]"
+- Acceptance criteria in Given-When-Then format
+- Unique requirement IDs (REQ-N)
+
+#### Technical RFCs
+Add to `/specs/rfc/` with:
+- Numbered naming: `NNNN-short-description.md`
+- Metadata table (ID, Status, Authors, Created)
+- Clear problem statement and solution approach
+
+#### API Specifications
+Add to `/specs/api/` with:
+- OpenAPI 3.0 format (YAML preferred)
+- Complete request/response schemas
+- Error documentation
+
+### Spec Review Process
+
+All spec changes follow this process:
+
+1. **Propose**: Create or modify spec document
+2. **Review**: Team reviews for completeness
+3. **Approve**: Get sign-off before implementation
+4. **Implement**: Code according to spec
+5. **Validate**: Test implementation against spec
 
 ## Submitting Code
 

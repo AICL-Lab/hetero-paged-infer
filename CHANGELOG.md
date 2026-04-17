@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive bilingual documentation (English/Chinese)
 - GitHub Pages documentation site
 - CI/CD workflow optimizations
+- Spec-Driven Development workflow documentation
+- API and Database specification placeholders
+
+### Changed
+- Reorganized specs/ directory structure with README for each subdirectory
+- Renamed docs/*/getting-started/ to docs/*/setup/ per GitHub best practices
+- Enhanced AGENTS.md with complete SDD workflow instructions
+- Updated CONTRIBUTING.md with detailed spec guidelines
 
 ## [0.1.0] - 2026-04-16
 
