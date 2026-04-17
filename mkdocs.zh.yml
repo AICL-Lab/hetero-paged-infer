@@ -70,13 +70,23 @@ plugins:
   - search:
       lang: zh
       separator: '[\s\u200b\-,:!=\[\]()"/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
-  
+
+  - i18n:
+      languages:
+        - locale: en
+          name: English
+          site_name: Hetero-Paged-Infer
+        - locale: zh
+          name: 中文
+          default: true
+          site_name: Hetero-Paged-Infer 异构推理系统
+
   - git-revision-date-localized:
       enable_creation_date: true
       type: date
       fallback_to_build_date: true
       locale: zh
-  
+
   - minify:
       minify_html: true
       minify_js: true
