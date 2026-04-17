@@ -1,0 +1,377 @@
+# Hetero-Paged-Infer API Specification
+#
+# OpenAPI 3.0.3 definition for the inference engine REST API.
+# This is a skeleton specification — endpoints are planned but not yet implemented.
+#
+# Related:
+# - specs/product/heterogeneous-inference-engine.md (requirements)
+# - specs/rfc/0001-heterogeneous-inference-architecture.md (design)
+
+openapi: 3.0.3
+info:
+  title: Hetero-Paged-Infer API
+  description: >
+    High-performance heterogeneous inference engine supporting CPU-GPU co-execution
+    for Large Language Models.
+  version: 0.1.0
+  contact:
+    name: LessUp
+    url: https://github.com/LessUp/hetero-paged-infer
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: inference
+    description: Core inference operations
+  - name: scheduler
+    description: Scheduler control and status
+  - name: metrics
+    description: Monitoring and metrics endpoints
+  - name: models
+    description: Model management
+
+paths:
+  /v1/inference/completions:
+    post:
+      summary: Submit inference request (synchronous)
+      description: >
+        Submit a text completion request. The engine handles scheduling,
+        KV Cache management, and CPU-GPU co-execution transparently.
+      operationId: createCompletion
+      tags:
+        - inference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionRequest'
+            examples:
+              basic:
+                summary: Basic completion
+                value:
+                  model: default
+                  prompt: "What is the meaning of life?"
+                  max_tokens: 100
+                  temperature: 0.8
+                  top_p: 0.95
+      responses:
+        '200':
+          description: Successful completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/inference/requests:
+    post:
+      summary: Submit inference request (asynchronous)
+      description: >
+        Submit a request for asynchronous processing. Returns a request ID
+        that can be used to poll for results.
+      operationId: submitRequest
+      tags:
+        - inference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsyncRequest'
+      responses:
+        '202':
+          description: Request accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncResponse'
+
+  /v1/inference/requests/{request_id}:
+    get:
+      summary: Get status of an async request
+      operationId: getRequestStatus
+      tags:
+        - inference
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uint64
+      responses:
+        '200':
+          description: Request status and result (if complete)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestStatus'
+
+  /v1/scheduler/status:
+    get:
+      summary: Get scheduler status
+      operationId: getSchedulerStatus
+      tags:
+        - scheduler
+      responses:
+        '200':
+          description: Scheduler status with pending/running/completed counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchedulerStatus'
+
+  /v1/metrics/memory:
+    get:
+      summary: Get KV Cache memory usage
+      operationId: getMemoryMetrics
+      tags:
+        - metrics
+      responses:
+        '200':
+          description: Memory usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryMetrics'
+
+  /v1/metrics/throughput:
+    get:
+      summary: Get inference throughput metrics
+      operationId: getThroughputMetrics
+      tags:
+        - metrics
+      responses:
+        '200':
+          description: Throughput statistics (tokens/sec)
+
+  /v1/models:
+    get:
+      summary: List available models
+      operationId: listModels
+      tags:
+        - models
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+
+components:
+  schemas:
+    CompletionRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        model:
+          type: string
+          default: default
+          description: Model identifier
+        prompt:
+          type: string
+          description: Input text for inference
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+          default: 100
+          description: Maximum number of tokens to generate
+        temperature:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 2.0
+          exclusiveMinimum: true
+          default: 1.0
+          description: Sampling temperature (lower = more deterministic)
+        top_p:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          exclusiveMinimum: true
+          default: 1.0
+          description: Top-p (nucleus) sampling parameter
+
+    CompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Request ID
+        object:
+          type: string
+          enum: [text_completion]
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Choice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    Choice:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Generated text
+        index:
+          type: integer
+        finish_reason:
+          type: string
+          enum: [stop, length]
+
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
+    AsyncRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+        max_tokens:
+          type: integer
+          default: 100
+        temperature:
+          type: number
+          default: 1.0
+        top_p:
+          type: number
+          default: 1.0
+
+    AsyncResponse:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uint64
+        status:
+          type: string
+          enum: [pending, processing]
+
+    RequestStatus:
+      type: object
+      properties:
+        request_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, prefill, decode, completed, failed]
+        result:
+          type: string
+          description: Generated text (only when status=completed)
+        error:
+          type: string
+          description: Error message (only when status=failed)
+
+    SchedulerStatus:
+      type: object
+      properties:
+        pending_requests:
+          type: integer
+        running_requests:
+          type: integer
+        completed_requests:
+          type: integer
+        total_tokens_in_batch:
+          type: integer
+        memory_utilization:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+
+    MemoryMetrics:
+      type: object
+      properties:
+        total_blocks:
+          type: integer
+        used_blocks:
+          type: integer
+        free_blocks:
+          type: integer
+        utilization:
+          type: number
+          format: float
+        num_sequences:
+          type: integer
+
+    ModelList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [model]
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
