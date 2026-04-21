@@ -1,12 +1,12 @@
 //! # Hetero-Paged-Infer
 //!
-//! 异构推理系统 — 基于 PagedAttention 和 Continuous Batching 的 CPU-GPU 协同推理引擎。
+//! 异构推理系统 — 基于 `PagedAttention` 和 Continuous Batching 的 CPU-GPU 协同推理引擎。
 //!
 //! ## 概述
 //!
 //! 本库提供了一个高性能推理引擎，实现了以下核心技术：
 //!
-//! - **PagedAttention**: 分页式 KV Cache 管理，按需分配/释放显存块
+//! - **`PagedAttention`**: 分页式 KV Cache 管理，按需分配/释放显存块
 //! - **Continuous Batching**: 连续批处理调度，prefill/decode 分阶段管理
 //! - **内存压力感知**: 可配置阈值，自动拒绝新请求防止 OOM
 //! - **模块化设计**: 所有核心组件通过 trait 抽象，便于替换实现
@@ -73,7 +73,7 @@
 //!
 //! ### KV Cache 管理
 //!
-//! - [`KVCacheManager`] - PagedAttention KV Cache 管理器
+//! - [`KVCacheManager`] - `PagedAttention` KV Cache 管理器
 //! - [`KVCacheManagerTrait`] - KV Cache 管理器 trait 接口
 //!
 //! ### GPU 执行器
@@ -105,6 +105,8 @@
 //! - [`MemoryError`] - 内存错误
 //! - [`ExecutionError`] - 执行错误
 //! - [`SchedulerError`] - 调度错误
+
+#![allow(clippy::similar_names)]
 
 pub mod config;
 pub mod engine;
