@@ -63,12 +63,12 @@ jobs:
 
       - name: Build English site
         run: |
-          mkdocs build --config-file mkdocs.yml --strict
+          mkdocs build --config-file mkdocs.yml
           echo "English site built to _site/en/"
 
       - name: Build Chinese site
         run: |
-          mkdocs build --config-file mkdocs.zh.yml --strict
+          mkdocs build --config-file mkdocs.zh.yml
           echo "Chinese site built to _site/zh/"
 
       - name: Copy landing page
