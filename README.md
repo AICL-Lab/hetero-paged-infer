@@ -3,12 +3,12 @@
 <div align="center">
 
 [![CI](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/hetero-infer.svg)](https://crates.io/crates/hetero-infer)
-[![Docs.rs](https://docs.rs/hetero-infer/badge.svg)](https://docs.rs/hetero-infer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
 **A High-Performance LLM Inference Engine with PagedAttention & Continuous Batching**
+
+> ⚠️ **Development Status**: This project is in early development (v0.1.0). It currently uses a Mock GPU executor for testing and demonstration purposes. Real CUDA kernel support is planned but not yet implemented.
 
 **[English](README.md) | [中文](README.zh.md) | [Documentation](https://lessup.github.io/hetero-paged-infer/)**
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-Hetero-Paged-Infer is a **production-ready** inference engine for Large Language Models (LLMs) built in Rust. It implements cutting-edge techniques from [vLLM](https://github.com/vllm-project/vllm) with a modular, testable architecture designed for production deployment.
+Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built in Rust, designed with a modular architecture for future production deployment. It implements cutting-edge techniques from [vLLM](https://github.com/vllm-project/vllm) with a modular, testable architecture designed for production deployment.
 
 | Feature | Description | Status |
 |---------|-------------|:------:|
@@ -26,7 +26,7 @@ Hetero-Paged-Infer is a **production-ready** inference engine for Large Language
 | **Continuous Batching** | Dynamic prefill/decode scheduling | ✅ |
 | **Memory Pressure Awareness** | Configurable OOM prevention | ✅ |
 | **Modular Architecture** | Trait-based abstractions | ✅ |
-| **Comprehensive Testing** | 135 tests (unit, property, integration) | ✅ |
+| **Comprehensive Testing** | 121 tests (unit, property, integration) | ✅ |
 | **CUDA Kernels** | Real GPU execution | 🚧 Planned |
 
 ## Architecture
@@ -40,9 +40,6 @@ Hetero-Paged-Infer is a **production-ready** inference engine for Large Language
 │  │            │  │            │  │   BlockPool + PageTable        │  │
 │  └─────┬──────┘  └─────┬──────┘  └───────────────┬────────────────┘  │
 │        │               │                         │                    │
-│        │        ┌──────▼──────┐                  │                    │
-│        │        │Batch Builder│◄─────────────────┘                    │
-│        │        └──────┬──────┘                                       │
 ├────────┼───────────────┼─────────────────────────────────────────────┤
 │        │        ┌──────▼──────┐                                       │
 │        │        │ GPU Executor│  (CUDA / Mock)                        │
@@ -70,7 +67,7 @@ cd hetero-paged-infer
 # Build in release mode
 cargo build --release
 
-# Run the test suite (135 tests)
+# Run the test suite (121 tests)
 cargo test
 ```
 
@@ -115,12 +112,16 @@ for result in results {
 
 ## Configuration
 
-| Option | Default | Description |
-|--------|---------|-------------|
+| Parameter | Default | Description |
+|-----------|---------|-------------|
 | `--block-size` | 16 | Tokens per physical block |
 | `--max-num-blocks` | 1024 | Total physical blocks |
 | `--max-batch-size` | 32 | Max sequences per batch |
-| `--memory-threshold` | 0.9 | Memory pressure threshold |
+| `--max-num-seqs` | 256 | Maximum number of sequences |
+| `--max-model-len` | 2048 | Maximum model context length |
+| `--max-total-tokens` | 4096 | Maximum tokens per batch |
+| `--memory-threshold` | 0.9 | Memory pressure threshold (0.0-1.0) |
+| `--max-tokens` | 100 | Maximum tokens to generate |
 | `--temperature` | 1.0 | Sampling temperature |
 | `--top-p` | 0.9 | Nucleus sampling threshold |
 
@@ -131,7 +132,11 @@ Config file (`config.json`):
   "block_size": 16,
   "max_num_blocks": 1024,
   "max_batch_size": 32,
-  "memory_threshold": 0.9
+  "max_num_seqs": 256,
+  "max_model_len": 2048,
+  "max_total_tokens": 4096,
+  "memory_threshold": 0.9,
+  "max_retry_attempts": 2
 }
 ```
 
@@ -142,7 +147,7 @@ Load: `./hetero-infer --config config.json`
 | Resource | Link |
 |----------|------|
 | **GitHub Pages** | [https://lessup.github.io/hetero-paged-infer/](https://lessup.github.io/hetero-paged-infer/) |
-| **API Reference (docs.rs)** | [https://docs.rs/hetero-infer](https://docs.rs/hetero-infer) |
+
 | **Architecture Guide** | [docs/en/architecture/overview.md](docs/en/architecture/overview.md) |
 | **Contributing Guide** | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **Changelog** | [CHANGELOG.md](CHANGELOG.md) |
@@ -165,6 +170,8 @@ mkdocs serve -f mkdocs.yml
 | Static Allocation | ~40-60% | Baseline | Pre-allocate max context for each request |
 | Dynamic Allocation | ~20-30% | +20% | Resize per request but still fragmented |
 | **PagedAttention** | **<5%** | **+50%** | Block-based sharing with copy-on-write |
+
+*Note: Performance figures are theoretical estimates based on vLLM research papers.*
 
 ### Why PagedAttention?
 
@@ -189,11 +196,11 @@ cargo test -- --test-threads=1
 
 | Type | Count | Description |
 |------|:-----:|-------------|
-| Unit Tests | 78 | Core functionality tests |
-| Property Tests | 15 | Invariant verification with proptest |
+| Unit Tests | 79 | Core functionality tests |
+| Property Tests | 22 | Invariant verification with proptest |
 | Integration Tests | 13 | End-to-end workflow tests |
-| Doc Tests | 29 | Documentation examples |
-| **Total** | **135** | |
+| Doc Tests | 7 | Documentation examples |
+| **Total** | **121** | |
 
 ## Contributing
 
