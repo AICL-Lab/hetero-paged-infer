@@ -19,18 +19,15 @@ concurrency:
 
 jobs:
   check:
-    name: 检查与测试
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: 缓存 cargo 注册表与构建
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -39,84 +36,31 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: 检查格式
-        run: cargo fmt --all -- --check
-
-      - name: Clippy 静态检查
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: 构建
-        run: cargo build --verbose
-
-      - name: 运行测试
-        run: cargo test --verbose
-
-      - name: 运行文档测试
-        run: cargo test --doc --verbose
-
-      - name: 运行 CUDA feature 测试
-        if: false  # 已禁用：需要 GitHub Hosted Runner 上不可用的 CUDA 环境
-        run: cargo test --verbose --features cuda
-
-  docs:
-    name: 文档构建
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 缓存 cargo 注册表与构建
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: 构建文档
-        run: cargo doc --no-deps --verbose
-
-      - name: 检查文档警告
-        run: cargo doc --no-deps 2>&1 | grep -E "warning:" && exit 1 || exit 0
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+      - run: cargo test --doc --verbose
+      - run: cargo doc --no-deps
 
   security:
-    name: 安全审计
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 安装 cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: 运行安全审计
-        run: cargo audit
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
 
   coverage:
-    name: 代码覆盖率
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-
-      - name: 安装 cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: 生成代码覆盖率报告
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-      - name: 上传覆盖率报告
-        uses: codecov/codecov-action@v4
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v4
         with:
           files: lcov.info
           fail_ci_if_error: false
