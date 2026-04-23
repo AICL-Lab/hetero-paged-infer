@@ -8,7 +8,6 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs*.yml'
-      - 'index.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -73,9 +72,26 @@ jobs:
 
       - name: Copy landing page
         run: |
-          cp index.md _site/
-          cp README.md _site/ 2>/dev/null || true
-          cp README.zh.md _site/ 2>/dev/null || true
+          # Copy the new landing pages to root (these will be the entry points)
+          # MkDocs builds docs to _site/en/ and _site/zh/ subdirs
+          cp docs/landing/index.html _site/index.html
+          
+          # Create a separate home dir for Chinese landing page
+          # to avoid conflict with MkDocs zh/index.html
+          mkdir -p _site/home
+          cp docs/landing/zh.html _site/home/index.html
+          
+          # Create a simple redirect from root /zh to /home for Chinese landing
+          cat > _site/zh-landing.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head><meta http-equiv="refresh" content="0; url=home/"></head>
+          <body><p>Redirecting to <a href="home/">Chinese Home</a>...</p></body>
+          </html>
+          EOF
+          
+          echo "Landing pages copied to _site/"
+          ls -la _site/ | head -15
 
       - name: Validate site
         run: |

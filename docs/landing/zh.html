@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hetero-Paged-Infer — 高性能大语言模型推理引擎</title>
+    <meta name="description" content="基于 Rust 的 LLM 推理引擎，采用 PagedAttention 和连续批处理技术，<5% 内存浪费，+50% 吞吐率提升。">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="assets/images/favicon.svg" type="image/svg+xml">
+    <style>
+        :root {
+            --primary: #0f172a;
+            --secondary: #1e293b;
+            --tertiary: #334155;
+            --accent: #38bdf8;
+            --accent-warm: #f472b6;
+            --accent-purple: #a78bfa;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --gradient-1: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+            --gradient-2: linear-gradient(135deg, #f472b6 0%, #a78bfa 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--primary);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Canvas Background */
+        #particle-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Navigation */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            padding: 1rem 2rem;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.3s ease;
+        }
+
+        .nav.scrolled {
+            background: rgba(15, 23, 42, 0.95);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+        }
+
+        .nav-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--text);
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+
+        .nav-logo svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent);
+        }
+
+        .lang-switch {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background: rgba(255,255,255,0.05);
+            border-radius: 9999px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .lang-switch a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            transition: all 0.2s;
+        }
+
+        .lang-switch a.active {
+            background: var(--accent);
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .nav-cta {
+            padding: 0.5rem 1rem;
+            background: var(--gradient-1);
+            color: var(--primary) !important;
+            border-radius: 9999px;
+            font-weight: 600 !important;
+            font-size: 0.875rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .nav-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(56, 189, 248, 0.3);
+        }
+
+        /* Hero Section */
+        .hero {
+            position: relative;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8rem 2rem 4rem;
+            z-index: 1;
+        }
+
+        .hero-content {
+            text-align: center;
+            max-width: 900px;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            color: var(--accent);
+            margin-bottom: 2rem;
+            animation: fadeInDown 0.8s ease;
+        }
+
+        .hero-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .hero-title {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.8s ease 0.2s both;
+        }
+
+        .hero-title .gradient {
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: clamp(1.125rem, 2vw, 1.375rem);
+            color: var(--text-muted);
+            max-width: 600px;
+            margin: 0 auto 2.5rem;
+            animation: fadeInUp 0.8s ease 0.4s both;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: fadeInUp 0.8s ease 0.6s both;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 1.75rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9375rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient-1);
+            color: var(--primary);
+            box-shadow: 0 4px 20px rgba(56, 189, 248, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(56, 189, 248, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.05);
+            color: var(--text);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        .hero-stats {
+            display: flex;
+            gap: 3rem;
+            justify-content: center;
+            margin-top: 4rem;
+            animation: fadeInUp 0.8s ease 0.8s both;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+
+        /* Floating Cards */
+        .floating-cards {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .float-card {
+            position: absolute;
+            padding: 1rem 1.5rem;
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent);
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .float-card:nth-child(1) { top: 20%; left: 10%; animation-delay: 0s; }
+        .float-card:nth-child(2) { top: 30%; right: 10%; animation-delay: 1s; }
+        .float-card:nth-child(3) { bottom: 30%; left: 15%; animation-delay: 2s; }
+        .float-card:nth-child(4) { bottom: 25%; right: 12%; animation-delay: 3s; }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        /* Features Section */
+        .section {
+            position: relative;
+            z-index: 1;
+            padding: 6rem 2rem;
+        }
+
+        .section-header {
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto 4rem;
+        }
+
+        .section-tag {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent);
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .section-desc {
+            color: var(--text-muted);
+            font-size: 1.125rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            padding: 2rem;
+            background: linear-gradient(145deg, rgba(30,41,59,0.6) 0%, rgba(15,23,42,0.8) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(56, 189, 248, 0.2);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(56, 189, 248, 0.1);
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .feature-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-desc {
+            color: var(--text-muted);
+            font-size: 0.9375rem;
+            line-height: 1.7;
+        }
+
+        /* Performance Section */
+        .performance {
+            background: linear-gradient(180deg, transparent 0%, rgba(56,189,248,0.03) 50%, transparent 100%);
+        }
+
+        .perf-comparison {
+            max-width: 900px;
+            margin: 0 auto;
+            display: grid;
+            gap: 1rem;
+        }
+
+        .perf-item {
+            display: grid;
+            grid-template-columns: 150px 1fr auto;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 1.25rem 1.5rem;
+            background: rgba(30,41,59,0.4);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+        }
+
+        .perf-item.highlight {
+            background: rgba(56, 189, 248, 0.08);
+            border-color: rgba(56, 189, 248, 0.2);
+        }
+
+        .perf-name {
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .perf-bar-container {
+            height: 8px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+
+        .perf-bar {
+            height: 100%;
+            border-radius: 9999px;
+            transition: width 1s ease;
+        }
+
+        .perf-bar.waste { background: linear-gradient(to right, #ef4444, #f87171); }
+        .perf-bar.medium { background: linear-gradient(to right, #f59e0b, #fbbf24); }
+        .perf-bar.good { background: linear-gradient(to right, var(--accent), #818cf8); }
+
+        .perf-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .perf-item.highlight .perf-value {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* Quick Start */
+        .quickstart-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .terminal {
+            background: var(--secondary);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+        }
+
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 1.25rem;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot.red { background: #ef4444; }
+        .terminal-dot.yellow { background: #f59e0b; }
+        .terminal-dot.green { background: #22c55e; }
+
+        .terminal-title {
+            margin-left: auto;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .terminal-body {
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.8;
+            overflow-x: auto;
+        }
+
+        .terminal-line {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .terminal-prompt {
+            color: var(--accent);
+            user-select: none;
+        }
+
+        .terminal-comment {
+            color: var(--text-dim);
+        }
+
+        .terminal-command {
+            color: var(--text);
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.375rem 0.75rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--text);
+        }
+
+        .terminal {
+            position: relative;
+        }
+
+        /* Docs Grid */
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .doc-card {
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+            background: rgba(30,41,59,0.4);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.3s ease;
+        }
+
+        .doc-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(56, 189, 248, 0.2);
+            background: rgba(30,41,59,0.6);
+        }
+
+        .doc-card:hover .doc-arrow {
+            transform: translateX(4px);
+        }
+
+        .doc-icon {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .doc-title {
+            font-weight: 600;
+            font-size: 1.0625rem;
+            margin-bottom: 0.375rem;
+        }
+
+        .doc-desc {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            flex: 1;
+        }
+
+        .doc-arrow {
+            color: var(--accent);
+            font-size: 1.25rem;
+            transition: transform 0.3s;
+        }
+
+        /* Footer */
+        .footer {
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding: 3rem 2rem;
+            z-index: 1;
+            position: relative;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+        }
+
+        .footer-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .footer-logo {
+            font-weight: 700;
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .footer-copy {
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .footer-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent);
+        }
+
+        /* Mobile Menu */
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .mobile-menu-btn {
+                display: block;
+            }
+
+            .hero {
+                padding-top: 6rem;
+            }
+
+            .hero-stats {
+                flex-direction: column;
+                gap: 1.5rem;
+            }
+
+            .float-card {
+                display: none;
+            }
+
+            .perf-item {
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+            }
+
+            .perf-name {
+                text-align: center;
+            }
+
+            .perf-value {
+                text-align: center;
+            }
+
+            .footer-content {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particle-canvas"></canvas>
+
+    <nav class="nav">
+        <div class="nav-content">
+            <a href="#" class="nav-logo">
+                <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="120" height="120" rx="24" fill="url(#logo-grad)"/>
+                    <rect x="20" y="20" width="35" height="35" rx="6" fill="white" fill-opacity="0.9"/>
+                    <rect x="65" y="65" width="35" height="35" rx="6" fill="#38bdf8"/>
+                    <rect x="45" y="45" width="14" height="14" rx="3" fill="white" fill-opacity="0.8"/>
+                    <rect x="63" y="45" width="14" height="14" rx="3" fill="white" fill-opacity="0.6"/>
+                    <rect x="45" y="63" width="14" height="14" rx="3" fill="white" fill-opacity="0.6"/>
+                    <defs>
+                        <linearGradient id="logo-grad" x1="0" y1="0" x2="120" y2="120">
+                            <stop offset="0%" stop-color="#1e293b"/>
+                            <stop offset="100%" stop-color="#0f172a"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                Hetero-Paged-Infer
+            </a>
+            <div class="nav-links">
+                <a href="#features">核心特性</a>
+                <a href="#performance">性能表现</a>
+                <a href="#quickstart">快速开始</a>
+                <a href="./">文档中心</a>
+                <div class="lang-switch">
+                    <a href="../index.html">EN</a>
+                    <a href="./" class="active">中文</a>
+                </div>
+                <a href="https://github.com/LessUp/hetero-paged-infer" class="nav-cta" target="_blank">GitHub →</a>
+            </div>
+            <button class="mobile-menu-btn">☰</button>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="floating-cards">
+            <div class="float-card">BlockPool&lt;T&gt;</div>
+            <div class="float-card">Scheduler::step()</div>
+            <div class="float-card">PagedAttention</div>
+            <div class="float-card">KV Cache Manager</div>
+        </div>
+        
+        <div class="hero-content">
+            <div class="hero-badge">生产就绪 v0.1.0</div>
+            <h1 class="hero-title">
+                <span class="gradient">高性能大语言模型</span><br>
+                推理引擎
+            </h1>
+            <p class="hero-subtitle">
+                基于 Rust 实现的 PagedAttention + 连续批处理技术<br>
+                内存浪费 &lt;5%，吞吐率提升 50%
+            </p>
+            <div class="hero-buttons">
+                <a href="#quickstart" class="btn btn-primary">
+                    <span>⚡</span> 快速开始
+                </a>
+                <a href="./" class="btn btn-secondary">
+                    <span>📖</span> 查看文档
+                </a>
+                <a href="https://github.com/LessUp/hetero-paged-infer" class="btn btn-secondary" target="_blank">
+                    <span>⭐</span> GitHub 星标
+                </a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat">
+                    <div class="stat-value">&lt;5%</div>
+                    <div class="stat-label">内存浪费</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">+50%</div>
+                    <div class="stat-label">吞吐率提升</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">121</div>
+                    <div class="stat-label">测试通过</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="features">
+        <div class="section-header reveal">
+            <div class="section-tag">核心特性</div>
+            <h2 class="section-title">为生产级 LLM 服务打造</h2>
+            <p class="section-desc">采用 Rust 实现的现代推理技术，提供极致的性能和可靠性。</p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card reveal">
+                <div class="feature-icon">🧠</div>
+                <h3 class="feature-title">分页式注意力</h3>
+                <p class="feature-desc">基于块的 KV Cache 管理，按需分配。消除内存碎片，实现高效的内存共享和 Copy-on-Write。</p>
+            </div>
+            <div class="feature-card reveal">
+                <div class="feature-icon">⚡</div>
+                <h3 class="feature-title">连续批处理</h3>
+                <p class="feature-desc">动态 prefill/decode 调度，具备优先级感知能力。最大化 GPU 利用率同时保持低延迟。</p>
+            </div>
+            <div class="feature-card reveal">
+                <div class="feature-icon">🛡️</div>
+                <h3 class="feature-title">内存压力感知</h3>
+                <p class="feature-desc">可配置的 OOM 预防机制，支持优雅降级。生产级别的错误处理和系统监控。</p>
+            </div>
+            <div class="feature-card reveal">
+                <div class="feature-icon">🔧</div>
+                <h3 class="feature-title">模块化架构</h3>
+                <p class="feature-desc">基于 Trait 的抽象设计，易于定制。CPU 调度器和 GPU 执行器的清晰分离。</p>
+            </div>
+            <div class="feature-card reveal">
+                <div class="feature-icon">🧪</div>
+                <h3 class="feature-title">全面测试覆盖</h3>
+                <p class="feature-desc">121 个测试用例，包括单元测试、属性测试和集成测试。属性测试验证关键不变量。</p>
+            </div>
+            <div class="feature-card reveal">
+                <div class="feature-icon">🚀</div>
+                <h3 class="feature-title">Rust 性能</h3>
+                <p class="feature-desc">零成本抽象和内存安全。无 GC 暂停，为服务场景提供可预测的性能表现。</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section performance" id="performance">
+        <div class="section-header reveal">
+            <div class="section-tag">性能表现</div>
+            <h2 class="section-title">内存效率对比</h2>
+            <p class="section-desc">查看 PagedAttention 相比传统分配策略的优势。</p>
+        </div>
+        <div class="perf-comparison reveal">
+            <div class="perf-item">
+                <span class="perf-name">静态分配</span>
+                <div class="perf-bar-container">
+                    <div class="perf-bar waste" style="width: 55%"></div>
+                </div>
+                <span class="perf-value">~40-60% 浪费</span>
+            </div>
+            <div class="perf-item">
+                <span class="perf-name">动态分配</span>
+                <div class="perf-bar-container">
+                    <div class="perf-bar medium" style="width: 25%"></div>
+                </div>
+                <span class="perf-value">~20-30% 浪费 (+20% 吞吐)</span>
+            </div>
+            <div class="perf-item highlight">
+                <span class="perf-name">PagedAttention</span>
+                <div class="perf-bar-container">
+                    <div class="perf-bar good" style="width: 5%"></div>
+                </div>
+                <span class="perf-value">&lt;5% 浪费 (+50% 吞吐)</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="quickstart">
+        <div class="section-header reveal">
+            <div class="section-tag">快速开始</div>
+            <h2 class="section-title">几分钟即可启动</h2>
+            <p class="section-desc">只需几个命令，完成安装并运行首次推理。</p>
+        </div>
+        <div class="quickstart-wrapper reveal">
+            <div class="terminal">
+                <button class="copy-btn" onclick="copyCode()">复制</button>
+                <div class="terminal-header">
+                    <span class="terminal-dot red"></span>
+                    <span class="terminal-dot yellow"></span>
+                    <span class="terminal-dot green"></span>
+                    <span class="terminal-title">bash</span>
+                </div>
+                <div class="terminal-body" id="terminal-code">
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-comment"># 克隆仓库</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-command">git clone https://github.com/LessUp/hetero-paged-infer.git</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-command">cd hetero-paged-infer</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-comment"># 构建 Release 版本</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-command">cargo build --release</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-comment"># 运行推理</span>
+                    </div>
+                    <div class="terminal-line">
+                        <span class="terminal-prompt">$</span>
+                        <span class="terminal-command">./target/release/hetero-infer --input "你好，世界！" --max-tokens 50</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="section-header reveal">
+            <div class="section-tag">文档中心</div>
+            <h2 class="section-title">了解更多</h2>
+            <p class="section-desc">探索我们的完整文档，充分发挥 Hetero-Paged-Infer 的潜力。</p>
+        </div>
+        <div class="docs-grid reveal">
+            <a href="./setup/quickstart.html" class="doc-card">
+                <div class="doc-icon">🚀</div>
+                <h3 class="doc-title">快速入门指南</h3>
+                <p class="doc-desc">一步步完成安装和首次运行的详细说明。</p>
+                <span class="doc-arrow">→</span>
+            </a>
+            <a href="./architecture/overview.html" class="doc-card">
+                <div class="doc-icon">🏗️</div>
+                <h3 class="doc-title">系统架构</h3>
+                <p class="doc-desc">深入了解系统设计、组件构成和设计原则。</p>
+                <span class="doc-arrow">→</span>
+            </a>
+            <a href="./api/core-types.html" class="doc-card">
+                <div class="doc-icon">📚</div>
+                <h3 class="doc-title">API 参考</h3>
+                <p class="doc-desc">完整的 API 文档，包含示例和最佳实践。</p>
+                <span class="doc-arrow">→</span>
+            </a>
+            <a href="./deployment/production.html" class="doc-card">
+                <div class="doc-icon">🖥️</div>
+                <h3 class="doc-title">生产部署</h3>
+                <p class="doc-desc">生产环境部署的最佳实践和配置建议。</p>
+                <span class="doc-arrow">→</span>
+            </a>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-left">
+                <a href="#" class="footer-logo">Hetero-Paged-Infer</a>
+                <span class="footer-copy">© 2026 LessUp. MIT License.</span>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/LessUp/hetero-paged-infer" target="_blank">GitHub</a>
+                <a href="https://crates.io/crates/hetero-infer" target="_blank">Crates.io</a>
+                <a href="https://docs.rs/hetero-infer" target="_blank">Docs.rs</a>
+                <a href="https://github.com/LessUp/hetero-paged-infer/issues" target="_blank">问题反馈</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Particle Background
+        const canvas = document.getElementById('particle-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let particles = [];
+        const particleCount = 25;
+        const connectionDistance = 150;
+        const maxConnections = 3;
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = (Math.random() - 0.5) * 0.5;
+                this.radius = Math.random() * 2 + 1;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > width) this.vx *= -1;
+                if (this.y < 0 || this.y > height) this.vy *= -1;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.5)';
+                ctx.fill();
+            }
+        }
+
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < particleCount; i++) {
+                particles.push(new Particle());
+            }
+        }
+
+        function drawConnections() {
+            for (let i = 0; i < particles.length; i++) {
+                let connections = 0;
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x;
+                    const dy = particles[i].y - particles[j].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < connectionDistance && connections < maxConnections) {
+                        ctx.beginPath();
+                        ctx.moveTo(particles[i].x, particles[i].y);
+                        ctx.lineTo(particles[j].x, particles[j].y);
+                        ctx.strokeStyle = `rgba(56, 189, 248, ${0.2 * (1 - distance / connectionDistance)})`;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                        connections++;
+                    }
+                }
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+            
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            
+            drawConnections();
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', () => {
+            resize();
+            initParticles();
+        });
+
+        resize();
+        initParticles();
+        animate();
+
+        // Scroll reveal
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+        // Nav scroll effect
+        const nav = document.querySelector('.nav');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                nav.classList.add('scrolled');
+            } else {
+                nav.classList.remove('scrolled');
+            }
+        });
+
+        // Copy code
+        function copyCode() {
+            const code = `git clone https://github.com/LessUp/hetero-paged-infer.git
+cd hetero-paged-infer
+cargo build --release
+./target/release/hetero-infer --input "你好，世界！" --max-tokens 50`;
+            navigator.clipboard.writeText(code).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                btn.textContent = '已复制!';
+                setTimeout(() => btn.textContent = '复制', 2000);
+            });
+        }
+
+        // Animate perf bars on scroll
+        const perfSection = document.querySelector('.performance');
+        const perfObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    document.querySelectorAll('.perf-bar').forEach(bar => {
+                        bar.style.width = bar.style.width;
+                    });
+                }
+            });
+        }, { threshold: 0.5 });
+
+        if (perfSection) {
+            perfObserver.observe(perfSection);
+        }
+    </script>
+</body>
+</html>
