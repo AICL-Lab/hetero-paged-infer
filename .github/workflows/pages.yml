@@ -49,8 +49,8 @@ jobs:
 
       - name: Install MkDocs dependencies
         run: |
-          pip install --upgrade pip
-          pip install \
+          python -m pip install --upgrade pip
+          python -m pip install \
             mkdocs-material \
             mkdocs-static-i18n \
             mkdocs-git-revision-date-localized-plugin \
@@ -62,12 +62,12 @@ jobs:
 
       - name: Build English site
         run: |
-          mkdocs build --config-file mkdocs.yml
+          python -m mkdocs build --config-file mkdocs.yml
           echo "English site built to _site/en/"
 
       - name: Build Chinese site
         run: |
-          mkdocs build --config-file mkdocs.zh.yml
+          python -m mkdocs build --config-file mkdocs.zh.yml
           echo "Chinese site built to _site/zh/"
 
       - name: Copy landing page
