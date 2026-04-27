@@ -26,7 +26,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 | **Continuous Batching** | Dynamic prefill/decode scheduling | ✅ |
 | **Memory Pressure Awareness** | Configurable OOM prevention | ✅ |
 | **Modular Architecture** | Trait-based abstractions | ✅ |
-| **Comprehensive Testing** | 121 tests (unit, property, integration) | ✅ |
+| **Comprehensive Testing** | 122 tests (unit, property, integration) | ✅ |
 | **CUDA Kernels** | Real GPU execution | 🚧 Planned |
 
 ## Architecture
@@ -67,7 +67,7 @@ cd hetero-paged-infer
 # Build in release mode
 cargo build --release
 
-# Run the test suite (121 tests)
+# Run the test suite (122 tests)
 cargo test
 ```
 

@@ -1,5 +1,16 @@
 # Claude Code 配置
 
+## 项目概述
+
+**Hetero-Paged-Infer** 是一个高性能 LLM 推理引擎，实现 PagedAttention 和 Continuous Batching 技术。
+
+| 属性 | 值 |
+|------|-----|
+| 语言 | Rust (2021 Edition) |
+| 版本 | 0.1.0 |
+| 测试 | 122 个 |
+| 注释语言 | 中文 |
+
 ## OpenSpec 集成
 
 本项目使用 OpenSpec 进行规格驱动开发。

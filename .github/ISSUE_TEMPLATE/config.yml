@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 文档
+    url: https://lessup.github.io/hetero-paged-infer/
+    about: 查看项目文档
+  - name: 💬 讨论
+    url: https://github.com/LessUp/hetero-paged-infer/discussions
+    about: 参与社区讨论

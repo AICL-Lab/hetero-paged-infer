@@ -8,17 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Comprehensive bilingual documentation (English/Chinese)
-- GitHub Pages documentation site
-- CI/CD workflow optimizations
-- Spec-Driven Development workflow documentation
-- API and Database specification placeholders
+
+- GitHub Issue templates (bug report, feature request)
+- Pull request template with checklist
+- Dependabot configuration for dependency updates
 
 ### Changed
-- Reorganized specs/ directory structure with README for each subdirectory
-- Renamed docs/*/getting-started/ to docs/*/setup/ per GitHub best practices
-- Enhanced AGENTS.md with complete SDD workflow instructions
-- Updated CONTRIBUTING.md with detailed spec guidelines
+
+- Migrated changelog archives to `openspec/archive/`
+- Removed redundant `RELEASE_NOTES.md` (consolidated into this file)
+- Removed duplicate `changelog/*.en.md` files
+- Removed redundant `docs/*/README.md` files
+- Unified test count to 122 across all documentation
+- Cleaned up `.qwen/` directory (unused AI tool config)
 
 ## [0.1.0] - 2026-04-16
 
@@ -76,72 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## Release Notes
-
-### v0.1.0 - Initial Release
-
-**Release Date**: 2026-04-16
-
-#### Overview
-
-First stable release of Hetero-Paged-Infer, a heterogeneous inference system for Large Language Models. This release provides a production-ready foundation with PagedAttention memory management and Continuous Batching scheduling.
-
-#### Key Features
-
-1. **KV Cache Management**
-   - PagedAttention block-based memory management
-   - Dynamic block allocation and deallocation
-   - Memory-efficient design with <5% waste
-
-2. **Scheduler**
-   - Continuous batching with prefill/decode phases
-   - Decode-priority scheduling for lower latency
-   - Memory pressure awareness
-
-3. **Inference Engine**
-   - Request submission and execution
-   - Error recovery mechanisms
-   - Metrics collection and monitoring
-
-4. **Testing**
-   - Comprehensive unit test coverage
-   - Property tests for invariant verification
-   - Integration tests for end-to-end validation
-
-5. **Documentation**
-   - Bilingual documentation (English/Chinese)
-   - API documentation (rustdoc)
-   - Architecture and deployment guides
-
-#### Known Limitations
-
-- GPU Executor is currently a mock implementation
-- Real CUDA kernels not yet implemented
-- Async CPU/GPU overlap planned for future releases
-
-#### Installation
-
-```bash
-git clone https://github.com/LessUp/hetero-paged-infer.git
-cd hetero-paged-infer
-cargo build --release
-```
-
-#### Quick Start
-
-```bash
-./target/release/hetero-infer --input "Hello, world!" --max-tokens 50
-```
-
----
-
 ## Detailed Changelog
 
-See the [changelog/](./changelog/) directory for detailed change logs.
+See the [openspec/archive/](./openspec/archive/) directory for historical change logs.
 
-- [2026-04-16_documentation-overhaul.md](./changelog/2026-04-16_documentation-overhaul.md) - Documentation overhaul
-- [2026-03-13_workflow-cpu-safe-ci.md](./changelog/2026-03-13_workflow-cpu-safe-ci.md) - CI fixes
-- [2026-03-10_workflow-deep-standardization.md](./changelog/2026-03-10_workflow-deep-standardization.md) - Workflow standardization
+- [2026-04-16_documentation-overhaul.md](./openspec/archive/2026-04-16_documentation-overhaul.md) - Documentation overhaul
+- [2026-03-13_workflow-cpu-safe-ci.md](./openspec/archive/2026-03-13_workflow-cpu-safe-ci.md) - CI fixes
+- [2026-03-10_workflow-deep-standardization.md](./openspec/archive/2026-03-10_workflow-deep-standardization.md) - Workflow standardization
 
 ---
 
