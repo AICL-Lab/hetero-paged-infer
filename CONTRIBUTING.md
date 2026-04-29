@@ -78,71 +78,77 @@ pub fn my_function() -> i32 {
 
 ## Spec-Driven Development
 
-This project follows **Spec-Driven Development (SDD)**. All changes must start with updating specifications before code implementation.
+This project follows **OpenSpec** for spec-driven development. All changes should start with updating specifications before code implementation.
 
-### Specification Directory Structure
+### OpenSpec Workflow
+
+1. **Propose a change** using `/opsx:propose "<idea>"` - this creates:
+   - `openspec/changes/<name>/proposal.md` - Change proposal
+   - `openspec/changes/<name>/specs/` - Spec deltas
+   - `openspec/changes/<name>/design.md` - Technical design
+   - `openspec/changes/<name>/tasks.md` - Task list
+
+2. **Implement** using `/opsx:apply` to execute tasks from the proposal
+
+3. **Archive** using `/opsx:archive` when the change is complete
+
+### Directory Structure
 
 ```
-specs/
-├── product/     # Product Requirements Documents (PRDs)
-├── rfc/         # Technical Design Documents (RFCs)
-├── api/         # API Interface Specifications
-├── db/          # Database Schema Specifications
-└── testing/     # BDD Test Specifications
+openspec/
+├── specs/           # Active specifications
+├── changes/         # Active change proposals
+├── archive/         # Archived changes
+├── project.md       # Project context
+└── AGENTS.md        # AI assistant instructions
 ```
 
 ### Workflow for Contributors
 
-1. **Identify the relevant spec** in `/specs/`:
-   - Product requirements: `/specs/product/`
-   - Technical designs: `/specs/rfc/`
-   - API specifications: `/specs/api/`
-   - Test specifications: `/specs/testing/`
+1. **Identify the relevant spec** in `/openspec/specs/`
 
-2. **Update the spec first** before writing any code:
-   - If adding a feature, propose the change in the appropriate spec document
-   - If fixing a bug, verify the spec accurately describes the expected behavior
+2. **Create a change proposal**:
+   - Use OpenSpec commands or manually create in `/openspec/changes/`
+   - Describe the change, its rationale, and impact
    - Get review on spec changes before implementation
-   - Use requirement IDs (e.g., REQ-1, REQ-2.3) for traceability
 
 3. **Implement according to spec**:
    - Follow the interfaces, types, and constraints defined in specs
-   - Do not add functionality not specified in the spec (No Gold-Plating)
+   - Do not add functionality not specified in the spec
 
 4. **Test against spec**:
-   - Ensure tests cover acceptance criteria from specs
-   - Property tests must validate invariants defined in RFCs
+   - Ensure tests cover acceptance criteria
+   - Property tests must validate invariants
    - Reference requirements in test comments
 
 ### Creating New Specifications
 
-#### Product Requirements
-Add to `/specs/product/` with:
-- Clear user stories: "As a [role], I want [feature] so that [benefit]"
-- Acceptance criteria in Given-When-Then format
-- Unique requirement IDs (REQ-N)
+Use OpenSpec commands to create properly formatted specs:
 
-#### Technical RFCs
-Add to `/specs/rfc/` with:
-- Numbered naming: `NNNN-short-description.md`
-- Metadata table (ID, Status, Authors, Created)
-- Clear problem statement and solution approach
+```bash
+# View current specs
+npx @fission-ai/openspec@latest list --specs
 
-#### API Specifications
-Add to `/specs/api/` with:
-- OpenAPI 3.0 format (YAML preferred)
-- Complete request/response schemas
-- Error documentation
+# View current changes
+npx @fission-ai/openspec@latest list --changes
+
+# Create new change
+npx @fission-ai/openspec@latest new change <name>
+
+# Validate all specs
+npx @fission-ai/openspec@latest validate --all
+```
 
 ### Spec Review Process
 
 All spec changes follow this process:
 
-1. **Propose**: Create or modify spec document
+1. **Propose**: Create change in `openspec/changes/`
 2. **Review**: Team reviews for completeness
 3. **Approve**: Get sign-off before implementation
 4. **Implement**: Code according to spec
 5. **Validate**: Test implementation against spec
+6. **Archive**: Move to `openspec/archive/` when complete
 
 ## Submitting Code
 
@@ -256,21 +262,24 @@ src/
 ├── kv_cache.rs      # KV Cache manager
 ├── scheduler.rs     # Scheduler
 ├── tokenizer.rs     # Tokenizer
+├── server.rs        # HTTP server (OpenAI-compatible)
 └── gpu_executor.rs  # GPU executor
 
-specs/
-├── product/         # Product requirements
-├── rfc/             # Technical design documents
-├── api/             # API specifications
-├── db/              # Database schema specifications
-└── testing/         # BDD test specifications
+openspec/
+├── specs/           # Active specifications
+├── changes/         # Active change proposals
+├── archive/         # Archived changes
+├── project.md       # Project context
+└── AGENTS.md        # AI assistant instructions
 
 tests/
-└── integration_tests.rs  # Integration tests
+├── integration_tests.rs  # Integration tests
+└── server_integration.rs # Server integration tests
 
 docs/
 ├── en/              # English documentation
-└── zh/              # Chinese documentation
+├── zh/              # Chinese documentation
+└── landing/         # Landing page assets
 ```
 
 ## Documentation
@@ -279,10 +288,10 @@ docs/
 
 When proposing changes:
 
-1. Create or update the relevant spec in `/specs/`
+1. Create a change in `openspec/changes/`
 2. Use clear, testable acceptance criteria
 3. Reference requirements by ID (e.g., REQ-1, REQ-2.3)
-4. For RFCs, use numbered naming: `NNNN-short-description.md`
+4. Follow OpenSpec format with English structure keywords
 
 ### Updating User Documentation
 
@@ -295,7 +304,8 @@ When proposing changes:
 If you have questions:
 - Open an issue on GitHub
 - Review existing code and tests as references
-- Read the relevant specs in `/specs/` for design intent
+- Read the relevant specs in `/openspec/specs/` for design intent
+- Check `/openspec/project.md` for project overview
 
 ## License
 

@@ -22,7 +22,10 @@
 | **Continuous Batching** | 动态 prefill/decode 调度，decode 优先 | ✅ 已实现 |
 | **内存压力感知** | 可配置的 OOM 防止（基于阈值） | ✅ 已实现 |
 | **模块化架构** | 基于 trait 的抽象，易于测试 | ✅ 已实现 |
-| **全面测试** | 122 测试（单元、属性、集成） | ✅ 已实现 |
+| **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ 已实现 |
+| **HuggingFace Tokenizer** | 支持 HuggingFace tokenizer JSON 加载 | ✅ 已实现 |
+| **命令桥接后端** | 支持外部推理进程集成 | ✅ 已实现 |
+| **全面测试** | 121+ 测试（单元、属性、集成、服务） | ✅ 已实现 |
 | **CUDA 内核** | 真实 GPU 执行 | 🚧 计划中 |
 
 ### 架构图
@@ -76,7 +79,8 @@
 | `scheduler.rs` | 1110 | 带 decode 优先级的 Continuous Batching 调度器 |
 | `kv_cache.rs` | 610 | PagedAttention 内存管理器（BlockPool + PageTable） |
 | `gpu_executor.rs` | 657 | GPU 执行 trait 和 MockGPUExecutor |
-| `tokenizer.rs` | 437 | SimpleTokenizer 和 RoundTripTokenizer |
+| `tokenizer.rs` | 437 | SimpleTokenizer、HuggingFace Tokenizer 支持 |
+| `server.rs` | 501 | OpenAI 兼容 HTTP 服务层 |
 | `types.rs` | 831 | 核心数据结构（Request、Sequence 等） |
 | `config.rs` | 648 | 带 JSON 序列化的 EngineConfig |
 | `error.rs` | 229 | 使用 `thiserror` 的错误类型 |
@@ -84,9 +88,9 @@
 
 ### 代码统计
 
-- **~5,700** 行源代码（src/）
-- **~560** 行集成测试
-- **~140+** 总测试用例
+- **~6,200** 行源代码（src/）
+- **~780** 行集成测试
+- **140+** 总测试用例
 
 ## 配置字段
 
@@ -160,7 +164,9 @@ trait KVCacheManagerTrait {
 ## 未来路线图
 
 - [ ] 真实 CUDA 内核实现
-- [ ] 真实分词器集成（SentencePiece、tiktoken）
 - [ ] 异步 CPU/GPU 重叠
-- [ ] HTTP/gRPC API 服务器
 - [ ] 多 GPU 支持
+- [x] HTTP/gRPC API 服务器（OpenAI 兼容）
+- [x] HuggingFace Tokenizer 集成
+- [ ] 前缀缓存 (Prefix Caching)
+- [ ] 推测解码 (Speculative Decoding)
