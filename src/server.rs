@@ -463,6 +463,10 @@ fn usage(result: &GenerationResult) -> Usage {
     }
 }
 
+/// 简单的 token 估算函数
+///
+/// TODO: 使用实际 tokenizer 进行精确估算
+/// 当前实现仅为粗略估计，适用于 Mock 执行器场景
 fn estimate_tokens(text: &str) -> usize {
     let split_count = text.split_whitespace().count();
     if split_count == 0 {
