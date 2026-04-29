@@ -30,3 +30,6 @@ coverage/
 # Claude Code local state
 .claude/
 CLAUDE.local.md
+
+# OMC local state
+.omc/

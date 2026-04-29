@@ -2,11 +2,12 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hetero_infer::{
     EngineConfig, GenerationParams, InferenceEngine, KVCacheManager, KVCacheManagerTrait,
     Scheduler, SchedulerTrait, SpecialTokenIds,
 };
+use std::hint::black_box;
 
 /// Benchmark engine creation
 fn bench_engine_creation(c: &mut Criterion) {
