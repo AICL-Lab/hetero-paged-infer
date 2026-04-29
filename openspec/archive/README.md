@@ -6,7 +6,7 @@
 
 | 文件 | 日期 | 描述 |
 |------|------|------|
-| [2026-04-29_real-inference-serving-foundation.md](./2026-04-29_real-inference-serving-foundation/proposal.md) | 2026-04-29 | 真实推理服务基础（HuggingFace Tokenizer、OpenAI 兼容 API、命令桥接后端） |
+| [2026-04-29_real-inference-serving-foundation](./2026-04-29_real-inference-serving-foundation/) | 2026-04-29 | 真实推理服务基础（HuggingFace Tokenizer、OpenAI 兼容 API、命令桥接后端） |
 | [2026-04-16_documentation-overhaul.md](./2026-04-16_documentation-overhaul.md) | 2026-04-16 | 文档全面重构 |
 | [2026-03-13_workflow-cpu-safe-ci.md](./2026-03-13_workflow-cpu-safe-ci.md) | 2026-03-13 | CPU 安全 CI 配置 |
 | [2026-03-10_workflow-deep-standardization.md](./2026-03-10_workflow-deep-standardization.md) | 2026-03-10 | 工作流深度标准化 |
