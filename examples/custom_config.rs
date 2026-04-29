@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         memory_threshold: 0.85,
         max_retry_attempts: 3, // More retries on GPU timeout
         special_tokens: SpecialTokenIds::default(),
+        ..Default::default()
     };
 
     println!("  Block size: {}", custom_config.block_size);

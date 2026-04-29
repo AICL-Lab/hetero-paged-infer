@@ -27,6 +27,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 | **Memory Pressure Awareness** | Configurable OOM prevention | ✅ |
 | **Modular Architecture** | Trait-based abstractions | ✅ |
 | **Comprehensive Testing** | 122 tests (unit, property, integration) | ✅ |
+| **OpenAI-Compatible Server** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **CUDA Kernels** | Real GPU execution | 🚧 Planned |
 
 ## Architecture
@@ -83,6 +84,31 @@ cargo test
   --max-tokens 100 \
   --temperature 0.8 \
   --top-p 0.95
+
+# Start OpenAI-compatible HTTP server
+./target/release/hetero-infer --serve
+```
+
+### OpenAI-Compatible Server
+
+```bash
+# Start server with default address 127.0.0.1:3000
+cargo run -- --serve
+
+# Health / readiness / metrics
+curl http://127.0.0.1:3000/healthz
+curl http://127.0.0.1:3000/readyz
+curl http://127.0.0.1:3000/metrics
+
+# Completions
+curl http://127.0.0.1:3000/v1/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"hetero-infer","prompt":"hello","max_tokens":8}'
+
+# Chat completions
+curl http://127.0.0.1:3000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"hetero-infer","messages":[{"role":"user","content":"say hi"}],"max_tokens":8}'
 ```
 
 ### Library Usage
@@ -136,11 +162,51 @@ Config file (`config.json`):
   "max_model_len": 2048,
   "max_total_tokens": 4096,
   "memory_threshold": 0.9,
-  "max_retry_attempts": 2
+  "max_retry_attempts": 2,
+  "tokenizer": {
+    "kind": "simple",
+    "path": null
+  },
+  "serving": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "model_name": "hetero-infer",
+    "backend": {
+      "kind": "local_engine",
+      "command": null
+    }
+  }
 }
 ```
 
 Load: `./hetero-infer --config config.json`
+
+For a HuggingFace tokenizer file:
+
+```json
+{
+  "tokenizer": {
+    "kind": "huggingface",
+    "path": "tokenizer.json"
+  }
+}
+```
+
+For command bridge mode:
+
+```json
+{
+  "serving": {
+    "backend": {
+      "kind": "command_bridge",
+      "command": {
+        "program": "/bin/sh",
+        "args": ["-c", "printf 'bridge:%s' \"$HETERO_PROMPT\""]
+      }
+    }
+  }
+}
+```
 
 ## Documentation
 

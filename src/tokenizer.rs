@@ -25,9 +25,12 @@
 //! let text = tokenizer.decode(&tokens);
 //! ```
 
-use crate::config::SpecialTokenIds;
+use crate::config::{EngineConfig, SpecialTokenIds, TokenizerKind};
+use crate::error::{ConfigError, EngineError};
 use crate::types::TokenId;
 use std::collections::{hash_map::Entry, HashMap};
+use std::path::Path;
+use tokenizers::Tokenizer;
 
 /// Special token IDs (deprecated constants, use SpecialTokenIds instead)
 ///
@@ -57,11 +60,23 @@ pub const UNK_TOKEN_ID: TokenId = 3;
 ///
 /// 定义分词器的标准接口。
 pub trait TokenizerTrait: Send + Sync {
+    /// 将文本编码为 token ID 序列（可失败）
+    fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String>;
+
+    /// 将 token ID 序列解码为文本（可失败）
+    fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String>;
+
     /// 将文本编码为 token ID 序列
-    fn encode(&self, text: &str) -> Vec<TokenId>;
+    fn encode(&self, text: &str) -> Vec<TokenId> {
+        self.try_encode(text)
+            .unwrap_or_else(|err| panic!("tokenizer encode failed: {err}"))
+    }
 
     /// 将 token ID 序列解码为文本
-    fn decode(&self, tokens: &[TokenId]) -> String;
+    fn decode(&self, tokens: &[TokenId]) -> String {
+        self.try_decode(tokens)
+            .unwrap_or_else(|err| panic!("tokenizer decode failed: {err}"))
+    }
 
     /// 获取词表大小
     fn vocab_size(&self) -> u32;
@@ -154,7 +169,7 @@ impl Default for SimpleTokenizer {
 }
 
 impl TokenizerTrait for SimpleTokenizer {
-    fn encode(&self, text: &str) -> Vec<TokenId> {
+    fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
         let mut tokens = Vec::with_capacity(text.len() + 2);
 
         // Add BOS token
@@ -168,10 +183,10 @@ impl TokenizerTrait for SimpleTokenizer {
         // Add EOS token
         tokens.push(self.special_tokens.eos);
 
-        tokens
+        Ok(tokens)
     }
 
-    fn decode(&self, tokens: &[TokenId]) -> String {
+    fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String> {
         let mut result = String::with_capacity(tokens.len());
 
         for &token in tokens {
@@ -189,7 +204,7 @@ impl TokenizerTrait for SimpleTokenizer {
             // UNK tokens are silently skipped
         }
 
-        result
+        Ok(result)
     }
 
     fn vocab_size(&self) -> u32 {
@@ -236,13 +251,39 @@ impl Default for RoundTripTokenizer {
     }
 }
 
-impl TokenizerTrait for RoundTripTokenizer {
-    fn encode(&self, text: &str) -> Vec<TokenId> {
-        // Don't add BOS/EOS for round-trip testing
-        text.chars().map(|c| self.inner.encode_char(c)).collect()
+/// HuggingFace tokenizer 适配器
+#[derive(Debug, Clone)]
+pub struct HuggingFaceTokenizer {
+    inner: Tokenizer,
+    special_tokens: SpecialTokenIds,
+}
+
+impl HuggingFaceTokenizer {
+    /// 从 tokenizer JSON 文件创建
+    pub fn from_file(path: &Path) -> Result<Self, String> {
+        Self::with_special_tokens_from_file(path, SpecialTokenIds::default())
     }
 
-    fn decode(&self, tokens: &[TokenId]) -> String {
+    /// 使用自定义 special token 配置从文件创建
+    pub fn with_special_tokens_from_file(
+        path: &Path,
+        special_tokens: SpecialTokenIds,
+    ) -> Result<Self, String> {
+        let inner = Tokenizer::from_file(path).map_err(|e| e.to_string())?;
+        Ok(Self {
+            inner,
+            special_tokens,
+        })
+    }
+}
+
+impl TokenizerTrait for RoundTripTokenizer {
+    fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
+        // Don't add BOS/EOS for round-trip testing
+        Ok(text.chars().map(|c| self.inner.encode_char(c)).collect())
+    }
+
+    fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String> {
         let mut result = String::with_capacity(tokens.len());
 
         for &token in tokens {
@@ -251,7 +292,7 @@ impl TokenizerTrait for RoundTripTokenizer {
             }
         }
 
-        result
+        Ok(result)
     }
 
     fn vocab_size(&self) -> u32 {
@@ -271,9 +312,96 @@ impl TokenizerTrait for RoundTripTokenizer {
     }
 }
 
+impl TokenizerTrait for HuggingFaceTokenizer {
+    fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
+        self.inner
+            .encode(text, true)
+            .map(|encoding| encoding.get_ids().to_vec())
+            .map_err(|e| e.to_string())
+    }
+
+    fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String> {
+        self.inner.decode(tokens, true).map_err(|e| e.to_string())
+    }
+
+    fn vocab_size(&self) -> u32 {
+        self.inner.get_vocab_size(false) as u32
+    }
+
+    fn bos_token_id(&self) -> TokenId {
+        self.special_tokens.bos
+    }
+
+    fn eos_token_id(&self) -> TokenId {
+        self.special_tokens.eos
+    }
+
+    fn pad_token_id(&self) -> TokenId {
+        self.special_tokens.pad
+    }
+}
+
+/// 根据配置构建 tokenizer
+pub fn build_tokenizer(config: &EngineConfig) -> Result<Box<dyn TokenizerTrait>, EngineError> {
+    match config.tokenizer.kind {
+        TokenizerKind::Simple => Ok(Box::new(SimpleTokenizer::with_special_tokens(
+            config.special_tokens.clone(),
+        ))),
+        TokenizerKind::HuggingFace => {
+            let path = config
+                .tokenizer
+                .path
+                .as_deref()
+                .ok_or(ConfigError::MissingTokenizerPath)?;
+            let tokenizer = HuggingFaceTokenizer::with_special_tokens_from_file(
+                path,
+                config.special_tokens.clone(),
+            )
+            .map_err(EngineError::Tokenization)?;
+            Ok(Box::new(tokenizer))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{EngineConfig, TokenizerConfig, TokenizerKind};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_test_tokenizer_json() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("hetero-tokenizer-{unique}.json"));
+        fs::write(
+            &path,
+            r###"{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [],
+  "normalizer": null,
+  "pre_tokenizer": { "type": "Whitespace" },
+  "post_processor": null,
+  "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "hello": 1,
+      "world": 2
+    },
+    "unk_token": "[UNK]"
+  }
+}"###,
+        )
+        .unwrap();
+        path
+    }
 
     #[test]
     fn test_simple_tokenizer_encode() {
@@ -351,6 +479,39 @@ mod tests {
         let tokens = tokenizer.encode("Hi");
         assert_eq!(tokens[0], 100); // BOS
         assert_eq!(tokens[tokens.len() - 1], 101); // EOS
+    }
+
+    #[test]
+    fn test_huggingface_tokenizer_loads_and_round_trips() {
+        let path = write_test_tokenizer_json();
+        let tokenizer = HuggingFaceTokenizer::from_file(&path).unwrap();
+
+        let tokens = tokenizer.encode("hello world");
+        let decoded = tokenizer.decode(&tokens);
+
+        assert!(!tokens.is_empty());
+        assert_eq!(decoded, "hello world");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_build_tokenizer_uses_huggingface_when_configured() {
+        let path = write_test_tokenizer_json();
+        let config = EngineConfig {
+            tokenizer: TokenizerConfig {
+                kind: TokenizerKind::HuggingFace,
+                path: Some(path.clone()),
+            },
+            ..Default::default()
+        };
+
+        let tokenizer = build_tokenizer(&config).unwrap();
+        let decoded = tokenizer.decode(&tokenizer.encode("hello world"));
+
+        assert_eq!(decoded, "hello world");
+
+        let _ = fs::remove_file(path);
     }
 }
 

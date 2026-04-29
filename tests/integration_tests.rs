@@ -57,6 +57,7 @@ fn create_test_config() -> EngineConfig {
         memory_threshold: 0.9,
         max_retry_attempts: 2,
         special_tokens: Default::default(),
+        ..Default::default()
     }
 }
 

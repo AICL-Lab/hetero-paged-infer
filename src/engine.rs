@@ -53,7 +53,7 @@ use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
 use crate::gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
 use crate::scheduler::{Scheduler, SchedulerTrait};
-use crate::tokenizer::{SimpleTokenizer, TokenizerTrait};
+use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
 
 /// 推理引擎
@@ -126,7 +126,7 @@ impl InferenceEngine {
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
 
-        let tokenizer = Box::new(SimpleTokenizer::new());
+        let tokenizer = build_tokenizer(&config)?;
         let vocab_size = tokenizer.vocab_size();
         let eos_token_id = tokenizer.eos_token_id();
 
@@ -239,7 +239,10 @@ impl InferenceEngine {
         }
 
         // 分词
-        let input_tokens = self.tokenizer.encode(text);
+        let input_tokens = self
+            .tokenizer
+            .try_encode(text)
+            .map_err(EngineError::Tokenization)?;
 
         // 检查 prompt 长度
         if input_tokens.len() > self.config.max_model_len as usize {
@@ -346,10 +349,14 @@ impl InferenceEngine {
         completed_requests
             .into_iter()
             .map(|req| {
-                let output_text = self.tokenizer.decode(&req.output_tokens);
-                let success = matches!(req.state, RequestState::Completed);
-                let error = match &req.state {
-                    RequestState::Failed(msg) => Some(msg.clone()),
+                let decoded_output = self.tokenizer.try_decode(&req.output_tokens);
+                let tokenization_error = decoded_output.as_ref().err().cloned();
+                let output_text = decoded_output.unwrap_or_default();
+                let success =
+                    matches!(req.state, RequestState::Completed) && tokenization_error.is_none();
+                let error = match (&req.state, tokenization_error) {
+                    (RequestState::Failed(msg), _) => Some(msg.clone()),
+                    (_, Some(msg)) => Some(format!("tokenizer decode failed: {msg}")),
                     _ => None,
                 };
 
@@ -549,9 +556,46 @@ impl InferenceEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{TokenizerConfig, TokenizerKind};
     use crate::error::ExecutionError;
     use crate::test_utils::create_test_config;
+    use crate::tokenizer::SimpleTokenizer;
     use crate::types::{ExecutionBatch, ExecutionOutput};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_test_tokenizer_json() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("hetero-engine-tokenizer-{unique}.json"));
+        fs::write(
+            &path,
+            r###"{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [],
+  "normalizer": null,
+  "pre_tokenizer": { "type": "Whitespace" },
+  "post_processor": null,
+  "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "hello": 1,
+      "world": 2
+    },
+    "unk_token": "[UNK]"
+  }
+}"###,
+        )
+        .unwrap();
+        path
+    }
 
     struct AlwaysFailExecutor;
 
@@ -616,6 +660,50 @@ mod tests {
         let engine = InferenceEngine::new(config);
 
         assert!(engine.is_ok());
+    }
+
+    #[test]
+    fn test_engine_creation_fails_when_huggingface_tokenizer_file_is_missing() {
+        let config = EngineConfig {
+            tokenizer: TokenizerConfig {
+                kind: TokenizerKind::HuggingFace,
+                path: Some("/tmp/does-not-exist-tokenizer.json".into()),
+            },
+            ..create_test_config()
+        };
+
+        let engine = InferenceEngine::new(config);
+        assert!(matches!(engine, Err(EngineError::Tokenization(_))));
+    }
+
+    #[test]
+    fn test_submit_request_uses_configured_huggingface_tokenizer() {
+        let path = write_test_tokenizer_json();
+        let config = EngineConfig {
+            max_model_len: 6,
+            tokenizer: TokenizerConfig {
+                kind: TokenizerKind::HuggingFace,
+                path: Some(path.clone()),
+            },
+            ..create_test_config()
+        };
+        let mut engine = InferenceEngine::new(config).unwrap();
+
+        let result = engine.submit_request(
+            "hello world",
+            GenerationParams {
+                max_tokens: 1,
+                temperature: 1.0,
+                top_p: 0.9,
+            },
+        );
+
+        assert!(
+            result.is_ok(),
+            "configured HuggingFace tokenizer should be used"
+        );
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

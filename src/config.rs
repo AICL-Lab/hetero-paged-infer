@@ -33,7 +33,7 @@
 
 use crate::error::ConfigError;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 特殊 Token ID 配置
 ///
@@ -69,6 +69,95 @@ impl SpecialTokenIds {
     }
 }
 
+/// Tokenizer 类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenizerKind {
+    #[default]
+    Simple,
+    HuggingFace,
+}
+
+/// Tokenizer 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TokenizerConfig {
+    /// tokenizer 实现类型
+    pub kind: TokenizerKind,
+    /// HuggingFace tokenizer 文件路径
+    pub path: Option<PathBuf>,
+}
+
+impl Default for TokenizerConfig {
+    fn default() -> Self {
+        Self {
+            kind: TokenizerKind::Simple,
+            path: None,
+        }
+    }
+}
+
+/// Serving 后端类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ServingBackendKind {
+    #[default]
+    LocalEngine,
+    CommandBridge,
+}
+
+/// 命令桥接配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CommandBridgeConfig {
+    /// 可执行程序路径
+    pub program: String,
+    /// 额外参数
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Serving 后端配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServingBackendConfig {
+    /// 后端类型
+    pub kind: ServingBackendKind,
+    /// 命令桥接配置
+    #[serde(default)]
+    pub command: Option<CommandBridgeConfig>,
+}
+
+impl Default for ServingBackendConfig {
+    fn default() -> Self {
+        Self {
+            kind: ServingBackendKind::LocalEngine,
+            command: None,
+        }
+    }
+}
+
+/// Serving 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServingConfig {
+    /// 监听主机
+    pub host: String,
+    /// 监听端口
+    pub port: u16,
+    /// 对外暴露的模型名称
+    pub model_name: String,
+    /// 运行时后端
+    pub backend: ServingBackendConfig,
+}
+
+impl Default for ServingConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            model_name: "hetero-infer".to_string(),
+            backend: ServingBackendConfig::default(),
+        }
+    }
+}
+
 /// 引擎配置
 ///
 /// 包含推理引擎的所有可配置参数。
@@ -86,6 +175,8 @@ impl SpecialTokenIds {
 /// | `memory_threshold` | 内存压力阈值 | 0.9 |
 /// | `max_retry_attempts` | GPU 执行重试次数 | 2 |
 /// | `special_tokens` | 特殊 Token ID 配置 | 默认值 |
+/// | `tokenizer` | tokenizer 运行时配置 | simple |
+/// | `serving` | OpenAI 服务配置 | 127.0.0.1:3000 |
 ///
 /// # 示例
 ///
@@ -154,6 +245,14 @@ pub struct EngineConfig {
     ///
     /// 包含 BOS、EOS、PAD、UNK 等特殊 token 的 ID。
     pub special_tokens: SpecialTokenIds,
+
+    /// Tokenizer 运行时配置
+    #[serde(default)]
+    pub tokenizer: TokenizerConfig,
+
+    /// 服务模式配置
+    #[serde(default)]
+    pub serving: ServingConfig,
 }
 
 impl Default for EngineConfig {
@@ -168,6 +267,8 @@ impl Default for EngineConfig {
             memory_threshold: 0.9,
             max_retry_attempts: 2,
             special_tokens: SpecialTokenIds::default(),
+            tokenizer: TokenizerConfig::default(),
+            serving: ServingConfig::default(),
         }
     }
 }
@@ -217,6 +318,8 @@ impl EngineConfig {
             memory_threshold,
             max_retry_attempts: 2,
             special_tokens: SpecialTokenIds::default(),
+            tokenizer: TokenizerConfig::default(),
+            serving: ServingConfig::default(),
         };
         config.validate()?;
         Ok(config)
@@ -269,6 +372,25 @@ impl EngineConfig {
         if self.memory_threshold <= 0.0 || self.memory_threshold > 1.0 {
             return Err(ConfigError::InvalidMemoryThreshold(self.memory_threshold));
         }
+        if matches!(self.tokenizer.kind, TokenizerKind::HuggingFace)
+            && self.tokenizer.path.is_none()
+        {
+            return Err(ConfigError::MissingTokenizerPath);
+        }
+        if self.serving.port == 0 {
+            return Err(ConfigError::InvalidServerPort(self.serving.port));
+        }
+        if self.serving.model_name.trim().is_empty() {
+            return Err(ConfigError::InvalidModelName);
+        }
+        if matches!(self.serving.backend.kind, ServingBackendKind::CommandBridge) {
+            let Some(command) = &self.serving.backend.command else {
+                return Err(ConfigError::InvalidCommandProgram);
+            };
+            if command.program.trim().is_empty() {
+                return Err(ConfigError::InvalidCommandProgram);
+            }
+        }
         // Note: max_retry_attempts can be 0 (no retries) or any positive value
         Ok(())
     }
@@ -296,6 +418,15 @@ impl EngineConfig {
             && self.max_total_tokens > 0
             && self.memory_threshold > 0.0
             && self.memory_threshold <= 1.0
+            && (!matches!(self.tokenizer.kind, TokenizerKind::HuggingFace)
+                || self.tokenizer.path.is_some())
+            && self.serving.port > 0
+            && !self.serving.model_name.trim().is_empty()
+            && (!matches!(self.serving.backend.kind, ServingBackendKind::CommandBridge)
+                || matches!(
+                    self.serving.backend.command.as_ref(),
+                    Some(command) if !command.program.trim().is_empty()
+                ))
     }
 
     /// 从 JSON 文件加载配置
@@ -503,6 +634,103 @@ mod tests {
         assert_eq!(config.tokens_in_blocks(1), 16);
         assert_eq!(config.tokens_in_blocks(2), 32);
         assert_eq!(config.tokens_in_blocks(3), 48);
+    }
+
+    #[test]
+    fn test_default_config_includes_serving_and_tokenizer_defaults() {
+        let config = EngineConfig::default();
+
+        assert_eq!(config.tokenizer.kind, TokenizerKind::Simple);
+        assert_eq!(config.tokenizer.path, None);
+        assert_eq!(config.serving.host, "127.0.0.1");
+        assert_eq!(config.serving.port, 3000);
+        assert_eq!(config.serving.model_name, "hetero-infer");
+        assert_eq!(config.serving.backend.kind, ServingBackendKind::LocalEngine);
+        assert_eq!(config.serving.backend.command, None);
+    }
+
+    #[test]
+    fn test_huggingface_tokenizer_requires_path() {
+        let config = EngineConfig {
+            tokenizer: TokenizerConfig {
+                kind: TokenizerKind::HuggingFace,
+                path: None,
+            },
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::MissingTokenizerPath)
+        ));
+    }
+
+    #[test]
+    fn test_command_bridge_requires_program() {
+        let config = EngineConfig {
+            serving: ServingConfig {
+                backend: ServingBackendConfig {
+                    kind: ServingBackendKind::CommandBridge,
+                    command: Some(CommandBridgeConfig {
+                        program: String::new(),
+                        args: Vec::new(),
+                    }),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidCommandProgram)
+        ));
+    }
+
+    #[test]
+    fn test_config_round_trip_preserves_serving_and_tokenizer_settings() {
+        let config = EngineConfig {
+            tokenizer: TokenizerConfig {
+                kind: TokenizerKind::HuggingFace,
+                path: Some("fixtures/tokenizer.json".into()),
+            },
+            serving: ServingConfig {
+                host: "0.0.0.0".to_string(),
+                port: 8080,
+                model_name: "demo-model".to_string(),
+                backend: ServingBackendConfig {
+                    kind: ServingBackendKind::CommandBridge,
+                    command: Some(CommandBridgeConfig {
+                        program: "/usr/bin/mock-backend".to_string(),
+                        args: vec!["--serve".to_string()],
+                    }),
+                },
+            },
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: EngineConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.tokenizer.kind, TokenizerKind::HuggingFace);
+        assert_eq!(
+            decoded.tokenizer.path,
+            Some("fixtures/tokenizer.json".into())
+        );
+        assert_eq!(decoded.serving.host, "0.0.0.0");
+        assert_eq!(decoded.serving.port, 8080);
+        assert_eq!(decoded.serving.model_name, "demo-model");
+        assert_eq!(
+            decoded.serving.backend.kind,
+            ServingBackendKind::CommandBridge
+        );
+        assert_eq!(
+            decoded.serving.backend.command,
+            Some(CommandBridgeConfig {
+                program: "/usr/bin/mock-backend".to_string(),
+                args: vec!["--serve".to_string()],
+            })
+        );
     }
 }
 

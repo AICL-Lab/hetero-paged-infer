@@ -106,6 +106,22 @@ pub enum ConfigError {
     /// 解析配置失败：{0}
     #[error("解析配置失败: {0}")]
     ParseError(String),
+
+    /// 缺少 HuggingFace tokenizer 路径
+    #[error("缺少 HuggingFace tokenizer 路径")]
+    MissingTokenizerPath,
+
+    /// 无效的命令桥接程序
+    #[error("无效的命令桥接程序: program 不能为空")]
+    InvalidCommandProgram,
+
+    /// 无效的服务端口：{0}
+    #[error("无效的服务端口: 必须大于 0，实际值为 {0}")]
+    InvalidServerPort(u16),
+
+    /// 无效的模型名称
+    #[error("无效的模型名称: 不能为空")]
+    InvalidModelName,
 }
 
 /// 请求验证错误

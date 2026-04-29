@@ -1,7 +1,7 @@
 //! Heterogeneous Inference System - Main Entry Point
 
 use clap::Parser;
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use hetero_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
 use log::info;
 use std::path::PathBuf;
 
@@ -45,6 +45,10 @@ struct Args {
     #[arg(short, long)]
     input: Option<String>,
 
+    /// Start OpenAI-compatible HTTP server
+    #[arg(long)]
+    serve: bool,
+
     /// Maximum tokens to generate
     #[arg(long, default_value = "100")]
     max_tokens: u32,
@@ -58,7 +62,8 @@ struct Args {
     top_p: f32,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let args = Args::parse();
@@ -76,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             memory_threshold: args.memory_threshold,
             max_retry_attempts: 2,
             special_tokens: Default::default(),
+            ..Default::default()
         }
     };
 
@@ -92,6 +98,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Max batch size: {}", config.max_batch_size);
     println!("  Max sequences: {}", config.max_num_seqs);
     println!();
+
+    if args.serve {
+        let bind_addr = format!("{}:{}", config.serving.host, config.serving.port);
+        info!("Starting OpenAI-compatible server on {}", bind_addr);
+        println!("Server mode: {}", bind_addr);
+        println!("Model name: {}", config.serving.model_name);
+
+        let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+        let app = create_router(config)?;
+        axum::serve(listener, app).await?;
+        return Ok(());
+    }
 
     // Create inference engine
     let mut engine = InferenceEngine::new(config)?;

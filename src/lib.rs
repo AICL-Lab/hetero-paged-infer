@@ -114,6 +114,7 @@ pub mod error;
 pub mod gpu_executor;
 pub mod kv_cache;
 pub mod scheduler;
+pub mod server;
 pub mod tokenizer;
 pub mod types;
 
@@ -121,7 +122,10 @@ pub mod types;
 pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
-pub use config::{EngineConfig, SpecialTokenIds};
+pub use config::{
+    CommandBridgeConfig, EngineConfig, ServingBackendConfig, ServingBackendKind, ServingConfig,
+    SpecialTokenIds, TokenizerConfig, TokenizerKind,
+};
 pub use engine::{EngineMetrics, InferenceEngine, RecoveryAction};
 pub use error::{
     ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
@@ -129,7 +133,10 @@ pub use error::{
 pub use gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
 pub use kv_cache::{KVCacheManager, KVCacheManagerTrait};
 pub use scheduler::{Scheduler, SchedulerTrait};
-pub use tokenizer::{RoundTripTokenizer, SimpleTokenizer, TokenizerTrait};
+pub use server::create_router;
+pub use tokenizer::{
+    build_tokenizer, HuggingFaceTokenizer, RoundTripTokenizer, SimpleTokenizer, TokenizerTrait,
+};
 pub use types::{
     BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, LogicalBlock,
     MemoryStats, PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId,
