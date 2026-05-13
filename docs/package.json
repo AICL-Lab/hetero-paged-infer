@@ -1,0 +1,20 @@
+{
+  "name": "hetero-paged-infer-docs",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Documentation for Hetero-Paged-Infer - High-performance LLM inference engine",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.5.0",
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "vitepress-plugin-llms": "^1.10.0",
+    "mermaid": "^11.12.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -58,6 +58,6 @@ for result in results {
 
 ## 目录
 
-- [安装指南](installation.md) - 详细安装说明
-- [配置说明](configuration.md) - 所有配置选项
-- [API 参考](../api/core-types.md) - 完整 API 文档
+- [安装指南](installation) - 详细安装说明
+- [配置说明](configuration) - 所有配置选项
+- [API 参考](../api/core-types) - 完整 API 文档

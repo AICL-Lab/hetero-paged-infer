@@ -261,4 +261,4 @@ fn main() -> Result<(), EngineError> {
 
 ---
 
-下一篇: [Trait 接口](traits.md)
+下一篇: [Trait 接口](traits)

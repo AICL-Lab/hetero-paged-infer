@@ -314,4 +314,4 @@ cargo uninstall hetero-infer
 
 ---
 
-Next: [Configuration Guide](configuration.md)
+Next: [Configuration Guide](configuration)
