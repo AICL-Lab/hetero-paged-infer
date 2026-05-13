@@ -262,4 +262,4 @@ flowchart LR
 
 ---
 
-Next: [Component Details](components.md)
+Next: [Component Details](components)

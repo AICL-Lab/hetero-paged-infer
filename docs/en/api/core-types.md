@@ -261,4 +261,4 @@ fn main() -> Result<(), EngineError> {
 
 ---
 
-Next: [Trait Interfaces](traits.md)
+Next: [Trait Interfaces](traits)

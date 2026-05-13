@@ -262,4 +262,4 @@ flowchart LR
 
 ---
 
-下一步：[组件详情](components.md)
+下一步：[组件详情](components)

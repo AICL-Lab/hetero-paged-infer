@@ -251,10 +251,10 @@ RUST_LOG=debug ./hetero-infer --input "Test"
 
 ## Next Steps
 
-- [Installation Guide](installation.md) - Detailed setup instructions
-- [Configuration](configuration.md) - All configuration options
-- [API Reference](../api/core-types.md) - Complete API documentation
+- [Installation Guide](installation) - Detailed setup instructions
+- [Configuration](configuration) - All configuration options
+- [API Reference](../api/core-types) - Complete API documentation
 
 ---
 
-Need help? Check the [FAQ](../development/faq.md) or [open an issue](https://github.com/LessUp/hetero-paged-infer/issues).
+Need help? Check the [FAQ](../development/faq) or [open an issue](https://github.com/LessUp/hetero-paged-infer/issues).

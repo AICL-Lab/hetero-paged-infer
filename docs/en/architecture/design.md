@@ -287,4 +287,4 @@ The architecture maintains these correctness properties:
 
 ---
 
-*For API details, see [API.md](./API.md). For configuration options, see [CONFIGURATION.md](./CONFIGURATION.md).*
+*For API details, see [API.md](./API). For configuration options, see [CONFIGURATION.md](./CONFIGURATION).*

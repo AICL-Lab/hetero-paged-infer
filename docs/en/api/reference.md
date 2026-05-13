@@ -388,4 +388,4 @@ pub use crate::gpu_executor::{GPUExecutorTrait, ExecutionBatch, ExecutionOutput}
 
 ---
 
-*For configuration details, see [CONFIGURATION.md](./CONFIGURATION.md).*
+*For configuration details, see [CONFIGURATION.md](./CONFIGURATION).*

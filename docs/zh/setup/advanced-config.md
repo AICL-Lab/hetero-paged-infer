@@ -318,4 +318,4 @@ sum(len(sequence) for sequence in batch) <= max_total_tokens
 
 ---
 
-*部署说明见 [DEPLOYMENT.md](./DEPLOYMENT.md)。*
+*部署说明见 [DEPLOYMENT.md](./DEPLOYMENT)。*
