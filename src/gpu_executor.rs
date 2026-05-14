@@ -289,66 +289,10 @@ impl GPUExecutorTrait for MockGPUExecutor {
     }
 }
 
-/// Build execution batch from scheduler output
-pub fn build_execution_batch(scheduler_output: &crate::types::SchedulerOutput) -> ExecutionBatch {
-    let mut batch = ExecutionBatch::default();
-
-    // Process prefill sequences
-    for seq in &scheduler_output.prefill_sequences {
-        let seq_id = seq.seq_id;
-        let input_tokens = &seq.request.input_tokens;
-        let context_len = seq.context_len();
-
-        // Add tokens
-        batch.input_tokens.extend(input_tokens.iter().copied());
-
-        // Add positions (0 to len-1 for prefill)
-        for i in 0..input_tokens.len() {
-            batch.positions.push(i as u32);
-        }
-
-        batch.seq_lens.push(input_tokens.len() as u32);
-        batch.is_prefill.push(true);
-        batch.seq_ids.push(seq_id);
-        batch.context_lens.push(context_len);
-
-        batch.block_tables.push(seq.get_block_table());
-    }
-
-    // Process decode sequences
-    for seq in &scheduler_output.decode_sequences {
-        let seq_id = seq.seq_id;
-        let context_len = seq.context_len();
-        let Some(input_token) = seq.decode_input_token() else {
-            continue;
-        };
-        let Some(position) = seq.decode_position() else {
-            continue;
-        };
-
-        // For decode, we process the last token already present in the context.
-        batch.input_tokens.push(input_token);
-
-        // Position points to that last context token.
-        batch.positions.push(position);
-
-        batch.seq_lens.push(1);
-        batch.is_prefill.push(false);
-        batch.seq_ids.push(seq_id);
-        batch.context_lens.push(context_len);
-
-        batch.block_tables.push(seq.get_block_table());
-    }
-
-    batch
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::create_test_config;
-    use crate::types::{Request, RequestState, SchedulerOutput, Sequence};
-    use std::sync::Arc;
 
     #[test]
     fn test_mock_executor_creation() {
@@ -442,69 +386,6 @@ mod tests {
 
         buffer.clear();
         assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn test_decode_batch_uses_last_generated_token_and_position() {
-        let mut request = Request::new(
-            1,
-            vec![10, 11, 12],
-            crate::types::GenerationParams::default(),
-        );
-        request.output_tokens = vec![20, 21];
-        request.state = RequestState::Decode;
-
-        let sequence = Sequence {
-            seq_id: 7,
-            request,
-            logical_blocks: Vec::new(),
-            num_computed_tokens: 3,
-            num_generated_tokens: 2,
-        };
-
-        let scheduler_output = SchedulerOutput {
-            prefill_sequences: Vec::new(),
-            decode_sequences: vec![Arc::new(sequence)],
-            total_tokens: 1,
-        };
-
-        let batch = build_execution_batch(&scheduler_output);
-
-        assert_eq!(batch.input_tokens, vec![21]);
-        assert_eq!(batch.positions, vec![4]);
-        assert_eq!(batch.context_lens, vec![5]);
-        assert_eq!(batch.seq_ids, vec![7]);
-    }
-
-    #[test]
-    fn test_decode_batch_falls_back_to_last_prompt_token() {
-        let mut request = Request::new(
-            1,
-            vec![30, 31, 32],
-            crate::types::GenerationParams::default(),
-        );
-        request.state = RequestState::Decode;
-
-        let sequence = Sequence {
-            seq_id: 9,
-            request,
-            logical_blocks: Vec::new(),
-            num_computed_tokens: 3,
-            num_generated_tokens: 0,
-        };
-
-        let scheduler_output = SchedulerOutput {
-            prefill_sequences: Vec::new(),
-            decode_sequences: vec![Arc::new(sequence)],
-            total_tokens: 1,
-        };
-
-        let batch = build_execution_batch(&scheduler_output);
-
-        assert_eq!(batch.input_tokens, vec![32]);
-        assert_eq!(batch.positions, vec![2]);
-        assert_eq!(batch.context_lens, vec![3]);
-        assert_eq!(batch.seq_ids, vec![9]);
     }
 }
 
