@@ -51,7 +51,8 @@
 
 use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
-use crate::gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
+use crate::execution_pipeline::BatchExecutionPipeline;
+use crate::gpu_executor::{GPUExecutorTrait, MockGPUExecutor};
 use crate::scheduler::{Scheduler, SchedulerTrait};
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
@@ -83,8 +84,8 @@ pub struct InferenceEngine {
     tokenizer: Box<dyn TokenizerTrait>,
     /// 请求调度器
     scheduler: Scheduler,
-    /// GPU 执行器
-    gpu_executor: Box<dyn GPUExecutorTrait>,
+    /// 批次执行流水线（封装 GPU 执行与重试）
+    execution_pipeline: BatchExecutionPipeline,
     /// EOS token ID（用于检测完成）
     eos_token_id: u32,
     /// 运行标志
@@ -132,12 +133,13 @@ impl InferenceEngine {
 
         let scheduler = Scheduler::new(config.clone());
         let gpu_executor = Box::new(MockGPUExecutor::new(config.clone(), vocab_size));
+        let execution_pipeline = BatchExecutionPipeline::new(gpu_executor, &config);
 
         Ok(Self {
             config,
             tokenizer,
             scheduler,
-            gpu_executor,
+            execution_pipeline,
             eos_token_id,
             running: false,
             max_steps: 0,
@@ -166,12 +168,13 @@ impl InferenceEngine {
         config.validate()?;
 
         let eos_token_id = tokenizer.eos_token_id();
+        let execution_pipeline = BatchExecutionPipeline::new(gpu_executor, &config);
 
         Ok(Self {
             config,
             tokenizer,
             scheduler,
-            gpu_executor,
+            execution_pipeline,
             eos_token_id,
             running: false,
             max_steps: 0,
@@ -276,7 +279,7 @@ impl InferenceEngine {
 
     /// 执行一步推理
     ///
-    /// 调度下一批次并执行 GPU 计算。
+    /// 调度下一批次并通过执行流水线完成 GPU 计算。
     ///
     /// # 返回
     ///
@@ -286,19 +289,17 @@ impl InferenceEngine {
         let scheduler_output = self.scheduler.schedule();
 
         if !scheduler_output.is_empty() {
-            // 构建执行批次
-            let execution_batch = build_execution_batch(&scheduler_output);
+            let seq_ids = scheduler_output.seq_ids();
 
-            // 执行 GPU 计算
-            match self.execute_batch(&execution_batch) {
+            // 通过批次执行流水线完成 GPU 计算（含重试）
+            match self.execution_pipeline.execute(&scheduler_output) {
                 Ok(execution_output) => {
                     self.scheduler
                         .update_sequences(&execution_output, self.eos_token_id);
                 }
                 Err(engine_error) => {
                     let reason = engine_error.to_string();
-                    self.scheduler
-                        .fail_sequences(execution_batch.seq_ids.iter().copied(), &reason);
+                    self.scheduler.fail_sequences(seq_ids, &reason);
                     let completed = self.collect_completed_requests();
                     return if completed.is_empty() {
                         Err(engine_error)
@@ -310,34 +311,6 @@ impl InferenceEngine {
         }
 
         Ok(self.collect_completed_requests())
-    }
-
-    fn execute_batch(
-        &mut self,
-        execution_batch: &crate::types::ExecutionBatch,
-    ) -> Result<crate::types::ExecutionOutput, EngineError> {
-        let mut retries = 0;
-
-        loop {
-            match self.gpu_executor.execute(execution_batch) {
-                Ok(output) => return Ok(output),
-                Err(exec_error) => {
-                    let engine_error = EngineError::Execution(exec_error);
-                    match self.handle_error(&engine_error) {
-                        RecoveryAction::Retry { max_attempts } if retries < max_attempts => {
-                            retries += 1;
-                            log::warn!(
-                                "重试批次执行 (尝试 {}/{}): {}",
-                                retries,
-                                max_attempts,
-                                engine_error
-                            );
-                        }
-                        _ => return Err(engine_error),
-                    }
-                }
-            }
-        }
     }
 
     fn collect_completed_requests(&mut self) -> Vec<CompletedRequest> {
@@ -418,6 +391,8 @@ impl InferenceEngine {
                         RecoveryAction::Shutdown => {
                             self.running = false;
                         }
+                        // 执行级重试/跳过已在 BatchExecutionPipeline 和 Scheduler 中处理，
+                        // 引擎级只需继续循环即可恢复。
                         RecoveryAction::Retry { .. }
                         | RecoveryAction::SkipSequence
                         | RecoveryAction::ResetBatch => {}

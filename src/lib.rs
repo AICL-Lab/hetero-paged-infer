@@ -111,9 +111,11 @@
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod execution_pipeline;
 pub mod gpu_executor;
 pub mod kv_cache;
 pub mod scheduler;
+pub mod sequence_lifecycle;
 pub mod server;
 pub mod tokenizer;
 pub mod types;
@@ -130,10 +132,13 @@ pub use engine::{EngineMetrics, InferenceEngine, RecoveryAction};
 pub use error::{
     ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
 };
-pub use gpu_executor::{build_execution_batch, GPUExecutorTrait, MockGPUExecutor};
+pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
+pub use gpu_executor::{GPUExecutorTrait, MockGPUExecutor};
 pub use kv_cache::{KVCacheManager, KVCacheManagerTrait};
 pub use scheduler::{Scheduler, SchedulerTrait};
-pub use server::create_router;
+pub use server::{
+    create_router, CommandBridgeBackend, GenerationResult, InferenceBackend, LocalEngineBackend,
+};
 pub use tokenizer::{
     build_tokenizer, HuggingFaceTokenizer, RoundTripTokenizer, SimpleTokenizer, TokenizerTrait,
 };

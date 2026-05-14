@@ -15,16 +15,98 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
+/// 推理后端 trait
+///
+/// 定义 Server 与推理引擎之间的 seam，隐藏 LocalEngine / CommandBridge 的差异。
+pub trait InferenceBackend: Send + Sync {
+    /// 执行单次生成
+    fn generate<'a>(
+        &'a self,
+        prompt: &'a str,
+        params: GenerationParams,
+    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>>;
+}
+
+/// LocalEngine 后端适配器
 #[derive(Clone)]
-enum RuntimeBackend {
-    LocalEngine(Arc<Mutex<InferenceEngine>>),
-    CommandBridge(CommandBridgeConfig),
+pub struct LocalEngineBackend {
+    engine: Arc<Mutex<InferenceEngine>>,
+}
+
+impl LocalEngineBackend {
+    pub fn new(engine: InferenceEngine) -> Self {
+        Self {
+            engine: Arc::new(Mutex::new(engine)),
+        }
+    }
+}
+
+impl InferenceBackend for LocalEngineBackend {
+    fn generate<'a>(
+        &'a self,
+        prompt: &'a str,
+        params: GenerationParams,
+    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut engine = self.engine.lock().await;
+            let request_id = engine
+                .submit_request(prompt, params)
+                .map_err(|e| e.to_string())?;
+            engine.set_max_steps(1024);
+            let completed = engine.run();
+            let result = completed
+                .into_iter()
+                .find(|item| item.request_id == request_id)
+                .ok_or_else(|| {
+                    EngineError::Scheduler(SchedulerError::RequestNotFound(request_id)).to_string()
+                })?;
+
+            if result.success {
+                let text = result.output_text;
+                let completion_tokens = estimate_tokens(&text);
+                Ok(GenerationResult {
+                    text,
+                    prompt_tokens: estimate_tokens(prompt),
+                    completion_tokens,
+                })
+            } else {
+                Err(result
+                    .error
+                    .unwrap_or_else(|| "generation failed".to_string()))
+            }
+        })
+    }
+}
+
+/// CommandBridge 后端适配器
+#[derive(Clone)]
+pub struct CommandBridgeBackend {
+    config: CommandBridgeConfig,
+}
+
+impl CommandBridgeBackend {
+    pub fn new(config: CommandBridgeConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl InferenceBackend for CommandBridgeBackend {
+    fn generate<'a>(
+        &'a self,
+        prompt: &'a str,
+        params: GenerationParams,
+    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>> {
+        let config = self.config.clone();
+        Box::pin(async move { run_command_bridge(&config, prompt, params).await })
+    }
 }
 
 #[derive(Default)]
@@ -50,7 +132,7 @@ impl ServerMetrics {
 #[derive(Clone)]
 struct AppState {
     config: EngineConfig,
-    backend: RuntimeBackend,
+    backend: Arc<dyn InferenceBackend>,
     metrics: Arc<ServerMetrics>,
     response_counter: Arc<AtomicU64>,
 }
@@ -58,18 +140,18 @@ struct AppState {
 impl AppState {
     fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
-        let backend = match config.serving.backend.kind {
-            ServingBackendKind::LocalEngine => RuntimeBackend::LocalEngine(Arc::new(Mutex::new(
+        let backend: Arc<dyn InferenceBackend> = match config.serving.backend.kind {
+            ServingBackendKind::LocalEngine => Arc::new(LocalEngineBackend::new(
                 InferenceEngine::new(config.clone())?,
-            ))),
-            ServingBackendKind::CommandBridge => RuntimeBackend::CommandBridge(
+            )),
+            ServingBackendKind::CommandBridge => Arc::new(CommandBridgeBackend::new(
                 config
                     .serving
                     .backend
                     .command
                     .clone()
                     .ok_or(crate::ConfigError::InvalidCommandProgram)?,
-            ),
+            )),
         };
 
         Ok(Self {
@@ -90,48 +172,18 @@ impl AppState {
         prompt: &str,
         params: GenerationParams,
     ) -> Result<GenerationResult, String> {
-        match &self.backend {
-            RuntimeBackend::LocalEngine(engine) => {
-                let mut engine = engine.lock().await;
-                let request_id = engine
-                    .submit_request(prompt, params)
-                    .map_err(|e| e.to_string())?;
-                engine.set_max_steps(1024);
-                let completed = engine.run();
-                let result = completed
-                    .into_iter()
-                    .find(|item| item.request_id == request_id)
-                    .ok_or_else(|| {
-                        EngineError::Scheduler(SchedulerError::RequestNotFound(request_id))
-                            .to_string()
-                    })?;
-
-                if result.success {
-                    let text = result.output_text;
-                    let completion_tokens = estimate_tokens(&text);
-                    Ok(GenerationResult {
-                        text,
-                        prompt_tokens: estimate_tokens(prompt),
-                        completion_tokens,
-                    })
-                } else {
-                    Err(result
-                        .error
-                        .unwrap_or_else(|| "generation failed".to_string()))
-                }
-            }
-            RuntimeBackend::CommandBridge(command) => {
-                run_command_bridge(command, prompt, params).await
-            }
-        }
+        self.backend.generate(prompt, params).await
     }
 }
 
 #[derive(Debug)]
-struct GenerationResult {
-    text: String,
-    prompt_tokens: usize,
-    completion_tokens: usize,
+pub struct GenerationResult {
+    /// 生成的文本
+    pub text: String,
+    /// prompt token 数
+    pub prompt_tokens: usize,
+    /// 生成 token 数
+    pub completion_tokens: usize,
 }
 
 #[derive(Debug, Deserialize)]

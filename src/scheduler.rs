@@ -15,12 +15,11 @@
 //!                   ↘ Failed
 //! ```
 
-use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::config::EngineConfig;
 use crate::error::SchedulerError;
-use crate::kv_cache::{KVCacheManager, KVCacheManagerTrait};
+use crate::sequence_lifecycle::SequenceLifecycle;
 use crate::types::{
     ExecutionOutput, Request, RequestState, SchedulerOutput, SeqId, Sequence, TokenId,
 };
@@ -48,15 +47,12 @@ pub trait SchedulerTrait {
     fn get_memory_utilization(&self) -> f32;
 }
 
-#[derive(Debug, Clone)]
-struct PendingRequest {
-    seq_id: SeqId,
-    request: Request,
-}
-
 /// Continuous Batching 调度器
 ///
 /// 实现请求调度，支持 prefill/decode 分阶段管理和内存感知。
+///
+/// 序列状态机与 KV Cache 资源管理已委托给 [`SequenceLifecycle`]，
+/// 本模块专注于调度策略（decode 优先、批次约束、内存压力门控）。
 ///
 /// # 调度策略
 ///
@@ -70,209 +66,78 @@ struct PendingRequest {
 /// - 批次 token 总数不超过 `max_total_tokens`
 /// - 内存利用率超阈值时拒绝新 prefill
 pub struct Scheduler {
-    /// Configuration
+    /// 调度策略配置
     config: EngineConfig,
-    /// KV Cache Manager
-    kv_cache: KVCacheManager,
-    /// Pending requests waiting to be scheduled
-    pending_queue: VecDeque<PendingRequest>,
-    /// Sequences in prefill phase
-    prefill_sequences: HashMap<SeqId, Sequence>,
-    /// Sequences in decode phase
-    decode_sequences: HashMap<SeqId, Sequence>,
-    /// Completed requests
-    completed_requests: Vec<Request>,
-    /// Next sequence ID counter
-    next_seq_id: SeqId,
-    /// Memory pressure flag
-    under_memory_pressure: bool,
+    /// 序列生命周期管理器（状态机与资源管理）
+    lifecycle: SequenceLifecycle,
 }
 
 impl Scheduler {
-    /// Create a new scheduler
+    /// 创建新的调度器
     pub fn new(config: EngineConfig) -> Self {
-        let kv_cache = KVCacheManager::new(config.max_num_blocks, config.block_size);
-
-        Self {
-            config,
-            kv_cache,
-            pending_queue: VecDeque::new(),
-            prefill_sequences: HashMap::new(),
-            decode_sequences: HashMap::new(),
-            completed_requests: Vec::new(),
-            next_seq_id: 1,
-            under_memory_pressure: false,
-        }
+        let lifecycle = SequenceLifecycle::new(config.clone());
+        Self { config, lifecycle }
     }
 
-    /// Generate unique sequence ID
-    fn generate_seq_id(&mut self) -> SeqId {
-        let id = self.next_seq_id;
-        self.next_seq_id += 1;
-        id
-    }
-
-    /// Check and update memory pressure status
-    fn update_memory_pressure(&mut self) {
-        let stats = self.kv_cache.get_memory_stats();
-        self.under_memory_pressure = stats.utilization() >= self.config.memory_threshold;
-    }
-
-    /// Calculate blocks needed for a sequence (delegates to EngineConfig)
-    fn blocks_needed(&self, num_tokens: u32) -> u32 {
-        self.config.blocks_for_tokens(num_tokens)
-    }
-
-    /// Try to start prefill for a pending request
-    fn try_start_prefill(&mut self, pending: PendingRequest) -> Result<SeqId, PendingRequest> {
-        let PendingRequest { seq_id, request } = pending;
-        let num_tokens = request.input_tokens.len() as u32;
-        let blocks_needed = self.blocks_needed(num_tokens);
-
-        // Check if we can allocate
-        if !self.kv_cache.can_allocate(blocks_needed) {
-            return Err(PendingRequest { seq_id, request });
-        }
-
-        // Allocate KV cache blocks
-        if self.kv_cache.allocate_sequence(seq_id, num_tokens).is_err() {
-            return Err(PendingRequest { seq_id, request });
-        }
-
-        // Create sequence and set to prefill state
-        let mut sequence = Sequence::new(seq_id, request);
-        sequence.request.state = RequestState::Prefill;
-
-        // Update logical blocks from KV cache
-        if let Some(block_table) = self.kv_cache.get_block_table(seq_id) {
-            sequence.logical_blocks = block_table
-                .iter()
-                .enumerate()
-                .map(|(i, &block_idx)| {
-                    crate::types::LogicalBlock::with_physical(
-                        i as u32,
-                        crate::types::PhysicalBlockRef { block_idx },
-                    )
-                })
-                .collect();
-        }
-
-        self.prefill_sequences.insert(seq_id, sequence);
-        Ok(seq_id)
-    }
-
-    /// Transition sequence from prefill to decode
-    fn transition_to_decode(&mut self, seq_id: SeqId) {
-        if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
-            sequence.request.state = RequestState::Decode;
-            sequence.num_computed_tokens = sequence.request.input_tokens.len() as u32;
-            self.decode_sequences.insert(seq_id, sequence);
-        }
-    }
-
-    /// Complete a sequence
-    fn complete_sequence(&mut self, seq_id: SeqId) {
-        // Try decode sequences first
-        if let Some(mut sequence) = self.decode_sequences.remove(&seq_id) {
-            sequence.request.state = RequestState::Completed;
-            self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
-            return;
-        }
-
-        // Try prefill sequences
-        if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
-            sequence.request.state = RequestState::Completed;
-            self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
-        }
-    }
-
-    /// Fail a sequence and release its resources
-    fn fail_sequence(&mut self, seq_id: SeqId, reason: String) {
-        if let Some(mut sequence) = self.decode_sequences.remove(&seq_id) {
-            sequence.request.state = RequestState::Failed(reason);
-            self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
-            return;
-        }
-
-        if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
-            sequence.request.state = RequestState::Failed(reason);
-            self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
-            return;
-        }
-
-        if let Some(index) = self
-            .pending_queue
-            .iter()
-            .position(|pending| pending.seq_id == seq_id)
-        {
-            if let Some(mut pending) = self.pending_queue.remove(index) {
-                pending.request.state = RequestState::Failed(reason);
-                self.completed_requests.push(pending.request);
-            }
-        }
-    }
-
+    /// 批量失败序列（供 Engine 错误恢复使用）
     pub fn fail_sequences<I>(&mut self, seq_ids: I, reason: &str)
     where
         I: IntoIterator<Item = SeqId>,
     {
-        for seq_id in seq_ids {
-            self.fail_sequence(seq_id, reason.to_string());
-        }
+        self.lifecycle.fail_sequences(seq_ids, reason);
     }
 
-    /// Get sequence by ID (from any queue)
+    /// 通过 ID 查找序列
     pub fn get_sequence(&self, seq_id: SeqId) -> Option<&Sequence> {
-        self.prefill_sequences
-            .get(&seq_id)
-            .or_else(|| self.decode_sequences.get(&seq_id))
+        self.lifecycle.get_sequence(seq_id)
     }
 
-    /// Get mutable sequence by ID
+    /// 通过 ID 查找序列（可变）
     pub fn get_sequence_mut(&mut self, seq_id: SeqId) -> Option<&mut Sequence> {
-        if self.prefill_sequences.contains_key(&seq_id) {
-            self.prefill_sequences.get_mut(&seq_id)
-        } else {
-            self.decode_sequences.get_mut(&seq_id)
-        }
+        self.lifecycle.get_sequence_mut(seq_id)
     }
 
-    /// Get number of active sequences
+    /// 活跃序列数
     pub fn num_active_sequences(&self) -> usize {
-        self.prefill_sequences.len() + self.decode_sequences.len()
+        self.lifecycle.num_active_sequences()
     }
 
-    /// Check if a request is in exactly one queue
+    /// 序列是否恰好在其中一个队列中
     pub fn is_in_exactly_one_queue(&self, seq_id: SeqId) -> bool {
-        let in_prefill = self.prefill_sequences.contains_key(&seq_id);
-        let in_decode = self.decode_sequences.contains_key(&seq_id);
-        (in_prefill && !in_decode) || (!in_prefill && in_decode)
+        self.lifecycle.is_in_exactly_one_queue(seq_id)
+    }
+
+    // === 测试辅助访问器 ===
+
+    /// 是否存在指定 prefill 序列
+    pub fn has_prefill_sequence(&self, seq_id: SeqId) -> bool {
+        self.lifecycle.has_prefill_sequence(seq_id)
+    }
+
+    /// 是否存在指定 decode 序列
+    pub fn has_decode_sequence(&self, seq_id: SeqId) -> bool {
+        self.lifecycle.has_decode_sequence(seq_id)
+    }
+
+    /// pending 队列中是否存在指定 seq_id
+    pub fn has_pending_request(&self, seq_id: SeqId) -> bool {
+        self.lifecycle.has_pending_request(seq_id)
+    }
+
+    /// prefill 序列数
+    pub fn num_prefill_sequences(&self) -> usize {
+        self.lifecycle.num_prefill_sequences()
+    }
+
+    /// decode 序列数
+    pub fn num_decode_sequences(&self) -> usize {
+        self.lifecycle.num_decode_sequences()
     }
 }
 
 impl SchedulerTrait for Scheduler {
     fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError> {
-        // Check memory pressure
-        self.update_memory_pressure();
-
-        if self.under_memory_pressure {
-            return Err(SchedulerError::MemoryPressure);
-        }
-
-        // Check if we've reached max active sequences
-        if self.num_active_sequences() >= self.config.max_num_seqs as usize {
-            return Err(SchedulerError::MemoryPressure);
-        }
-
-        let seq_id = self.generate_seq_id();
-        self.pending_queue
-            .push_back(PendingRequest { seq_id, request });
-
-        Ok(seq_id)
+        self.lifecycle.add_request(request)
     }
 
     fn schedule(&mut self) -> SchedulerOutput {
@@ -280,71 +145,41 @@ impl SchedulerTrait for Scheduler {
         let mut total_tokens: u32 = 0;
         let mut num_sequences: u32 = 0;
 
-        // Update memory pressure status
-        self.update_memory_pressure();
+        self.lifecycle.update_memory_pressure();
 
         // Priority 1: Schedule decode sequences first (lower latency for in-flight requests)
-        let decode_seq_ids: Vec<SeqId> = self.decode_sequences.keys().copied().collect();
-
-        for seq_id in decode_seq_ids {
+        for seq_id in self.lifecycle.decode_seq_ids() {
             if num_sequences >= self.config.max_batch_size {
                 break;
             }
 
-            // Each decode step processes 1 token
             if total_tokens + 1 > self.config.max_total_tokens {
                 break;
             }
 
-            // 先只读取需要的字段，避免 borrow checker 冲突
-            let (current_tokens, current_blocks) = match self.decode_sequences.get(&seq_id) {
-                Some(seq) => (seq.context_len(), seq.logical_blocks.len() as u32),
-                None => continue,
-            };
-            let blocks_needed = self.blocks_needed(current_tokens + 1);
-
-            // Allocate additional block if needed
-            if blocks_needed > current_blocks {
-                match self.kv_cache.allocate_block(seq_id) {
-                    Ok(physical_ref) => {
-                        if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
-                            let logical_idx = sequence.logical_blocks.len() as u32;
-                            sequence.logical_blocks.push(
-                                crate::types::LogicalBlock::with_physical(
-                                    logical_idx,
-                                    physical_ref,
-                                ),
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        let reason = format!("Failed to allocate KV block: {}", err);
-                        self.fail_sequence(seq_id, reason);
-                        continue;
-                    }
-                }
+            if let Err(reason) = self.lifecycle.grow_decode_sequence(seq_id) {
+                self.lifecycle.fail_sequence(seq_id, &reason);
+                continue;
             }
 
-            if let Some(sequence) = self.decode_sequences.get(&seq_id) {
+            if let Some(sequence) = self.lifecycle.get_decode_sequence(seq_id) {
                 output.decode_sequences.push(Arc::new(sequence.clone()));
-
                 total_tokens += 1;
                 num_sequences += 1;
             }
         }
 
         // Priority 2: Schedule prefill sequences
-        let prefill_seq_ids: Vec<SeqId> = self.prefill_sequences.keys().copied().collect();
-
-        for seq_id in prefill_seq_ids {
+        for seq_id in self.lifecycle.prefill_seq_ids() {
             if num_sequences >= self.config.max_batch_size {
                 break;
             }
 
-            let (prefill_tokens, blocks_needed) = match self.prefill_sequences.get(&seq_id) {
+            let (prefill_tokens, blocks_needed) = match self.lifecycle.get_prefill_sequence(seq_id)
+            {
                 Some(sequence) => {
                     let tokens = sequence.request.input_tokens.len() as u32;
-                    (tokens, self.blocks_needed(tokens))
+                    (tokens, self.config.blocks_for_tokens(tokens))
                 }
                 None => continue,
             };
@@ -354,7 +189,7 @@ impl SchedulerTrait for Scheduler {
                     "Input tokens {} exceed max_total_tokens {}",
                     prefill_tokens, self.config.max_total_tokens
                 );
-                self.fail_sequence(seq_id, reason);
+                self.lifecycle.fail_sequence(seq_id, &reason);
                 continue;
             }
 
@@ -363,7 +198,7 @@ impl SchedulerTrait for Scheduler {
                     "Required blocks {} exceed max_num_blocks {}",
                     blocks_needed, self.config.max_num_blocks
                 );
-                self.fail_sequence(seq_id, reason);
+                self.lifecycle.fail_sequence(seq_id, &reason);
                 continue;
             }
 
@@ -371,61 +206,58 @@ impl SchedulerTrait for Scheduler {
                 break;
             }
 
-            if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
+            if let Some(sequence) = self.lifecycle.get_prefill_sequence(seq_id) {
                 output.prefill_sequences.push(Arc::new(sequence.clone()));
-
                 total_tokens += prefill_tokens;
                 num_sequences += 1;
             }
         }
 
         // Priority 3: Start new prefills from pending queue (if not under memory pressure)
-        if !self.under_memory_pressure {
-            while let Some(pending) = self.pending_queue.pop_front() {
+        if !self.lifecycle.is_under_memory_pressure() {
+            while let Some((seq_id, request)) = self.lifecycle.pop_pending() {
                 if num_sequences >= self.config.max_batch_size {
-                    self.pending_queue.push_front(pending);
+                    self.lifecycle.push_pending(seq_id, request);
                     break;
                 }
 
-                let prefill_tokens = pending.request.input_tokens.len() as u32;
+                let prefill_tokens = request.input_tokens.len() as u32;
                 if prefill_tokens > self.config.max_total_tokens {
-                    let mut failed_request = pending.request;
+                    let mut failed_request = request;
                     failed_request.state = RequestState::Failed(format!(
                         "Input tokens {} exceed max_total_tokens {}",
                         prefill_tokens, self.config.max_total_tokens
                     ));
-                    self.completed_requests.push(failed_request);
+                    self.lifecycle.push_completed(failed_request);
                     continue;
                 }
 
-                let blocks_needed = self.blocks_needed(prefill_tokens);
+                let blocks_needed = self.config.blocks_for_tokens(prefill_tokens);
                 if blocks_needed > self.config.max_num_blocks {
-                    let mut failed_request = pending.request;
+                    let mut failed_request = request;
                     failed_request.state = RequestState::Failed(format!(
                         "Required blocks {} exceed max_num_blocks {}",
                         blocks_needed, self.config.max_num_blocks
                     ));
-                    self.completed_requests.push(failed_request);
+                    self.lifecycle.push_completed(failed_request);
                     continue;
                 }
 
                 if total_tokens + prefill_tokens > self.config.max_total_tokens {
-                    self.pending_queue.push_front(pending);
+                    self.lifecycle.push_pending(seq_id, request);
                     break;
                 }
 
-                match self.try_start_prefill(pending) {
+                match self.lifecycle.try_start_prefill(seq_id, request) {
                     Ok(seq_id) => {
-                        if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
+                        if let Some(sequence) = self.lifecycle.get_prefill_sequence(seq_id) {
                             output.prefill_sequences.push(Arc::new(sequence.clone()));
-
                             total_tokens += prefill_tokens;
                             num_sequences += 1;
                         }
                     }
-                    Err(pending) => {
-                        // Put back in queue and stop trying
-                        self.pending_queue.push_front(pending);
+                    Err((seq_id, request)) => {
+                        self.lifecycle.push_pending(seq_id, request);
                         break;
                     }
                 }
@@ -437,48 +269,19 @@ impl SchedulerTrait for Scheduler {
     }
 
     fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId) {
-        let mut to_complete = Vec::new();
-
-        for (i, &seq_id) in outputs.seq_ids.iter().enumerate() {
-            let next_token = outputs.next_tokens.get(i).copied().unwrap_or(0);
-
-            // Check if this was a prefill sequence - transition to decode
-            if self.prefill_sequences.contains_key(&seq_id) {
-                self.transition_to_decode(seq_id);
-            }
-
-            // Update decode sequence with new token
-            if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
-                // 先推入 token，再检查完成条件，避免边界处丢弃 token
-                sequence.request.output_tokens.push(next_token);
-                sequence.num_generated_tokens += 1;
-
-                let max_model_len = self.config.max_model_len as usize;
-                if sequence.request.total_tokens() >= max_model_len
-                    || sequence.request.is_complete(eos_token_id)
-                {
-                    to_complete.push(seq_id);
-                }
-            }
-        }
-
-        for seq_id in to_complete {
-            self.complete_sequence(seq_id);
-        }
+        self.lifecycle.update_sequences(outputs, eos_token_id);
     }
 
     fn get_completed(&mut self) -> Vec<Request> {
-        std::mem::take(&mut self.completed_requests)
+        self.lifecycle.get_completed()
     }
 
     fn has_pending_work(&self) -> bool {
-        !self.pending_queue.is_empty()
-            || !self.prefill_sequences.is_empty()
-            || !self.decode_sequences.is_empty()
+        self.lifecycle.has_pending_work()
     }
 
     fn get_memory_utilization(&self) -> f32 {
-        self.kv_cache.get_memory_stats().utilization()
+        self.lifecycle.memory_utilization()
     }
 }
 
@@ -588,8 +391,8 @@ mod tests {
         scheduler.update_sequences(&exec_output, 0);
 
         // Now should be in decode phase
-        assert!(scheduler.decode_sequences.contains_key(&seq_id));
-        assert!(!scheduler.prefill_sequences.contains_key(&seq_id));
+        assert!(scheduler.has_decode_sequence(seq_id));
+        assert!(!scheduler.has_prefill_sequence(seq_id));
     }
 
     #[test]
@@ -687,10 +490,7 @@ mod tests {
         assert_eq!(scheduled.decode_sequences.len(), 1);
         assert_eq!(scheduled.prefill_sequences.len(), 0);
         assert_eq!(scheduled.decode_sequences[0].seq_id, decode_seq_id);
-        assert!(scheduler
-            .pending_queue
-            .iter()
-            .any(|pending| pending.seq_id == pending_seq_id));
+        assert!(scheduler.has_pending_request(pending_seq_id));
     }
 }
 
@@ -939,7 +739,7 @@ mod property_tests {
 
             // If we have decode sequences, they should all be scheduled before prefill
             // (given sufficient capacity)
-            let decode_count = scheduler.decode_sequences.len();
+            let decode_count = scheduler.num_decode_sequences();
             if decode_count > 0 && output.num_sequences() > 0 {
                 // Decode sequences should be present in output
                 prop_assert!(
@@ -984,12 +784,12 @@ mod property_tests {
             // All prefill sequences should now be in decode
             for seq_id in &prefill_seq_ids {
                 prop_assert!(
-                    scheduler.decode_sequences.contains_key(seq_id),
+                    scheduler.has_decode_sequence(*seq_id),
                     "Sequence {} should be in decode after prefill",
                     seq_id
                 );
                 prop_assert!(
-                    !scheduler.prefill_sequences.contains_key(seq_id),
+                    !scheduler.has_prefill_sequence(*seq_id),
                     "Sequence {} should not be in prefill after transition",
                     seq_id
                 );
@@ -1027,7 +827,7 @@ mod property_tests {
             let eos_token: TokenId = 0;
             let mut generated = 1u32;
 
-            while scheduler.decode_sequences.contains_key(&seq_id) && generated < max_tokens + 5 {
+            while scheduler.has_decode_sequence(seq_id) && generated < max_tokens + 5 {
                 scheduler.schedule();
 
                 // Decide whether to send EOS
