@@ -261,4 +261,4 @@ fn main() -> Result<(), EngineError> {
 
 ---
 
-Next: [Trait Interfaces](traits)
+Next: [Full API Reference](reference)

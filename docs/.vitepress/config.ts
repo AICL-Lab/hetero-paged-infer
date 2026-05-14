@@ -1,9 +1,20 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
+import llmstxt from 'vitepress-plugin-llms'
+
+// 动态 base path 处理
+const rawBase = process.env.VITEPRESS_BASE
+const base = rawBase
+  ? rawBase.startsWith('/')
+    ? rawBase.endsWith('/')
+      ? rawBase
+      : `${rawBase}/`
+    : `/${rawBase}/`
+  : '/'
 
 export default withMermaid(
   defineConfig({
-    base: '/hetero-paged-infer/',
+    base,
     title: 'Hetero-Paged-Infer',
     description: 'High-performance LLM inference engine with PagedAttention and Continuous Batching',
 
@@ -29,7 +40,7 @@ export default withMermaid(
             { text: 'Setup', link: '/en/setup/quickstart', activeMatch: '/en/setup/' },
             { text: 'Architecture', link: '/en/architecture/overview', activeMatch: '/en/architecture/' },
             { text: 'API', link: '/en/api/core-types', activeMatch: '/en/api/' },
-            { text: 'Benchmarks', link: '/en/benchmarks/', activeMatch: '/en/benchmarks/' },
+            { text: 'Comparison', link: '/en/comparison/', activeMatch: '/en/comparison/' },
             { text: 'References', link: '/en/references/', activeMatch: '/en/references/' }
           ],
           sidebar: {
@@ -62,6 +73,14 @@ export default withMermaid(
                 items: [
                   { text: 'Core Types', link: '/en/api/core-types' },
                   { text: 'Full Reference', link: '/en/api/reference' }
+                ]
+              }
+            ],
+            '/en/comparison/': [
+              {
+                text: 'Comparison',
+                items: [
+                  { text: 'Overview', link: '/en/comparison/' }
                 ]
               }
             ],
@@ -147,7 +166,7 @@ export default withMermaid(
             { text: '安装配置', link: '/zh/setup/quickstart', activeMatch: '/zh/setup/' },
             { text: '架构设计', link: '/zh/architecture/overview', activeMatch: '/zh/architecture/' },
             { text: 'API 参考', link: '/zh/api/core-types', activeMatch: '/zh/api/' },
-            { text: '性能基准', link: '/zh/benchmarks/', activeMatch: '/zh/benchmarks/' },
+            { text: '项目对比', link: '/zh/comparison/', activeMatch: '/zh/comparison/' },
             { text: '参考文献', link: '/zh/references/', activeMatch: '/zh/references/' }
           ],
           sidebar: {
@@ -180,6 +199,14 @@ export default withMermaid(
                 items: [
                   { text: '核心类型', link: '/zh/api/core-types' },
                   { text: '完整参考', link: '/zh/api/reference' }
+                ]
+              }
+            ],
+            '/zh/comparison/': [
+              {
+                text: '项目对比',
+                items: [
+                  { text: '概览', link: '/zh/comparison/' }
                 ]
               }
             ],
@@ -283,14 +310,12 @@ export default withMermaid(
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'Hetero-Paged-Infer' }],
       ['meta', { property: 'og:description', content: 'High-performance LLM inference engine with PagedAttention and Continuous Batching' }],
-      ['meta', { property: 'og:image', content: '/images/og-banner.png' }]
+      ['meta', { property: 'og:image', content: '/images/og-banner.svg' }]
     ],
-
-    // 忽略死链接检查（旧 MkDocs 链接可能暂时失效）
-    ignoreDeadLinks: true,
 
     // Vite 配置
     vite: {
+      plugins: [llmstxt()],
       logLevel: 'info'
     }
   })
