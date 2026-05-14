@@ -257,4 +257,4 @@ RUST_LOG=debug ./hetero-infer --input "Test"
 
 ---
 
-Need help? Check the [FAQ](../development/faq) or [open an issue](https://github.com/LessUp/hetero-paged-infer/issues).
+Need help? [Open an issue](https://github.com/LessUp/hetero-paged-infer/issues) on GitHub.

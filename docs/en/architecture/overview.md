@@ -262,4 +262,4 @@ flowchart LR
 
 ---
 
-Next: [Component Details](components)
+Next: [Design Principles](design)

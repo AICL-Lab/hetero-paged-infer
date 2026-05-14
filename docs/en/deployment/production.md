@@ -435,4 +435,4 @@ Create `/etc/logrotate.d/hetero-infer`:
 
 ---
 
-*For API details, see [API.md](./API). For configuration options, see [CONFIGURATION.md](./CONFIGURATION).*
+*For API details, see [API Reference](../api/core-types). For configuration options, see [Configuration](../setup/configuration).*

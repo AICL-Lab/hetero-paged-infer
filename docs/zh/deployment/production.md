@@ -435,4 +435,4 @@ sudo tar czf hetero-infer-config-$(date +%Y%m%d).tar.gz \
 
 ---
 
-*API 详情见 [API.md](./API)。配置选项见 [CONFIGURATION.md](./CONFIGURATION)。*
+*API 详情见 [API 参考](../api/core-types)。配置选项见 [配置页面](../setup/configuration)。*

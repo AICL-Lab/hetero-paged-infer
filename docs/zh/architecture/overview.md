@@ -262,4 +262,4 @@ flowchart LR
 
 ---
 
-下一步：[组件详情](components)
+下一步：[设计原则](design)

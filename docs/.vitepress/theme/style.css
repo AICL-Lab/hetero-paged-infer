@@ -1,113 +1,402 @@
-/* ============================================================
- * Hetero-Paged-Infer — Custom VitePress Theme Styles
- * Design: Teal Efficiency × Amber Intelligence × Violet AI
- * ============================================================ */
+/**
+ * Hetero-Paged-Infer — VitePress Custom Styles
+ * Design: Clean & Modern (inspired by kimi-cli)
+ *
+ * 注：尽量使用 CSS 特异性而非 !important
+ * 只在必须覆盖 VitePress 内联样式时使用 !important
+ */
 
-/* ── Brand Colors ─────────────────────────────────────────── */
+/* ============================================================
+   CSS Variables
+   ============================================================ */
 
 :root {
-  /* 品牌色 - Teal Efficiency */
+  /* Brand Colors - Teal Efficiency */
   --vp-c-brand-1: #14b8a6;
   --vp-c-brand-2: #2dd4bf;
   --vp-c-brand-3: #5eead4;
   --vp-c-brand-soft: rgba(20, 184, 166, 0.14);
   --vp-c-brand-dimm: rgba(20, 184, 166, 0.08);
 
-  /* 强调色 - Amber Intelligence */
+  /* Accent Colors */
   --accent-amber: #f59e0b;
   --accent-amber-light: #fbbf24;
-  --accent-amber-soft: rgba(245, 158, 11, 0.14);
-
-  /* 辅助色 - Violet AI */
   --accent-violet: #8b5cf6;
   --accent-violet-light: #a78bfa;
-  --accent-violet-soft: rgba(139, 92, 246, 0.14);
-
-  /* 成功色 - Green */
   --accent-green: #22c55e;
-  --accent-green-soft: rgba(34, 197, 94, 0.14);
 
-  /* 危险色 - Red */
-  --accent-red: #ef4444;
-  --accent-red-soft: rgba(239, 68, 68, 0.14);
+  /* Background Colors */
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f6f8fa;
+  --vp-c-bg-soft: #f6f8fa;
 
-  /* 自定义间距 */
+  /* Text Colors */
+  --vp-c-text-1: #24292f;
+  --vp-c-text-2: #57606a;
+  --vp-c-text-3: #8b949e;
+
+  /* Border Colors */
+  --vp-c-border: #d0d7de;
+  --vp-c-divider: #d0d7de;
+  --vp-c-gutter: #d0d7de;
+
+  /* Hero Section - Clean style */
+  --vp-home-hero-name-color: #14b8a6;
+  --vp-home-hero-name-background: transparent;
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
+
+  /* Custom Spacing */
   --spacing-xs: 8px;
   --spacing-sm: 12px;
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
-  --spacing-2xl: 48px;
 
-  /* 圆角 */
+  /* Custom Border Radius */
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-full: 9999px;
 
-  /* Hero 渐变 */
-  --hero-gradient: linear-gradient(135deg, #14b8a6 0%, #8b5cf6 50%, #f59e0b 100%);
-
-  /* 阴影 */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
 }
 
-/* ── Dark Mode ────────────────────────────────────────────── */
+/* ============================================================
+   Dark Mode Variables
+   ============================================================ */
 
 .dark {
-  --vp-c-bg: #0c0f14;
-  --vp-c-bg-alt: #12161c;
-  --vp-c-bg-soft: #1a1f28;
-  --vp-c-mute: #1a1f28;
-  --vp-c-text-1: #e5e7eb;
-  --vp-c-text-2: #9ca3af;
-  --vp-c-text-3: #6b7280;
-  --vp-c-border: #2a303c;
-  --vp-c-gutter: #1a1f28;
-  --vp-c-sponsor: #f59e0b;
+  --vp-c-brand-1: #2dd4bf;
+  --vp-c-brand-2: #14b8a6;
+  --vp-c-brand-3: #5eead4;
+  --vp-c-brand-soft: rgba(20, 184, 166, 0.16);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  --vp-c-bg: #0d1117;
+  --vp-c-bg-alt: #161b22;
+  --vp-c-bg-soft: #21262d;
+
+  --vp-c-text-1: #c9d1d9;
+  --vp-c-text-2: #8b949e;
+  --vp-c-text-3: #6e7681;
+
+  --vp-c-border: #30363d;
+  --vp-c-divider: #30363d;
+  --vp-c-gutter: #30363d;
 }
 
-/* ── 渐变文字 ─────────────────────────────────────────────── */
+/* ============================================================
+   Navigation Styling
+   ============================================================ */
 
-.hero-gradient-text {
-  background: var(--hero-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.VPNav {
+  background: var(--vp-c-bg);
+  border-bottom: 1px solid var(--vp-c-border);
 }
 
-/* ── Hero 首页布局 ─────────────────────────────────────────── */
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .button {
+  font-weight: 500;
+  font-size: 14px;
+}
 
-/* 统计卡片 */
+.VPNavBarMenuLink.active,
+.VPNavBarMenuGroup.open .button {
+  color: var(--vp-c-brand-1);
+}
+
+/* ============================================================
+   Sidebar Styling
+   ============================================================ */
+
+.VPSidebar {
+  padding: var(--spacing-lg) var(--spacing-md) 96px;
+}
+
+.VPSidebarGroup {
+  margin-bottom: var(--spacing-md);
+}
+
+.VPSidebarGroup .title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vp-c-text-3);
+  padding: var(--spacing-sm) 14px;
+}
+
+.VPSidebarItem .text {
+  font-size: 14px;
+  padding: var(--spacing-xs) 14px;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.VPSidebarItem .text:hover {
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-brand-1);
+}
+
+.VPSidebarItem.is-active .text {
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+  font-weight: 500;
+}
+
+/* ============================================================
+   Content Styling
+   ============================================================ */
+
+.VPDoc {
+  padding: var(--spacing-xl) var(--spacing-lg) 96px;
+}
+
+.VPDoc .content {
+  max-width: 720px;
+}
+
+.VPDoc h1 {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-bottom: var(--spacing-lg);
+}
+
+.VPDoc h2 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-top: 48px;
+  margin-bottom: 20px;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.VPDoc h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: var(--spacing-xl);
+  margin-bottom: var(--spacing-md);
+}
+
+.VPDoc p {
+  font-size: 16px;
+  line-height: 1.8;
+  margin-bottom: var(--spacing-md);
+}
+
+.VPDoc a {
+  color: var(--vp-c-brand-1);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--transition-fast);
+}
+
+.VPDoc a:hover {
+  border-bottom-color: var(--vp-c-brand-1);
+}
+
+.VPDoc code {
+  font-size: 14px;
+  padding: 2px var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+}
+
+.VPDoc pre code {
+  font-size: 14px;
+  padding: 0;
+  background: transparent;
+}
+
+/* Custom Blocks */
+.VPDoc .custom-block {
+  border-radius: var(--radius-lg);
+  padding: 20px var(--spacing-lg);
+  margin: var(--spacing-lg) 0;
+}
+
+.VPDoc .custom-block.info {
+  background: var(--vp-c-bg-soft);
+  border-left: 4px solid var(--vp-c-brand-1);
+}
+
+.VPDoc .custom-block.tip {
+  background: var(--vp-c-brand-soft);
+  border-left: 4px solid var(--vp-c-brand-1);
+}
+
+.VPDoc .custom-block.warning {
+  background: rgba(245, 158, 11, 0.14);
+  border-left: 4px solid var(--accent-amber);
+}
+
+.VPDoc .custom-block.danger {
+  background: rgba(239, 68, 68, 0.14);
+  border-left: 4px solid #ef4444;
+}
+
+/* ============================================================
+   Table Styling
+   ============================================================ */
+
+.VPDoc table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: var(--spacing-lg) 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--vp-c-border);
+}
+
+.VPDoc th {
+  background: var(--vp-c-bg-soft);
+  font-weight: 600;
+  text-align: left;
+  padding: 14px 18px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
+.VPDoc td {
+  padding: var(--spacing-sm) 18px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
+.VPDoc tr:last-child td {
+  border-bottom: none;
+}
+
+.VPDoc tr:hover td {
+  background: var(--vp-c-bg-soft);
+}
+
+/* ============================================================
+   Footer
+   ============================================================ */
+
+.VPFooter {
+  padding: var(--spacing-xl) var(--spacing-lg);
+  background: var(--vp-c-bg-alt);
+}
+
+.VPFooter .message,
+.VPFooter .copyright {
+  font-size: 14px;
+  color: var(--vp-c-text-3);
+}
+
+/* ============================================================
+   Custom Homepage Styles
+   ============================================================ */
+
+/* Homepage Header */
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md) 0;
+  margin-bottom: var(--spacing-xl);
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
+.home-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.home-logo {
+  width: 36px;
+  height: 36px;
+  background: var(--vp-c-brand-1);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.home-title {
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--vp-c-text-1);
+}
+
+.home-subtitle {
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  margin-left: var(--spacing-xs);
+}
+
+.home-nav {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: 14px;
+}
+
+.home-nav a {
+  color: var(--vp-c-text-2);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.home-nav a:hover {
+  color: var(--vp-c-brand-1);
+}
+
+/* Intro + Stats */
+.home-intro-row {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.home-intro {
+  flex: 1;
+  color: var(--vp-c-text-2);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
 .home-stats {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: 13px;
+  color: var(--vp-c-text-2);
+  flex-shrink: 0;
+}
+
+.home-stats strong {
+  color: var(--vp-c-brand-1);
+}
+
+/* Stats Grid */
+.stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--spacing-md);
-  margin: var(--spacing-2xl) auto;
-  max-width: 800px;
+  margin: var(--spacing-xl) 0;
 }
 
 .stat-card {
   text-align: center;
-  padding: var(--spacing-lg) var(--spacing-md);
+  padding: var(--spacing-lg);
   background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-border);
-  border-radius: var(--radius-lg);
-  transition: all 0.3s ease;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-normal);
 }
 
 .stat-card:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  border-color: var(--vp-c-brand-1);
 }
 
 .stat-card.teal { border-top: 3px solid var(--vp-c-brand-1); }
@@ -118,8 +407,7 @@
 .stat-value {
   font-size: 2rem;
   font-weight: 800;
-  line-height: 1.2;
-  margin-bottom: var(--spacing-xs);
+  margin-bottom: 4px;
 }
 
 .stat-card.teal .stat-value { color: var(--vp-c-brand-1); }
@@ -128,206 +416,131 @@
 .stat-card.green .stat-value { color: var(--accent-green); }
 
 .stat-label {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--vp-c-text-2);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 500;
 }
 
-/* 功能卡片网格 */
-.features-grid {
+/* Feature Map */
+.feature-map {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-lg);
-  margin: var(--spacing-2xl) auto;
-  max-width: 1100px;
+  gap: var(--spacing-md);
+  margin: var(--spacing-xl) 0;
 }
 
 .feature-card {
-  padding: var(--spacing-xl);
-  background: var(--vp-c-bg-soft);
+  background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-border);
-  border-radius: var(--radius-xl);
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.feature-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--hero-gradient);
-  opacity: 0;
-  transition: opacity 0.3s ease;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 .feature-card:hover {
-  transform: translateY(-4px);
   border-color: var(--vp-c-brand-1);
-  box-shadow: var(--shadow-xl);
+  box-shadow: 0 4px 12px rgba(20, 184, 166, 0.1);
 }
 
-.feature-card:hover::before {
-  opacity: 1;
-}
-
-.feature-icon {
-  width: 48px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--vp-c-brand-dimm);
-  border-radius: var(--radius-lg);
-  margin-bottom: var(--spacing-md);
-  font-size: 1.5rem;
-}
-
-.feature-title {
-  font-size: 1.1rem;
+.feature-card-title {
   font-weight: 600;
-  margin-bottom: var(--spacing-sm);
+  font-size: 15px;
   color: var(--vp-c-text-1);
+  margin-bottom: var(--spacing-sm);
 }
 
-.feature-desc {
-  font-size: 0.9rem;
+.feature-card-desc {
+  font-size: 13px;
   color: var(--vp-c-text-2);
+  line-height: 1.6;
+  margin-bottom: var(--spacing-sm);
+}
+
+.feature-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.feature-tag {
+  font-size: 12px;
+  color: var(--vp-c-brand-1);
+  text-decoration: none;
+  padding: 3px 8px;
+  background: var(--vp-c-brand-soft);
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.feature-tag:hover {
+  background: var(--vp-c-brand-1);
+  color: white;
+}
+
+/* Quick Start */
+.quick-start {
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  margin: var(--spacing-xl) 0;
+}
+
+.quick-start-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--vp-c-text-1);
+  margin-bottom: var(--spacing-md);
+}
+
+.quick-start-content {
+  color: var(--vp-c-text-2);
+  font-size: 13px;
   line-height: 1.6;
 }
 
-/* 性能对比 */
-.perf-comparison {
-  max-width: 800px;
-  margin: var(--spacing-2xl) auto;
-  display: grid;
-  gap: var(--spacing-md);
-}
-
-.perf-item {
-  display: grid;
-  grid-template-columns: 160px 1fr auto;
-  align-items: center;
-  gap: var(--spacing-lg);
-  padding: var(--spacing-md) var(--spacing-lg);
+/* Command Block */
+.command-block {
   background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-border);
-  border-radius: var(--radius-lg);
-  transition: all 0.3s ease;
-}
-
-.perf-item.highlight {
-  background: var(--vp-c-brand-dimm);
-  border-color: var(--vp-c-brand-1);
-}
-
-.perf-name {
-  font-weight: 600;
-  color: var(--vp-c-text-1);
-}
-
-.perf-bar-container {
-  height: 10px;
-  background: var(--vp-c-mute);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-}
-
-.perf-bar {
-  height: 100%;
-  border-radius: var(--radius-full);
-  transition: width 1s ease-out;
-}
-
-.perf-bar.waste { background: linear-gradient(to right, #ef4444, #f87171); }
-.perf-bar.medium { background: linear-gradient(to right, var(--accent-amber), var(--accent-amber-light)); }
-.perf-bar.good { background: linear-gradient(to right, var(--vp-c-brand-1), var(--vp-c-brand-2)); }
-
-.perf-value {
-  font-family: var(--vp-font-family-mono);
-  font-size: 0.85rem;
-  color: var(--vp-c-text-2);
-  white-space: nowrap;
-}
-
-.perf-item.highlight .perf-value {
-  color: var(--vp-c-brand-1);
-  font-weight: 600;
-}
-
-/* 终端 */
-.terminal {
-  background: var(--vp-c-bg-alt);
-  border: 1px solid var(--vp-c-border);
-  border-radius: var(--radius-xl);
-  overflow: hidden;
-  box-shadow: var(--shadow-xl);
-  max-width: 700px;
-  margin: var(--spacing-2xl) auto;
-}
-
-.terminal-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
+  border-radius: var(--radius-sm);
   padding: var(--spacing-sm) var(--spacing-md);
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid var(--vp-c-border);
+  margin: var(--spacing-sm) 0;
 }
 
-.terminal-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
+.command-block code {
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--vp-c-brand-1);
+  background: transparent;
+  padding: 0;
 }
 
-.terminal-dot.red { background: #ef4444; }
-.terminal-dot.yellow { background: #f59e0b; }
-.terminal-dot.green { background: #22c55e; }
-
-.terminal-title {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: var(--vp-c-text-3);
-}
-
-.terminal-body {
-  padding: var(--spacing-lg);
-  font-family: var(--vp-font-family-mono);
-  font-size: 0.85rem;
-  line-height: 1.8;
-}
-
-/* 文档导航卡片 */
+/* Docs Grid */
 .docs-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-lg);
-  max-width: 1000px;
-  margin: var(--spacing-2xl) auto;
+  gap: var(--spacing-md);
+  margin: var(--spacing-xl) 0;
 }
 
 .doc-card {
   display: flex;
   flex-direction: column;
   padding: var(--spacing-lg);
-  background: var(--vp-c-bg-soft);
+  background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   text-decoration: none;
   color: inherit;
-  transition: all 0.3s ease;
+  transition: all var(--transition-normal);
 }
 
 .doc-card:hover {
-  transform: translateY(-4px);
   border-color: var(--vp-c-brand-1);
-  background: var(--vp-c-brand-dimm);
+  transform: translateY(-2px);
 }
 
 .doc-icon {
@@ -337,165 +550,96 @@
 
 .doc-title {
   font-weight: 600;
-  font-size: 1rem;
-  margin-bottom: var(--spacing-xs);
+  font-size: 14px;
+  margin-bottom: 4px;
   color: var(--vp-c-text-1);
 }
 
 .doc-desc {
   color: var(--vp-c-text-2);
-  font-size: 0.85rem;
-  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.doc-arrow {
-  color: var(--vp-c-brand-1);
-  margin-top: var(--spacing-sm);
-  transition: transform 0.3s;
-}
-
-.doc-card:hover .doc-arrow {
-  transform: translateX(4px);
-}
-
-/* ── 引用卡片 ─────────────────────────────────────────────── */
-
-.cite-card {
-  padding: var(--spacing-lg);
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-border);
-  border-left: 4px solid var(--accent-violet);
-  border-radius: var(--radius-md);
-  margin: var(--spacing-lg) 0;
-}
-
-.cite-card .cite-title {
-  font-weight: 700;
-  font-size: 1rem;
-  color: var(--vp-c-text-1);
-  margin-bottom: var(--spacing-xs);
-}
-
-.cite-card .cite-authors {
-  font-style: italic;
-  color: var(--vp-c-text-2);
-  font-size: 0.9rem;
-  margin-bottom: var(--spacing-sm);
-}
-
-.cite-card .cite-links {
-  display: flex;
-  gap: var(--spacing-md);
-  margin-bottom: var(--spacing-md);
-}
-
-.cite-card .cite-links a {
-  color: var(--accent-violet);
-  font-size: 0.85rem;
-  font-weight: 500;
-  text-decoration: none;
-  transition: color 0.2s;
-}
-
-.cite-card .cite-links a:hover {
-  color: var(--accent-violet-light);
-}
-
-/* ── 通用自定义容器 ────────────────────────────────────────── */
-
-.custom-block.tip {
-  border-color: var(--vp-c-brand-1);
-}
-
-.custom-block.warning {
-  border-color: var(--accent-amber);
-}
-
-.custom-block.danger {
-  border-color: var(--accent-red);
-}
-
-/* ── 响应式设计 ────────────────────────────────────────────── */
+/* ============================================================
+   Responsive Design
+   ============================================================ */
 
 @media (max-width: 959px) {
-  .home-stats {
+  .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  .features-grid {
+
+  .feature-map {
     grid-template-columns: repeat(2, 1fr);
   }
+
   .docs-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .home-intro-row {
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .VPDoc h1 {
+    font-size: 32px;
+  }
+
+  .VPDoc h2 {
+    font-size: 24px;
   }
 }
 
 @media (max-width: 639px) {
-  .home-stats {
+  .stats-grid {
     grid-template-columns: 1fr 1fr;
   }
-  .features-grid {
+
+  .feature-map {
     grid-template-columns: 1fr;
   }
+
   .docs-grid {
     grid-template-columns: 1fr;
   }
-  .perf-item {
-    grid-template-columns: 1fr;
+
+  .home-header {
+    flex-direction: column;
+    align-items: flex-start;
     gap: var(--spacing-sm);
+  }
+
+  .home-nav {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
   }
 }
 
-/* ── VitePress 默认覆盖 ────────────────────────────────────── */
+/* ============================================================
+   Search Bar
+   ============================================================ */
 
-/* 导航栏品牌色 */
-.VPNav .VPNavBar .title {
-  color: var(--vp-c-brand-1);
+.VPNavBarSearch {
+  display: flex;
+  justify-content: flex-end;
 }
 
-/* 侧边栏活动项 */
-.VPSidebar .is-active > .link {
-  color: var(--vp-c-brand-1);
+.VPLocalSearchBox {
+  backdrop-filter: blur(20px);
 }
 
-/* 代码块主题 */
-.vp-code span {
-  color: inherit;
+.VPLocalSearchBox .backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
 }
 
-/* Hero Action 按钮 */
-.VPButton.brand {
-  background: var(--vp-c-brand-1);
-  color: #0c0f14;
-}
-
-.VPButton.brand:hover {
-  background: var(--vp-c-brand-2);
-}
-
-/* 搜索框 */
-.VPLocalSearchBox .search-input {
-  border-color: var(--vp-c-border);
-}
-
-/* 表格美化 */
-.vp-doc table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: var(--spacing-lg) 0;
-}
-
-.vp-doc th {
-  background: var(--vp-c-bg-soft);
-  font-weight: 600;
-  text-align: left;
-}
-
-.vp-doc th,
-.vp-doc td {
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px solid var(--vp-c-border);
-}
-
-.vp-doc tr:hover td {
-  background: var(--vp-c-brand-dimm);
+.VPLocalSearchBox .shell {
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
