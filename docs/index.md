@@ -3,32 +3,40 @@ layout: home
 ---
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useData } from 'vitepress'
+
+const { base } = useData()
 
 // 自动检测浏览器语言并跳转
 onMounted(() => {
   const savedLang = localStorage.getItem('prefer-language')
   if (savedLang) {
-    window.location.href = savedLang === 'zh' ? '/zh/' : '/en/'
+    window.location.href = `${base.value}${savedLang === 'zh' ? 'zh/' : 'en/'}`
     return
   }
 
   const browserLang = navigator.language.toLowerCase()
   if (browserLang.startsWith('zh')) {
-    window.location.href = '/zh/'
+    window.location.href = `${base.value}zh/`
   } else {
-    window.location.href = '/en/'
+    window.location.href = `${base.value}en/`
   }
 })
+
+// 语言选择点击处理
+const goToLang = (lang) => {
+  window.location.href = `${base.value}${lang}/`
+}
 </script>
 
 <div class="language-select">
-  <div class="language-card" onclick="window.location.href='/en/'">
+  <div class="language-card" @click="goToLang('en')">
     <div class="language-icon">🇺🇸</div>
     <div class="language-name">English</div>
     <div class="language-desc">View documentation in English</div>
   </div>
-  <div class="language-card" onclick="window.location.href='/zh/'">
+  <div class="language-card" @click="goToLang('zh')">
     <div class="language-icon">🇨🇳</div>
     <div class="language-name">简体中文</div>
     <div class="language-desc">查看中文文档</div>

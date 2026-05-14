@@ -122,12 +122,12 @@ export default withMermaid(
             ]
           },
           editLink: {
-            pattern: 'https://github.com/LessUp/hetero-paged-infer/edit/master/docs/:path',
+            pattern: 'https://github.com/AICL-Lab/hetero-paged-infer/edit/master/docs/:path',
             text: 'Edit this page on GitHub'
           },
           footer: {
-            message: 'Released under the <a href="https://github.com/LessUp/hetero-paged-infer/blob/master/LICENSE">MIT License</a>.',
-            copyright: '© 2024-present LessUp'
+            message: 'Released under the <a href="https://github.com/AICL-Lab/hetero-paged-infer/blob/master/LICENSE">MIT License</a>.',
+            copyright: '© 2024-present AICL-Lab'
           },
           docFooter: {
             prev: 'Previous',
@@ -248,12 +248,12 @@ export default withMermaid(
             ]
           },
           editLink: {
-            pattern: 'https://github.com/LessUp/hetero-paged-infer/edit/master/docs/:path',
+            pattern: 'https://github.com/AICL-Lab/hetero-paged-infer/edit/master/docs/:path',
             text: '在 GitHub 上编辑此页'
           },
           footer: {
-            message: '基于 <a href="https://github.com/LessUp/hetero-paged-infer/blob/master/LICENSE">MIT 许可证</a> 发布。',
-            copyright: '© 2024-present LessUp'
+            message: '基于 <a href="https://github.com/AICL-Lab/hetero-paged-infer/blob/master/LICENSE">MIT 许可证</a> 发布。',
+            copyright: '© 2024-present AICL-Lab'
           },
           docFooter: {
             prev: '上一页',
@@ -291,7 +291,7 @@ export default withMermaid(
       siteTitle: 'Hetero-Paged-Infer',
 
       socialLinks: [
-        { icon: 'github', link: 'https://github.com/LessUp/hetero-paged-infer' }
+        { icon: 'github', link: 'https://github.com/AICL-Lab/hetero-paged-infer' }
       ]
     },
 
