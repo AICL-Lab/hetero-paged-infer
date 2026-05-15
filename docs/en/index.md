@@ -10,22 +10,22 @@ A flagship whitepaper platform for a Rust-first LLM inference engine focused on 
 ## Start here
 
 <div class="docs-grid">
-  <a href="/hetero-paged-infer/en/whitepaper/" class="doc-card">
+  <a href="/en/whitepaper/" class="doc-card">
     <div class="doc-icon">📄</div>
     <div class="doc-title">Whitepaper</div>
     <div class="doc-desc">Read the problem framing, design positioning, evidence, and roadmap.</div>
   </a>
-  <a href="/hetero-paged-infer/en/architecture/overview" class="doc-card">
+  <a href="/en/architecture/overview" class="doc-card">
     <div class="doc-icon">🏗️</div>
     <div class="doc-title">Architecture</div>
     <div class="doc-desc">Inspect the execution model, scheduler, and KV cache design.</div>
   </a>
-  <a href="/hetero-paged-infer/en/benchmarks/" class="doc-card">
+  <a href="/en/benchmarks/" class="doc-card">
     <div class="doc-icon">📊</div>
     <div class="doc-title">Benchmarks</div>
     <div class="doc-desc">Review memory efficiency, throughput, and latency evidence.</div>
   </a>
-  <a href="/hetero-paged-infer/en/references/" class="doc-card">
+  <a href="/en/references/" class="doc-card">
     <div class="doc-icon">📚</div>
     <div class="doc-title">References</div>
     <div class="doc-desc">Follow the papers and related projects behind the design.</div>
