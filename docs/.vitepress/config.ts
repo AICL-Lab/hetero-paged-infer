@@ -14,37 +14,6 @@ const base = rawBase
 
 const faviconHref = `${base}images/favicon.svg`
 const ogImageHref = `${base}images/og-banner.svg`
-const themeAwareFigureScript = `;(() => {
-  const selector = 'img[data-theme-aware-image]'
-  const syncImage = (img) => {
-    const nextSrc = document.documentElement.classList.contains('dark')
-      ? img.getAttribute('data-theme-src-dark')
-      : img.getAttribute('data-theme-src-light')
-    if (nextSrc && img.getAttribute('src') !== nextSrc) {
-      img.setAttribute('src', nextSrc)
-    }
-  }
-  const syncAll = (root = document) => {
-    root.querySelectorAll?.(selector).forEach(syncImage)
-  }
-  new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (!(node instanceof Element)) continue
-        if (node.matches?.(selector)) {
-          syncImage(node)
-        }
-        syncAll(node)
-      }
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true })
-  new MutationObserver(() => syncAll()).observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['class']
-  })
-  syncAll()
-})()`
-
 export default withMermaid(
   defineConfig({
     base,
@@ -359,8 +328,7 @@ export default withMermaid(
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'Hetero-Paged-Infer' }],
       ['meta', { property: 'og:description', content: 'High-performance LLM inference engine with PagedAttention and Continuous Batching' }],
-      ['meta', { property: 'og:image', content: ogImageHref }],
-      ['script', { id: 'theme-aware-figure-src' }, themeAwareFigureScript]
+      ['meta', { property: 'og:image', content: ogImageHref }]
     ],
 
     // Vite 配置
