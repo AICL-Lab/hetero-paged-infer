@@ -37,13 +37,21 @@ export default withMermaid(
         link: '/en/',
         themeConfig: {
           nav: [
-            { text: 'Setup', link: '/en/setup/quickstart', activeMatch: '/en/setup/' },
+            { text: 'Whitepaper', link: '/en/whitepaper/', activeMatch: '/en/whitepaper/' },
             { text: 'Architecture', link: '/en/architecture/overview', activeMatch: '/en/architecture/' },
-            { text: 'API', link: '/en/api/core-types', activeMatch: '/en/api/' },
+            { text: 'Benchmarks', link: '/en/benchmarks/', activeMatch: '/en/benchmarks/' },
             { text: 'Comparison', link: '/en/comparison/', activeMatch: '/en/comparison/' },
             { text: 'References', link: '/en/references/', activeMatch: '/en/references/' }
           ],
           sidebar: {
+            '/en/whitepaper/': [
+              {
+                text: 'Whitepaper',
+                items: [
+                  { text: 'Overview', link: '/en/whitepaper/' }
+                ]
+              }
+            ],
             '/en/setup/': [
               {
                 text: 'Setup',
@@ -163,13 +171,21 @@ export default withMermaid(
         link: '/zh/',
         themeConfig: {
           nav: [
-            { text: '安装配置', link: '/zh/setup/quickstart', activeMatch: '/zh/setup/' },
-            { text: '架构设计', link: '/zh/architecture/overview', activeMatch: '/zh/architecture/' },
-            { text: 'API 参考', link: '/zh/api/core-types', activeMatch: '/zh/api/' },
-            { text: '项目对比', link: '/zh/comparison/', activeMatch: '/zh/comparison/' },
-            { text: '参考文献', link: '/zh/references/', activeMatch: '/zh/references/' }
+            { text: '白皮书', link: '/zh/whitepaper/', activeMatch: '/zh/whitepaper/' },
+            { text: '架构', link: '/zh/architecture/overview', activeMatch: '/zh/architecture/' },
+            { text: '基准', link: '/zh/benchmarks/', activeMatch: '/zh/benchmarks/' },
+            { text: '对比', link: '/zh/comparison/', activeMatch: '/zh/comparison/' },
+            { text: '参考', link: '/zh/references/', activeMatch: '/zh/references/' }
           ],
           sidebar: {
+            '/zh/whitepaper/': [
+              {
+                text: '白皮书',
+                items: [
+                  { text: '概览', link: '/zh/whitepaper/' }
+                ]
+              }
+            ],
             '/zh/setup/': [
               {
                 text: '安装配置',
@@ -204,7 +220,7 @@ export default withMermaid(
             ],
             '/zh/comparison/': [
               {
-                text: '项目对比',
+                text: '对比',
                 items: [
                   { text: '概览', link: '/zh/comparison/' }
                 ]
@@ -212,7 +228,7 @@ export default withMermaid(
             ],
             '/zh/benchmarks/': [
               {
-                text: '性能基准',
+                text: '基准',
                 items: [
                   { text: '内存效率', link: '/zh/benchmarks/memory-efficiency' },
                   { text: '吞吐量', link: '/zh/benchmarks/throughput' },
@@ -222,7 +238,7 @@ export default withMermaid(
             ],
             '/zh/references/': [
               {
-                text: '参考文献',
+                text: '参考',
                 items: [
                   { text: '论文引用', link: '/zh/references/papers' },
                   { text: '项目引用', link: '/zh/references/projects' }
