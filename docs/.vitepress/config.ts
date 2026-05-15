@@ -12,6 +12,9 @@ const base = rawBase
     : `/${rawBase}/`
   : '/'
 
+const faviconHref = `${base}images/favicon.svg`
+const ogImageHref = `${base}images/og-banner.svg`
+
 export default withMermaid(
   defineConfig({
     base,
@@ -321,12 +324,12 @@ export default withMermaid(
 
     // 构建优化
     head: [
-      ['link', { rel: 'icon', href: '/images/favicon.svg', type: 'image/svg+xml' }],
+      ['link', { rel: 'icon', href: faviconHref, type: 'image/svg+xml' }],
       ['meta', { name: 'theme-color', content: '#14b8a6' }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'Hetero-Paged-Infer' }],
       ['meta', { property: 'og:description', content: 'High-performance LLM inference engine with PagedAttention and Continuous Batching' }],
-      ['meta', { property: 'og:image', content: '/images/og-banner.svg' }]
+      ['meta', { property: 'og:image', content: ogImageHref }]
     ],
 
     // Vite 配置
