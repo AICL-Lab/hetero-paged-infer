@@ -19,8 +19,16 @@ const resolveSrc = (src: string) => {
 
 <template>
   <figure class="theme-aware-figure">
-    <img class="theme-aware-figure__image theme-aware-figure__image--light" :src="resolveSrc(light)" :alt="alt" />
-    <img class="theme-aware-figure__image theme-aware-figure__image--dark" :src="resolveSrc(dark)" :alt="alt" />
+    <img
+      class="theme-aware-figure__image"
+      data-theme-aware-image
+      :data-theme-src-light="resolveSrc(light)"
+      :data-theme-src-dark="resolveSrc(dark)"
+      :alt="alt"
+    />
+    <noscript>
+      <img class="theme-aware-figure__image" :src="resolveSrc(light)" :alt="alt" />
+    </noscript>
     <figcaption v-if="caption">{{ caption }}</figcaption>
   </figure>
 </template>
