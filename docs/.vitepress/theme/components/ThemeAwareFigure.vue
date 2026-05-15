@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useData, withBase } from 'vitepress'
+import { withBase } from 'vitepress'
 
 const props = defineProps<{
   light: string
@@ -9,8 +8,6 @@ const props = defineProps<{
   caption?: string
 }>()
 
-const { isDark } = useData()
-
 const resolveSrc = (src: string) => {
   if (/^(?:[a-z]+:|\/\/|#)/i.test(src)) {
     return src
@@ -18,13 +15,12 @@ const resolveSrc = (src: string) => {
 
   return src.startsWith('/') ? withBase(src) : src
 }
-
-const src = computed(() => resolveSrc(isDark.value ? props.dark : props.light))
 </script>
 
 <template>
   <figure class="theme-aware-figure">
-    <img :src="src" :alt="alt" />
+    <img class="theme-aware-figure__image theme-aware-figure__image--light" :src="resolveSrc(light)" :alt="alt" />
+    <img class="theme-aware-figure__image theme-aware-figure__image--dark" :src="resolveSrc(dark)" :alt="alt" />
     <figcaption v-if="caption">{{ caption }}</figcaption>
   </figure>
 </template>
