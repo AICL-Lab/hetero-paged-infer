@@ -10,22 +10,22 @@ title: Hetero-Paged-Infer 技术白皮书
 ## 建议入口
 
 <div class="docs-grid">
-  <a href="/zh/whitepaper/" class="doc-card">
+  <a href="./whitepaper/" class="doc-card">
     <div class="doc-icon">📄</div>
     <div class="doc-title">白皮书</div>
     <div class="doc-desc">从问题定义、设计定位、证据与路线图开始理解整个引擎。</div>
   </a>
-  <a href="/zh/architecture/overview" class="doc-card">
+  <a href="./architecture/overview" class="doc-card">
     <div class="doc-icon">🏗️</div>
     <div class="doc-title">架构</div>
     <div class="doc-desc">查看执行模型、调度器与 KV Cache 设计拆解。</div>
   </a>
-  <a href="/zh/benchmarks/" class="doc-card">
+  <a href="./benchmarks/" class="doc-card">
     <div class="doc-icon">📊</div>
     <div class="doc-title">基准</div>
     <div class="doc-desc">查看内存效率、吞吐量与延迟等性能证据。</div>
   </a>
-  <a href="/zh/references/" class="doc-card">
+  <a href="./references/" class="doc-card">
     <div class="doc-icon">📚</div>
     <div class="doc-title">参考</div>
     <div class="doc-desc">追溯设计依据、论文来源与相关项目。</div>
