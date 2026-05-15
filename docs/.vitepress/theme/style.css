@@ -579,7 +579,7 @@
   gap: var(--spacing-md);
 }
 
-.flagship-eyebrow {
+.VPDoc .flagship-hero .flagship-eyebrow {
   margin: 0;
   font-size: 13px;
   font-weight: 700;
@@ -588,7 +588,7 @@
   color: var(--vp-c-brand-1);
 }
 
-.flagship-title {
+.VPDoc .flagship-hero .flagship-title {
   margin: 0;
   max-width: 12ch;
   font-size: clamp(2.75rem, 6vw, 4.5rem);
@@ -596,7 +596,7 @@
   letter-spacing: -0.04em;
 }
 
-.flagship-summary {
+.VPDoc .flagship-hero .flagship-summary {
   margin: 0;
   max-width: 720px;
   font-size: 18px;
@@ -698,7 +698,7 @@
   color: var(--vp-c-text-1);
 }
 
-.proof-detail {
+.VPDoc .proof-card .proof-detail {
   margin: var(--spacing-xs) 0 0;
   font-size: 14px;
   line-height: 1.65;
@@ -748,11 +748,23 @@
   margin: var(--spacing-xl) 0;
 }
 
-.theme-aware-figure img {
+.theme-aware-figure__image {
   width: 100%;
   border: 1px solid var(--vp-c-border);
   border-radius: var(--radius-xl);
   background: var(--vp-c-bg-soft);
+}
+
+.theme-aware-figure__image--dark {
+  display: none;
+}
+
+.dark .theme-aware-figure__image--light {
+  display: none;
+}
+
+.dark .theme-aware-figure__image--dark {
+  display: block;
 }
 
 .theme-aware-figure figcaption {
@@ -784,7 +796,7 @@
   box-shadow: var(--surface-shadow-hover);
 }
 
-.reference-kind {
+.VPDoc .reference-entry .reference-kind {
   margin-bottom: var(--spacing-xs);
   font-size: 12px;
   font-weight: 700;
