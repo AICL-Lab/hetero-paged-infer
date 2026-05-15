@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { withBase } from 'vitepress'
+import { VPLink } from 'vitepress/theme'
 
 defineProps<{
   eyebrow: string
@@ -10,14 +10,6 @@ defineProps<{
   secondaryText: string
   secondaryHref: string
 }>()
-
-const resolveHref = (href: string) => {
-  if (/^(?:[a-z]+:|\/\/|#)/i.test(href)) {
-    return href
-  }
-
-  return href.startsWith('/') ? withBase(href) : href
-}
 </script>
 
 <template>
@@ -26,8 +18,8 @@ const resolveHref = (href: string) => {
     <h1 class="flagship-title">{{ title }}</h1>
     <p class="flagship-summary">{{ summary }}</p>
     <div class="flagship-actions">
-      <a class="flagship-action brand" :href="resolveHref(primaryHref)">{{ primaryText }}</a>
-      <a class="flagship-action alt" :href="resolveHref(secondaryHref)">{{ secondaryText }}</a>
+      <VPLink class="flagship-action brand" :href="primaryHref" no-icon>{{ primaryText }}</VPLink>
+      <VPLink class="flagship-action alt" :href="secondaryHref" no-icon>{{ secondaryText }}</VPLink>
     </div>
   </section>
 </template>
