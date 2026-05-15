@@ -1,46 +1,19 @@
 ---
 layout: home
+title: Hetero-Paged-Infer
 ---
 
-<script setup>
-import { onMounted, ref } from 'vue'
-import { useData } from 'vitepress'
-
-const { base } = useData()
-
-// 自动检测浏览器语言并跳转
-onMounted(() => {
-  const savedLang = localStorage.getItem('prefer-language')
-  if (savedLang) {
-    window.location.href = `${base.value}${savedLang === 'zh' ? 'zh/' : 'en/'}`
-    return
-  }
-
-  const browserLang = navigator.language.toLowerCase()
-  if (browserLang.startsWith('zh')) {
-    window.location.href = `${base.value}zh/`
-  } else {
-    window.location.href = `${base.value}en/`
-  }
-})
-
-// 语言选择点击处理
-const goToLang = (lang) => {
-  window.location.href = `${base.value}${lang}/`
-}
-</script>
+## Hetero-Paged-Infer
 
 <div class="language-select">
-  <div class="language-card" @click="goToLang('en')">
-    <div class="language-icon">🇺🇸</div>
+  <a class="language-card" href="/hetero-paged-infer/en/">
     <div class="language-name">English</div>
-    <div class="language-desc">View documentation in English</div>
-  </div>
-  <div class="language-card" @click="goToLang('zh')">
-    <div class="language-icon">🇨🇳</div>
+    <div class="language-desc">Flagship whitepaper, architecture guide, benchmarks, references</div>
+  </a>
+  <a class="language-card" href="/hetero-paged-infer/zh/">
     <div class="language-name">简体中文</div>
-    <div class="language-desc">查看中文文档</div>
-  </div>
+    <div class="language-desc">技术白皮书、架构拆解、性能证据、参考资料</div>
+  </a>
 </div>
 
 <style>
@@ -48,7 +21,7 @@ const goToLang = (lang) => {
   display: flex;
   gap: 24px;
   justify-content: center;
-  align-items: center;
+  align-items: stretch;
   min-height: 60vh;
   padding: 48px;
 }
@@ -56,24 +29,20 @@ const goToLang = (lang) => {
 .language-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 12px;
-  padding: 32px 48px;
+  min-width: 280px;
+  padding: 32px 40px;
   background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-border);
   border-radius: 16px;
-  cursor: pointer;
+  text-decoration: none;
   transition: all 0.3s ease;
 }
 
 .language-card:hover {
   transform: translateY(-4px);
   border-color: var(--vp-c-brand-1);
-  box-shadow: var(--shadow-lg);
-}
-
-.language-icon {
-  font-size: 3rem;
+  box-shadow: var(--vp-shadow-3);
 }
 
 .language-name {
@@ -83,7 +52,8 @@ const goToLang = (lang) => {
 }
 
 .language-desc {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
   color: var(--vp-c-text-2);
 }
 
@@ -92,6 +62,10 @@ const goToLang = (lang) => {
     flex-direction: column;
     min-height: auto;
     padding: 24px;
+  }
+
+  .language-card {
+    min-width: 0;
   }
 }
 </style>
