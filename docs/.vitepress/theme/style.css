@@ -755,18 +755,6 @@
   background: var(--vp-c-bg-soft);
 }
 
-.theme-aware-figure__image--dark {
-  display: none;
-}
-
-.dark .theme-aware-figure__image--light {
-  display: none;
-}
-
-.dark .theme-aware-figure__image--dark {
-  display: block;
-}
-
 .theme-aware-figure figcaption {
   margin-top: var(--spacing-sm);
   font-size: 14px;
@@ -887,7 +875,7 @@
     padding-top: var(--spacing-xl);
   }
 
-  .flagship-summary {
+  .VPDoc .flagship-hero .flagship-summary {
     font-size: 16px;
   }
 }
