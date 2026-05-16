@@ -305,7 +305,10 @@ export default withMermaid(
 
     // 全局主题配置
     themeConfig: {
-      logo: '/images/logo.svg',
+      logo: {
+        light: '/images/logo-light.svg',
+        dark: '/images/logo-dark.svg',
+      },
       siteTitle: 'Hetero-Paged-Infer',
 
       socialLinks: [

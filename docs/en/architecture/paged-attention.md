@@ -10,40 +10,12 @@ PagedAttention 借鉴了操作系统的虚拟内存概念：
 2. **按需分配**：仅在需要时分配物理块，避免预分配浪费
 3. **引用计数**：支持 Copy-on-Write，实现高效的序列共享
 
-```mermaid
-flowchart TB
-    subgraph Sequence["序列视图 (逻辑)"]
-        L0["逻辑块 0"]
-        L1["逻辑块 1"]
-        L2["逻辑块 2"]
-    end
-    
-    subgraph PageTable["页表映射"]
-        PT0["0 → 3"]
-        PT1["1 → 7"]
-        PT2["2 → 12"]
-    end
-    
-    subgraph Physical["物理块池"]
-        P0["块 0: free"]
-        P1["块 1: free"]
-        P2["块 2: free"]
-        P3["块 3: ref=1"]
-        P4["块 4: free"]
-        P5["块 5: free"]
-        P6["块 6: free"]
-        P7["块 7: ref=1"]
-        P8["块 8: free"]
-        P9["块 9: free"]
-        P10["块 10: free"]
-        P11["块 11: free"]
-        P12["块 12: ref=1"]
-    end
-    
-    L0 --> PT0 --> P3
-    L1 --> PT1 --> P7
-    L2 --> PT2 --> P12
-```
+<ThemeAwareFigure
+  light="/images/figures/paged-attention-light.svg"
+  dark="/images/figures/paged-attention-dark.svg"
+  alt="PagedAttention logical blocks, page table, and physical block pool"
+  caption="PagedAttention keeps a stable logical sequence view while mapping tokens into reusable physical KV blocks."
+/>
 
 ## 数据结构
 
