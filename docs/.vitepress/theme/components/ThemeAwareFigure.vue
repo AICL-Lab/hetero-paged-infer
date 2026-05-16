@@ -10,7 +10,7 @@ const props = defineProps<{
 }>()
 
 const { isDark } = useData()
-const mounted = ref(false)
+const hydrated = ref(false)
 
 const resolveSrc = (src: string) => {
   if (/^(?:[a-z]+:|\/\/|#)/i.test(src)) {
@@ -20,17 +20,18 @@ const resolveSrc = (src: string) => {
   return src.startsWith('/') ? withBase(src) : src
 }
 
-const currentSrc = computed(() => resolveSrc(isDark.value ? props.dark : props.light))
+const currentSrc = computed(() =>
+  resolveSrc(hydrated.value && isDark.value ? props.dark : props.light)
+)
 
 onMounted(() => {
-  mounted.value = true
+  hydrated.value = true
 })
 </script>
 
 <template>
   <figure class="theme-aware-figure">
     <img
-      v-if="mounted"
       class="theme-aware-figure__image"
       :src="currentSrc"
       :alt="alt"
