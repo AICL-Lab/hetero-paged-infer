@@ -13,41 +13,12 @@ Hetero-Paged-Infer implements a **heterogeneous computing architecture** that se
 
 ## High-Level Architecture
 
-```mermaid
-flowchart TB
-    subgraph Client["Client Layer"]
-        Req[HTTP/gRPC Requests]
-    end
-    
-    subgraph Engine["Inference Engine"]
-        API[API Handler]
-        ORCH[Orchestrator]
-    end
-    
-    subgraph CPU["CPU Control Plane"]
-        T[Tokenizer]
-        S[Scheduler]
-        KVM[KV Cache Manager]
-        BB[Batch Builder]
-    end
-    
-    subgraph GPU["GPU Compute Plane"]
-        GE[GPU Executor]
-        KC[(KV Cache Memory)]
-    end
-    
-    Req --> API
-    API --> ORCH
-    ORCH --> T
-    ORCH --> S
-    ORCH --> KVM
-    T --> BB
-    S --> BB
-    KVM --> BB
-    BB --> GE
-    GE <--> KC
-    KVM -.-> KC
-```
+<ThemeAwareFigure
+  light="/images/figures/architecture-light.svg"
+  dark="/images/figures/architecture-dark.svg"
+  alt="Hetero-Paged-Infer control plane and compute plane architecture"
+  caption="The architecture is presented as a control-plane / compute-plane split, not a flat feature list."
+/>
 
 ## Component Breakdown
 

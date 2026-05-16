@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-labelledby="title desc">
+  <title id="title">Hetero-Paged-Infer logo dark</title>
+  <desc id="desc">Dark theme logo with contrasting control and compute blocks.</desc>
+  <rect width="120" height="120" rx="24" fill="#0f172a"/>
+  <rect x="18" y="18" width="34" height="34" rx="6" fill="#f8fafc"/>
+  <rect x="68" y="68" width="34" height="34" rx="6" fill="#22d3ee"/>
+  <path d="M50 35h20M60 25v20M60 84l8 8M60 84l-8 8" stroke="#cbd5e1" stroke-width="4" stroke-linecap="round"/>
+  <path d="M38 38L82 82" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.95"/>
+  <circle cx="60" cy="60" r="9" fill="#0f172a" stroke="#f8fafc" stroke-width="4"/>
+</svg>

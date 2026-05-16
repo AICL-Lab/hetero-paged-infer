@@ -13,41 +13,12 @@ Hetero-Paged-Infer 实现了一种**异构计算架构**，将控制流（CPU）
 
 ## 高层架构
 
-```mermaid
-flowchart TB
-    subgraph Client["客户端层"]
-        Req[HTTP/gRPC 请求]
-    end
-
-    subgraph Engine["推理引擎"]
-        API[API 处理]
-        ORCH[编排器]
-    end
-
-    subgraph CPU["CPU 控制面"]
-        T[Tokenizer]
-        S[调度器]
-        KVM[KV Cache 管理器]
-        BB[批处理构建器]
-    end
-
-    subgraph GPU["GPU 计算面"]
-        GE[GPU 执行器]
-        KC[(KV Cache 内存)]
-    end
-
-    Req --> API
-    API --> ORCH
-    ORCH --> T
-    ORCH --> S
-    ORCH --> KVM
-    T --> BB
-    S --> BB
-    KVM --> BB
-    BB --> GE
-    GE <--> KC
-    KVM -.-> KC
-```
+<ThemeAwareFigure
+  light="/images/figures/architecture-light.svg"
+  dark="/images/figures/architecture-dark.svg"
+  alt="Hetero-Paged-Infer 控制面与计算面架构图"
+  caption="这里强调的是控制面 / 计算面的边界，而不是简单列出功能点。"
+/>
 
 ## 组件详解
 
