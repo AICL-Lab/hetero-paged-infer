@@ -22,7 +22,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 
 | Feature | Description | Status |
 |---------|-------------|:------:|
-| **PagedAttention KV Cache** | Block-based memory management, <5% waste | ✅ |
+| **PagedAttention KV Cache** | Block-based memory management; literature context often reports <5% waste | ✅ |
 | **Continuous Batching** | Dynamic prefill/decode scheduling | ✅ |
 | **Memory Pressure Awareness** | Configurable OOM prevention | ✅ |
 | **Modular Architecture** | Trait-based abstractions | ✅ |
@@ -234,9 +234,9 @@ npm run build
 
 | Approach | Memory Waste | Throughput | Description |
 |----------|:------------:|:----------:|-------------|
-| Static Allocation | ~40-60% | Baseline | Pre-allocate max context for each request |
-| Dynamic Allocation | ~20-30% | +20% | Resize per request but still fragmented |
-| **PagedAttention** | **<5%** | **+50%** | Block-based sharing with copy-on-write |
+| Static Allocation | Prior-art pattern: ~40-60% | Baseline context | Pre-allocate max context for each request |
+| Dynamic Allocation | Prior-art pattern: ~20-30% | Literature context: +20% | Resize per request but still fragmented |
+| **PagedAttention** | **Literature context: <5%** | **Literature context: +50%** | Block-based sharing with copy-on-write |
 
 > Note: Current benchmark figures are either measured with the mock executor or derived from architecture-level estimates. Real CUDA measurements are out of scope until the GPU backend is implemented.
 
@@ -261,13 +261,13 @@ cargo llvm-cov --html
 cargo test -- --test-threads=1
 ```
 
-| Type | Count | Description |
-|------|:-----:|-------------|
-| Unit Tests | 79 | Core functionality tests |
-| Property Tests | 22 | Invariant verification with proptest |
-| Integration Tests | 13 | End-to-end workflow tests |
-| Doc Tests | 7 | Documentation examples |
-| **Total** | **121** | |
+| Type | Coverage | Description |
+|------|:--------:|-------------|
+| Unit Tests | Included in 121+ | Core functionality tests |
+| Property Tests | Included in 121+ | Invariant verification with proptest |
+| Integration Tests | Included in 121+ | End-to-end workflow tests |
+| Doc Tests | Included in 121+ | Documentation examples |
+| **Overall** | **121+ tests** | Combined automated coverage across the repository |
 
 ## Contributing
 
