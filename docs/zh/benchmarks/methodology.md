@@ -13,7 +13,7 @@
 
 1. 来自 `benches/engine_benchmark.rs` 的 `cargo bench` 输出
 2. `tests/integration_tests.rs` 中的引擎/运行时测试
-3. 明确标注为 estimate 的架构推导结果
+3. 明确标注为“估算”的架构推导结果
 
 ## 如何给结论分类
 
@@ -36,7 +36,7 @@ cargo bench
 cargo test --test integration_tests
 ```
 
-请在仓库根目录运行这些命令。如果某个 benchmark 页面无法回溯到这些命令，或无法回溯到明确标注的 estimate，那么它就不应该被写成“证明”。
+请在仓库根目录运行这些命令。如果某个基准页面无法回溯到这些命令，或无法回溯到明确标注的“估算”，那么它就不应该被写成“证明”。
 
 ## 当前刻意不宣称的内容
 

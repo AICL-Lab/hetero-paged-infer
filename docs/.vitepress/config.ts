@@ -113,6 +113,7 @@ export default withMermaid(
               {
                 text: 'References',
                 items: [
+                  { text: 'Overview', link: '/en/references/' },
                   { text: 'Papers', link: '/en/references/papers' },
                   { text: 'Projects', link: '/en/references/projects' }
                 ]
@@ -252,6 +253,7 @@ export default withMermaid(
               {
                 text: '参考',
                 items: [
+                  { text: '概览', link: '/zh/references/' },
                   { text: '论文引用', link: '/zh/references/papers' },
                   { text: '项目引用', link: '/zh/references/projects' }
                 ]
