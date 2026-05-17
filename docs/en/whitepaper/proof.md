@@ -22,7 +22,7 @@ The strongest measured claims in the current project are correctness and structu
 - KV cache resources are allocated and released through explicit block accounting,
 - configuration and request validation reject invalid inputs early.
 
-These are supported by the existing unit and integration tests in the Rust codebase, plus the successful documentation build that wires the whitepaper and architecture pages into the site.
+The behavior claims above are supported by the existing unit and integration tests in the Rust codebase. Separately, a successful documentation build only shows that the whitepaper and architecture pages integrate into the site correctly.
 
 ## Which claims are estimated or inherited from reference literature
 
