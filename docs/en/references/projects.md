@@ -1,146 +1,39 @@
 # Projects
 
-Open-source projects that influenced or are related to Hetero-Paged-Infer.
+This page is a curated reading guide to adjacent implementations, not a scoreboard.
 
-## Core Reference Projects
+## vLLM
 
-### vLLM
+**Repository:** [github.com/vllm-project/vllm](https://github.com/vllm-project/vllm)
 
-<div class="project-card">
-<div class="project-header">
-<span class="project-icon">🔥</span>
-<span class="project-name">vLLM</span>
-</div>
-<div class="project-desc">High-throughput LLM serving with PagedAttention</div>
+- **Why it matters to this repo:** vLLM is the most direct open-source reference for PagedAttention-style LLM serving.
+- **Which subsystem it influenced:** KV-cache design language, benchmark expectations, and API/serving direction.
+- **What was adopted vs deliberately not adopted:** Adopted the overall systems framing around paged KV-cache management; deliberately not adopted vLLM's production claims, Python/CUDA stack, or feature completeness as if they were already local facts.
 
-- **Repository**: [github.com/vllm-project/vllm](https://github.com/vllm-project/vllm)
-- **Language**: Python + CUDA C++
-- **License**: Apache 2.0
+## TensorRT-LLM
 
-**Key Features Implemented**:
-- PagedAttention memory management
-- Continuous batching
-- OpenAI-compatible API server
-- Tensor parallelism
+**Repository:** [github.com/NVIDIA/TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM)
 
-**Comparison**: Hetero-Paged-Infer implements similar techniques in Rust with focus on type safety and zero-cost abstractions.
+- **Why it matters to this repo:** It defines the current bar for highly optimized NVIDIA-specific serving.
+- **Which subsystem it influenced:** Future executor ambitions, CUDA-graph discussion, and comparison-page honesty about production gaps.
+- **What was adopted vs deliberately not adopted:** Adopted it as a performance reference point and kernel-design benchmark; deliberately not adopted vendor-specific optimizations or the claim that this repository currently matches them.
 
-</div>
+## llama.cpp
 
----
+**Repository:** [github.com/ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp)
 
-### llama.cpp
+- **Why it matters to this repo:** It is a useful counterexample that prioritizes deployment simplicity and broad accessibility over the same serving assumptions.
+- **Which subsystem it influenced:** Comparison-page positioning and documentation around what this project is, and is not, optimized for.
+- **What was adopted vs deliberately not adopted:** Adopted the idea that readable inference code can be a product in itself; deliberately not adopted its CPU-first scope, GGUF ecosystem, or edge-device positioning.
 
-<div class="project-card">
-<div class="project-header">
-<span class="project-icon">🦙</span>
-<span class="project-name">llama.cpp</span>
-</div>
-<div class="project-desc">CPU-optimized LLM inference in pure C/C++</div>
+## Text Generation Inference (TGI)
 
-- **Repository**: [github.com/ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp)
-- **Language**: C/C++
-- **License**: MIT
+**Repository:** [github.com/huggingface/text-generation-inference](https://github.com/huggingface/text-generation-inference)
 
-**Key Features**:
-- CPU-only inference with SIMD optimization
-- Quantization (GGUF format)
-- Cross-platform support
-- Memory-mapped model loading
+- **Why it matters to this repo:** TGI represents a serving stack where API ergonomics and operational packaging matter as much as core kernels.
+- **Which subsystem it influenced:** HTTP-serving expectations, streaming/API framing, and comparison-page evaluation criteria.
+- **What was adopted vs deliberately not adopted:** Adopted it as a reference for product-facing serving concerns; deliberately not adopted its production-operational maturity as if it were already present here.
 
-**Comparison**: Hetero-Paged-Infer focuses on GPU inference with PagedAttention, while llama.cpp excels at CPU deployment.
+## How to use this page
 
-</div>
-
----
-
-### TensorRT-LLM
-
-<div class="project-card">
-<div class="project-header">
-<span class="project-icon">⚡</span>
-<span class="project-name">TensorRT-LLM</span>
-</div>
-<div class="project-desc">NVIDIA's optimized inference library for LLMs</div>
-
-- **Repository**: [github.com/NVIDIA/TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM)
-- **Language**: C++ / Python
-- **License**: NVIDIA Software License
-
-**Key Features**:
-- Deep integration with NVIDIA hardware
-- CUDA Graph support
-- Advanced quantization (FP8, INT4)
-- Multi-GPU support
-
-**Comparison**: Hetero-Paged-Infer is hardware-agnostic (via trait abstraction), TensorRT-LLM is NVIDIA-specific.
-
-</div>
-
----
-
-## Feature Comparison
-
-| Feature | Hetero-Paged-Infer | vLLM | llama.cpp | TensorRT-LLM |
-|---------|:------------------:|:----:|:---------:|:------------:|
-| **Language** | Rust | Python | C++ | C++ |
-| **PagedAttention** | ✅ | ✅ | ❌ | ✅ |
-| **Continuous Batching** | ✅ | ✅ | ❌ | ✅ |
-| **CPU Inference** | Mock | ❌ | ✅ | ❌ |
-| **GPU Inference** | Planned | ✅ | ✅ | ✅ |
-| **OpenAI API** | ✅ | ✅ | ✅ | ✅ |
-| **Streaming (SSE)** | ✅ | ✅ | ✅ | ✅ |
-| **Memory Safety** | ✅ (Rust) | ⚠️ | ⚠️ | ⚠️ |
-| **Property Testing** | ✅ | ❌ | ❌ | ❌ |
-
-## Why Rust?
-
-Hetero-Paged-Infer chose Rust for:
-
-1. **Memory Safety Without GC**: No GC pauses, critical for latency-sensitive serving
-2. **Zero-Cost Abstractions**: Trait-based design without runtime overhead
-3. **Fearless Concurrency**: Safe async/await for HTTP serving
-4. **Interoperability**: Easy FFI with CUDA via `cudarc`
-
-<style>
-.project-card {
-  padding: 20px;
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-border);
-  border-radius: 12px;
-  margin: 16px 0;
-}
-
-.project-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.project-icon {
-  font-size: 1.5rem;
-}
-
-.project-name {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--vp-c-text-1);
-}
-
-.project-desc {
-  color: var(--vp-c-text-2);
-  font-size: 0.95rem;
-  margin-bottom: 12px;
-}
-
-.project-card ul {
-  margin: 8px 0;
-  padding-left: 20px;
-}
-
-.project-card li {
-  margin: 4px 0;
-  color: var(--vp-c-text-2);
-}
-</style>
+Use these projects to understand the surrounding design space. Then return to the [comparison page](/en/comparison/) and ask which advantages are local, which are aspirational, and which belong to other systems.

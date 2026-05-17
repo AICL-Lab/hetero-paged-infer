@@ -1,113 +1,49 @@
 # Throughput
 
-Token generation throughput is a key metric for LLM serving systems.
+This page explains what throughput evidence exists today and where readers should treat statements as simulations or inherited expectations.
 
-## Throughput Factors
+::: warning Claim discipline
+This page separates three categories:
+1. Measured in this repository
+2. Derived from mock-executor simulation
+3. Inherited from external literature or reference projects
+:::
 
-1. **Batch Size**: Larger batches amortize kernel launch overhead
-2. **Memory Bandwidth**: KV cache access patterns affect throughput
-3. **GPU Utilization**: Continuous batching maximizes hardware usage
+## Measured in this repository
 
-## Continuous Batching Impact
+### What is actually benchmarked
 
-```mermaid
-sequenceDiagram
-    participant Scheduler
-    participant GPU
-    participant KVCache
+- `cargo bench` measures `engine_step`, `batch_processing/{1,4,8,16,32}`, and scheduler operations in `benches/engine_benchmark.rs`.
+- Those benchmarks run through repository code paths and are useful for comparing scheduling and orchestration overhead inside this codebase.
 
-    Note over Scheduler: Traditional: Wait for all sequences
-    Scheduler->>GPU: Execute Batch (all prefill)
-    GPU->>KVCache: Write KV
-    Scheduler->>GPU: Execute Batch (all decode)
-    
-    Note over Scheduler: Continuous: Mix prefill + decode
-    loop Every Iteration
-        Scheduler->>Scheduler: Build Mixed Batch
-        Scheduler->>GPU: Execute (prefill + decode)
-        GPU->>KVCache: Update KV
-    end
-```
+### What measured throughput does **not** mean yet
 
-## Throughput Comparison
+- These benchmarks do not represent production GPU tokens/sec.
+- The default engine uses `MockGPUExecutor`, which validates batch shape and emits deterministic tokens instead of running CUDA kernels.
+- Any absolute tokens/sec figure on this page would therefore overstate what the repository has proved.
 
-| Configuration | Tokens/sec | Improvement |
-|---------------|:----------:|:-----------:|
-| Static Batching (batch=32) | 1,000 | Baseline |
-| Dynamic Batching | 1,200 | +20% |
-| **Continuous Batching** | **1,500** | **+50%** |
+## Derived from mock-executor simulation
 
-## Batch Composition
+- `tests/integration_tests.rs` includes a continuous-batching test that submits a second request while the first is already decoding.
+- The scheduler implementation favors decode work first and fills remaining capacity with prefill work, so mixed-batch behavior is observable in simulation.
+- This supports the claim that the scheduler is organized for utilization-aware batching, but it is still a simulation result until real kernels are attached.
 
-The scheduler dynamically builds batches:
+## Inherited from external literature or reference projects
 
-```rust
-fn schedule(&mut self) -> SchedulerOutput {
-    let mut batch = ExecutionBatch::new();
-    
-    // Priority 1: Decode sequences (low latency)
-    for seq in self.decode_queue.iter() {
-        if batch.num_tokens < self.max_total_tokens {
-            batch.add_decode(seq);
-        }
-    }
-    
-    // Priority 2: Prefill sequences (throughput)
-    for seq in self.prefill_queue.iter() {
-        if batch.can_fit(seq.num_tokens) {
-            batch.add_prefill(seq);
-        }
-    }
-    
-    batch
-}
-```
+- The broader claim that continuous batching improves throughput versus static batching comes from systems such as Orca and vLLM.
+- Those papers justify *why* the design is promising, but they do not automatically establish the exact uplift of this repository.
 
-## Optimization Techniques
+## What readers should take away
 
-### 1. Chunked Prefill
-
-Large prompts are split into chunks to avoid blocking decode:
-
-```
-Prompt: 1000 tokens
-Chunk size: 256 tokens
-
-Iteration 1: [Decode: 8 seq] + [Prefill chunk 1: 256 tokens]
-Iteration 2: [Decode: 9 seq] + [Prefill chunk 2: 256 tokens]
-...
-```
-
-### 2. Prefix Caching
-
-Common prefixes are cached and shared:
-
-```mermaid
-flowchart LR
-    P1["Prompt 1: 'You are...'<br/>'Answer: '"]
-    P2["Prompt 2: 'You are...'<br/>'Explain: '"]
-    
-    subgraph Cache["Prefix Cache"]
-        C["'You are...'<br/>ref_count: 2"]
-    end
-    
-    P1 --> C
-    P2 --> C
-```
-
-### 3. CUDA Graphs
-
-For decode phase with fixed batch sizes, CUDA graphs eliminate kernel launch overhead:
-
-```rust
-// Capture graph once
-executor.capture_decode_graph(batch_size)?;
-
-// Execute captured graph (faster than individual launches)
-executor.execute_graph(&batch)?;
-```
+| Statement | Category | Safe reading |
+|-----------|----------|--------------|
+| Batch-processing code paths scale across multiple configured batch sizes | Measured in this repository | The software stack is benchmarked across several batch sizes |
+| Mixed prefill/decode scheduling should improve utilization over naive static execution | Derived from mock-executor simulation | The scheduler shape is promising, but hardware proof is pending |
+| Large production throughput gains are possible with continuous batching | Inherited from literature | Treat as prior art, not as a completed local benchmark |
 
 ## Related
 
+- [Benchmark Methodology](/en/benchmarks/methodology)
+- [Latency](/en/benchmarks/latency)
 - [Continuous Batching Architecture](/en/architecture/continuous-batching)
-- [Latency Metrics](/en/benchmarks/latency)
+- [Projects Reading Guide](/en/references/projects)
