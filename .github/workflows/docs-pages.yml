@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'README.md'
+      - 'README.zh.md'
       - '.github/workflows/docs-pages.yml'
   workflow_dispatch:
 

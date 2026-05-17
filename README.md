@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![CI](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
@@ -10,7 +10,7 @@
 
 > ⚠️ **Development Status**: This project is in early development (v0.1.0). It currently uses a Mock GPU executor for testing and demonstration purposes. Real CUDA kernel support is planned but not yet implemented.
 
-**[English](README.md) | [中文](README.zh.md) | [Documentation](https://lessup.github.io/hetero-paged-infer/)**
+**[English](README.md) | [中文](README.zh.md) | [Documentation](https://aicl-lab.github.io/hetero-paged-infer/)**
 
 </div>
 
@@ -26,7 +26,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 | **Continuous Batching** | Dynamic prefill/decode scheduling | ✅ |
 | **Memory Pressure Awareness** | Configurable OOM prevention | ✅ |
 | **Modular Architecture** | Trait-based abstractions | ✅ |
-| **Comprehensive Testing** | 122 tests (unit, property, integration) | ✅ |
+| **Comprehensive Testing** | 121+ tests | ✅ |
 | **OpenAI-Compatible Server** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **CUDA Kernels** | Real GPU execution | 🚧 Planned |
 
@@ -62,13 +62,13 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 
 ```bash
 # Clone the repository
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # Build in release mode
 cargo build --release
 
-# Run the test suite (122 tests)
+# Run the test suite (121+ tests)
 cargo test
 ```
 
@@ -212,7 +212,7 @@ For command bridge mode:
 
 | Resource | Link |
 |----------|------|
-| **GitHub Pages** | [https://lessup.github.io/hetero-paged-infer/](https://lessup.github.io/hetero-paged-infer/) |
+| **GitHub Pages** | [https://aicl-lab.github.io/hetero-paged-infer/](https://aicl-lab.github.io/hetero-paged-infer/) |
 
 | **Architecture Guide** | [docs/en/architecture/overview.md](docs/en/architecture/overview.md) |
 | **Contributing Guide** | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -225,8 +225,9 @@ For command bridge mode:
 cargo doc --open
 
 # Build documentation site locally
-pip install mkdocs-material mkdocs-static-i18n
-mkdocs serve -f mkdocs.yml
+cd docs
+npm install
+npm run build
 ```
 
 ## Performance
@@ -237,7 +238,7 @@ mkdocs serve -f mkdocs.yml
 | Dynamic Allocation | ~20-30% | +20% | Resize per request but still fragmented |
 | **PagedAttention** | **<5%** | **+50%** | Block-based sharing with copy-on-write |
 
-*Note: Performance figures are theoretical estimates based on vLLM research papers.*
+> Note: Current benchmark figures are either measured with the mock executor or derived from architecture-level estimates. Real CUDA measurements are out of scope until the GPU backend is implemented.
 
 ### Why PagedAttention?
 
@@ -299,4 +300,4 @@ MIT License - See [LICENSE](LICENSE).
 
 ---
 
-<p align="center"><b>Made with ❤️ by LessUp</b></p>
+<p align="center"><b>Made with ❤️ by AICL-Lab</b></p>
