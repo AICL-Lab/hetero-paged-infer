@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![CI](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/LessUp/hetero-paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
@@ -11,7 +11,7 @@
 
 > ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。目前使用 Mock GPU 执行器进行测试和演示。真实的 CUDA 内核支持已规划但尚未实现。
 
-**[English](README.md) | [中文](README.zh.md) | [文档](https://lessup.github.io/hetero-paged-infer/zh/)**
+**[English](README.md) | [中文](README.zh.md) | [文档](https://aicl-lab.github.io/hetero-paged-infer/zh/)**
 
 </div>
 
@@ -28,7 +28,7 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模�
 | **内存压力感知** | 可配置的 OOM 防护 | ✅ |
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
-| **全面测试** | 122 个测试（单元、属性、集成） | ✅ |
+| **全面测试** | 121+ 个测试 | ✅ |
 | **CUDA Kernel** | 真实 GPU 执行 | 🚧 规划中 |
 
 ## 系统架构
@@ -64,13 +64,13 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # 以 release 模式构建
 cargo build --release
 
-# 运行测试套件（122 个测试）
+# 运行测试套件（121+ 个测试）
 cargo test
 ```
 
@@ -174,7 +174,7 @@ for result in results {
 
 | 资源 | 链接 |
 |------|------|
-| **GitHub Pages** | [https://lessup.github.io/hetero-paged-infer/zh/](https://lessup.github.io/hetero-paged-infer/zh/) |
+| **GitHub Pages** | [https://aicl-lab.github.io/hetero-paged-infer/zh/](https://aicl-lab.github.io/hetero-paged-infer/zh/) |
 
 | **架构设计** | [docs/zh/architecture/overview.md](docs/zh/architecture/overview.md) |
 | **贡献指南** | [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -187,8 +187,9 @@ for result in results {
 cargo doc --open
 
 # 本地构建文档站点
-pip install mkdocs-material mkdocs-static-i18n
-mkdocs serve -f mkdocs.zh.yml
+cd docs
+npm install
+npm run build
 ```
 
 ## 性能对比
@@ -199,7 +200,7 @@ mkdocs serve -f mkdocs.zh.yml
 | 动态分配 | ~20-30% | +20% | 按请求调整但仍有碎片 |
 | **PagedAttention** | **<5%** | **+50%** | 基于块的共享与写时复制 |
 
-*注：性能数据为基于 vLLM 研究论文的理论估计值。*
+> 说明：当前性能数字要么来自 mock executor 的实测，要么来自架构层面的估算；真实 CUDA 指标需等 GPU 后端落地后再公布。
 
 ### 为什么选择 PagedAttention？
 
@@ -227,8 +228,8 @@ cargo test -- --test-threads=1
 | 单元测试 | 79 | 核心功能测试 |
 | 属性测试 | 22 | 使用 proptest 验证不变量 |
 | 集成测试 | 13 | 端到端工作流测试 |
-| 文档测试 | 8 | 文档示例 |
-| **总计** | **122** | |
+| 文档测试 | 7 | 文档示例 |
+| **总计** | **121** | |
 
 ## 贡献指南
 
@@ -262,4 +263,4 @@ MIT 许可证 - 详见 [LICENSE](LICENSE)。
 
 ---
 
-<p align="center"><b>由 LessUp 用 ❤️ 构建</b></p>
+<p align="center"><b>由 AICL-Lab 用 ❤️ 构建</b></p>

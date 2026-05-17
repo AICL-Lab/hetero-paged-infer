@@ -147,11 +147,7 @@ impl SequenceLifecycle {
     /// 成功返回 `Ok(())`；失败返回包含错误信息的 `Err`。
     pub fn grow_decode_sequence(&mut self, seq_id: SeqId) -> Result<(), String> {
         let Some(seq) = self.decode_sequences.get(&seq_id) else {
-            debug_assert!(
-                false,
-                "seq_id {} expected in decode but missing",
-                seq_id
-            );
+            debug_assert!(false, "seq_id {} expected in decode but missing", seq_id);
             return Ok(());
         };
 

@@ -64,7 +64,8 @@ fn bench_engine_step(c: &mut Criterion) {
     });
 }
 
-/// Benchmark batch processing with varying sizes
+/// Benchmark batch processing with the current mock executor pipeline.
+/// These numbers are useful for relative engine behavior, not for claiming real CUDA throughput.
 fn bench_batch_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
 

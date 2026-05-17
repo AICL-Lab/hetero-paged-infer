@@ -50,7 +50,10 @@ impl Sequence {
     /// 计算上下文长度（输入 + 已生成）
     pub fn context_len(&self) -> u32 {
         let input_len = self.request.input_tokens.len();
-        debug_assert!(input_len <= u32::MAX as usize, "input token count exceeds u32::MAX");
+        debug_assert!(
+            input_len <= u32::MAX as usize,
+            "input token count exceeds u32::MAX"
+        );
         input_len as u32 + self.num_generated_tokens
     }
 
