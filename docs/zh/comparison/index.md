@@ -2,27 +2,27 @@
 
 本页不是功能勾选表，而是一份“定位论证”：说明 Hetero-Paged-Infer 今天真正擅长什么、在哪些方面仍然落后，以及为什么实现语言会改变维护成本的结构。
 
-## Where this project competes well
+## 本项目在哪些方面更有竞争力
 
 - **架构透明**：调度器、KV Cache 管理器、executor trait 与 API 表面都足够小，读者可以直接审阅。
 - **可测试性强**：关键行为已经被单元测试、属性测试、集成测试与 Criterion 微基准覆盖。
 - **文档口径严格**：whitepaper、基准方法学与参考阅读指南会明确区分“实测”“模拟”“继承结论”。
 - **学习系统价值高**：如果读者要理解 PagedAttention 风格的 serving 设计，这个仓库比大型生产栈更容易审计。
 
-## Where it is behind vLLM / TensorRT-LLM
+## 它在哪些方面落后于 vLLM / TensorRT-LLM
 
 - **真实内核尚未接入**：默认运行时仍然依赖 `MockGPUExecutor`，因此还没有建立生产级 GPU 吞吐和延迟证据。
 - **生产特性不足**：多 GPU、量化深度、前缀缓存、推测解码、硬件专项调优等方面仍落后于成熟引擎。
 - **运维成熟度不足**：vLLM 与 TensorRT-LLM 有更广泛的部署故事、更大的用户社区以及更经受实战考验的内核。
 - **对比证据较弱**：本仓库当前提供的是“本地证明 + 设计意图”，而不是已经完成的公平 head-to-head 对打。
 
-## Why Rust changes the maintenance story
+## 为什么 Rust 会改变维护叙事
 
 - Rust 把所有权、可变性与并发约束直接写进类型系统，而不是把正确性主要交给代码审查来兜底。
 - trait 边界把 scheduler、KV cache、tokenizer 与 executor 分离开，未来把 mock executor 换成真实后端时，替换成本更可控。
 - 代价是生态成熟度：Python/C++ 服务栈今天拥有更多生产集成，而 Rust 更偏向提供长期系统正确性的收益。
 
-## What readers should evaluate this project for
+## 读者应该从哪些角度评估本项目
 
 如果你关心以下问题，这个项目值得评估：
 
