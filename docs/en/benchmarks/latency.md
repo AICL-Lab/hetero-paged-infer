@@ -1,120 +1,48 @@
 # Latency
 
-Response latency is critical for interactive applications.
+Latency is where claim discipline matters most: the repository has scheduler logic and tests, but not yet a production-grade wall-clock latency report.
 
-## Latency Components
+::: warning Claim discipline
+This page separates three categories:
+1. Measured in this repository
+2. Derived from mock-executor simulation
+3. Inherited from external literature or reference projects
+:::
 
-```mermaid
-flowchart LR
-    subgraph Latency["Total Latency"]
-        TTFT["Time to First Token"]
-        ITL["Inter-Token Latency"]
-    end
-    
-    subgraph TTFT_Components["TTFT Components"]
-        Queue["Queue Time"]
-        Prefill["Prefill Time"]
-    end
-    
-    subgraph ITL_Components["ITL Components"]
-        Schedule["Schedule Time"]
-        Decode["Decode Time"]
-    end
-    
-    TTFT --> TTFT_Components
-    ITL --> ITL_Components
-```
+## Measured in this repository
 
-## Time to First Token (TTFT)
+- Integration tests verify request completion, mixed prefill/decode execution, and memory-pressure-related control flow.
+- The repository currently does **not** publish direct wall-clock TTFT or ITL benchmark tables from real GPU execution.
+- `cargo bench` covers orchestration overhead, but those measurements are not the same as user-visible serving latency.
 
-TTFT is the time from request submission to first generated token.
+## Derived from mock-executor simulation
 
-| Prompt Length | TTFT (ms) | Dominant Factor |
-|---------------|:---------:|:---------------:|
-| 128 tokens | 50 | Prefill |
-| 512 tokens | 150 | Prefill |
-| 2048 tokens | 500 | Prefill |
+- The scheduler is decode-first, which is the repository's main latency-preserving policy for in-flight requests.
+- Memory-threshold handling is designed to pause new prefills before the system reaches an OOM state.
+- The GPU-executor trait exposes CUDA-graph capture hooks, but the current mock executor reuses the normal execution path, so no local latency reduction from graphs is proved yet.
 
-**Optimization**: Chunked prefill prevents long prefill from blocking other requests.
+## Inherited from external literature or reference projects
 
-## Inter-Token Latency (ITL)
+- Chunked prefill, CUDA graphs, and other low-latency serving techniques are supported by external systems literature.
+- They explain why this architecture is shaped the way it is, but they should not be read as measured TTFT/ITL numbers for this repository.
 
-ITL is the time between consecutive generated tokens.
+## Current proof status
 
-| Batch Size | ITL (ms) | Notes |
-|------------|:--------:|:------:|
-| 1 | 15 | Single sequence |
-| 8 | 18 | Small batch |
-| 32 | 25 | Large batch |
-| 64 | 35 | Max batch |
+| Question | Current answer |
+|----------|----------------|
+| Does the repository expose latency-oriented scheduling policies? | Yes, in code and integration tests |
+| Does the repository publish production TTFT/ITL measurements? | No |
+| Can readers treat external low-latency numbers as local benchmark results? | No |
 
-**Observation**: ITL increases with batch size due to memory bandwidth, but throughput increases.
+## What to evaluate this page for
 
-## Scheduling Impact
-
-### Decode-First Priority
-
-```rust
-// Prioritize decode to minimize ITL
-fn schedule(&mut self) -> SchedulerOutput {
-    // Decode first: low latency for existing sequences
-    for seq in self.decode_queue.iter() {
-        batch.add_decode(seq);
-    }
-    
-    // Prefill second: new requests wait
-    for seq in self.prefill_queue.iter() {
-        if !batch.is_full() {
-            batch.add_prefill(seq);
-        }
-    }
-}
-```
-
-### Memory Pressure Handling
-
-When memory is constrained, the scheduler:
-
-1. **Pauses new prefills** — Prevents OOM
-2. **Continues decodes** — Maintains low ITL for in-flight requests
-3. **Preempts if needed** — Swaps out lowest-priority sequences
-
-```mermaid
-stateDiagram-v2
-    [*] --> Normal
-    Normal --> Pressure: Memory > 80%
-    Pressure --> Critical: Memory > 95%
-    Critical --> Pressure: Memory < 90%
-    Pressure --> Normal: Memory < 70%
-    
-    state Normal {
-        [*] --> AcceptAll
-    }
-    state Pressure {
-        [*] --> PausePrefill
-    }
-    state Critical {
-        [*] --> PreemptSequences
-    }
-```
-
-## Latency vs Throughput Trade-off
-
-```mermaid
-xychart-beta
-    title "Latency vs Throughput Trade-off"
-    x-axis "Batch Size" [1, 8, 16, 32, 64]
-    y-axis "Latency (ms)" 0 --> 50
-    y-axis "Throughput (tokens/s)" 0 --> 2000
-    line [15, 18, 20, 25, 35]
-    bar [500, 1200, 1500, 1800, 2000]
-```
-
-**Guideline**: Choose batch size based on latency SLA:
-- Interactive applications: batch ≤ 16 (ITL < 20ms)
-- Batch processing: batch = 64 (max throughput)
+- Whether the latency-control mechanisms are present and documented.
+- Whether the repository clearly marks unmeasured GPU claims as future work.
+- Whether the transition from mock execution to real kernels will have a clear place to plug in new measurements.
 
 ## Related
 
-- [Throughput Metrics](/en/benchmarks/throughput)
+- [Benchmark Methodology](/en/benchmarks/methodology)
+- [Throughput](/en/benchmarks/throughput)
 - [Memory Management](/en/architecture/memory-management)
+- [Papers Reading Guide](/en/references/papers)

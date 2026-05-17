@@ -1,149 +1,34 @@
 # 与其他推理引擎对比
 
-Hetero-Paged-Infer 与主流 LLM 推理引擎的详细对比。
+本页不是功能勾选表，而是一份“定位论证”：说明 Hetero-Paged-Infer 今天真正擅长什么、在哪些方面仍然落后，以及为什么实现语言会改变维护成本的结构。
 
-## 功能对比
+## Where this project competes well
 
-| 功能 | Hetero-Paged-Infer | vLLM | TensorRT-LLM | llama.cpp | Text Generation Inference |
-|------|:------------------:|:----:|:------------:|:---------:|:-------------------------:|
-| **语言** | Rust | Python | C++ | C++ | Python/Rust |
-| **PagedAttention** | ✅ | ✅ | ❌ | ❌ | ✅ |
-| **连续批处理** | ✅ | ✅ | ✅ | ❌ | ✅ |
-| **内存效率** | <5% 浪费 | <5% 浪费 | 15-25% 浪费 | 30-40% 浪费 | <10% 浪费 |
-| **Unsafe 代码** | **0** | N/A | N/A | N/A | N/A |
-| **属性测试** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **OpenAI API** | ✅ | ✅ | ✅ | ❌ | ✅ |
-| **流式响应 (SSE)** | ✅ | ✅ | ✅ | ❌ | ✅ |
-| **CUDA 内核** | 🚧 计划中 | ✅ | ✅ | ✅ (GPU) | ✅ |
-| **多 GPU** | 🚧 计划中 | ✅ | ✅ | ❌ | ✅ |
-| **前缀缓存** | 🚧 计划中 | ✅ | ❌ | ❌ | ✅ |
-| **推测解码** | 🚧 计划中 | ✅ | ✅ | ✅ | ❌ |
+- **架构透明**：调度器、KV Cache 管理器、executor trait 与 API 表面都足够小，读者可以直接审阅。
+- **可测试性强**：关键行为已经被单元测试、属性测试、集成测试与 Criterion 微基准覆盖。
+- **文档口径严格**：whitepaper、基准方法学与参考阅读指南会明确区分“实测”“模拟”“继承结论”。
+- **学习系统价值高**：如果读者要理解 PagedAttention 风格的 serving 设计，这个仓库比大型生产栈更容易审计。
 
-## 性能特征
+## Where it is behind vLLM / TensorRT-LLM
 
-### 内存效率
+- **真实内核尚未接入**：默认运行时仍然依赖 `MockGPUExecutor`，因此还没有建立生产级 GPU 吞吐和延迟证据。
+- **生产特性不足**：多 GPU、量化深度、前缀缓存、推测解码、硬件专项调优等方面仍落后于成熟引擎。
+- **运维成熟度不足**：vLLM 与 TensorRT-LLM 有更广泛的部署故事、更大的用户社区以及更经受实战考验的内核。
+- **对比证据较弱**：本仓库当前提供的是“本地证明 + 设计意图”，而不是已经完成的公平 head-to-head 对打。
 
-```
-内存浪费对比：
-┌─────────────────────────────────────────────────────────────┐
-│ Hetero-Paged-Infer  ████░░░░░░░░░░░░░░░░░░  <5%            │
-│ vLLM                ████░░░░░░░░░░░░░░░░░░  <5%            │
-│ TGI                 ████████░░░░░░░░░░░░░░  <10%           │
-│ TensorRT-LLM        ████████████████░░░░░░░  15-25%         │
-│ llama.cpp           ████████████████████████  30-40%        │
-└─────────────────────────────────────────────────────────────┘
-```
+## Why Rust changes the maintenance story
 
-### 吞吐量（Tokens/秒）
+- Rust 把所有权、可变性与并发约束直接写进类型系统，而不是把正确性主要交给代码审查来兜底。
+- trait 边界把 scheduler、KV cache、tokenizer 与 executor 分离开，未来把 mock executor 换成真实后端时，替换成本更可控。
+- 代价是生态成熟度：Python/C++ 服务栈今天拥有更多生产集成，而 Rust 更偏向提供长期系统正确性的收益。
 
-批次大小 32，序列长度 2048：
+## What readers should evaluate this project for
 
-```
-吞吐量对比（相对值）：
-┌─────────────────────────────────────────────────────────────┐
-│ Hetero-Paged-Infer  ████████████████████████  100% (目标)   │
-│ vLLM                ████████████████████████  95-105%       │
-│ TensorRT-LLM        ██████████████████████    90-100%      │
-│ TGI                 ████████████████████      80-90%        │
-│ llama.cpp           ██████████████            60-70%        │
-└─────────────────────────────────────────────────────────────┘
-```
+如果你关心以下问题，这个项目值得评估：
 
-## 为什么选择 Hetero-Paged-Infer？
+- 学习和审计 LLM serving 架构；
+- 在强类型边界下试验调度器与 KV cache 设计；
+- 基于 Rust 推理核心继续接入未来真实 executor；
+- 学习如何用安全口径记录证据，而不是夸大 benchmark。
 
-### 1. Rust 安全保证
-
-- **零 unsafe 代码** - 编译时完整内存安全
-- 无缓冲区溢出、释放后使用、数据竞争
-- 借用检查器实现无畏并发
-
-```rust
-// 这段代码无法编译 - Rust 在编译时捕获错误
-let data = vec![1, 2, 3];
-let ref1 = &data[0];
-data.push(4);  // 错误：不可在不可变借用时进行可变借用
-println!("{}", ref1);
-```
-
-### 2. 模块化架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    InferenceEngine                        │
-├─────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │ Tokenizer   │  │ Scheduler   │  │ KV Cache Manager│  │
-│  │ (Trait)     │  │ (Trait)     │  │ (Trait)         │  │
-│  └─────────────┘  └─────────────┘  └─────────────────┘  │
-│                          │                               │
-│                    ┌─────▼─────┐                         │
-│                    │GPU Executor│                        │
-│                    │ (Trait)    │                        │
-│                    └───────────┘                         │
-└─────────────────────────────────────────────────────────┘
-
-所有核心组件都是 trait - 易于 mock 和测试。
-```
-
-### 3. 属性测试
-
-我们使用 `proptest` 验证关键不变量：
-
-```rust
-proptest! {
-    // PROP-3: 分配的块始终有效
-    #[test]
-    fn allocated_blocks_valid(blocks in 1..1024u32) {
-        let pool = BlockPool::new(blocks);
-        let allocated = pool.allocate().unwrap();
-        prop_assert!(allocated.block_id < blocks);
-    }
-
-    // PROP-6: 调度器状态一致性
-    #[test]
-    fn scheduler_state_consistent(requests in 0..100usize) {
-        let mut scheduler = Scheduler::new();
-        // ... 测试调度不变量
-    }
-}
-```
-
-**15 个属性测试** 覆盖：
-- 请求 ID 唯一性
-- 块分配不变量
-- 调度器状态转换
-- 内存统计准确性
-
-### 4. 学习友好的文档
-
-- **OpenSpec 规格** - 使用 GIVEN/WHEN/THEN 场景的正式需求
-- **详细架构文档** - 每个组件都有图表解释
-- **内联文档** - 中文注释解释"为什么"
-
-## 使用场景推荐
-
-| 使用场景 | 推荐引擎 | 原因 |
-|----------|---------|------|
-| 生产服务（高流量） | vLLM, TensorRT-LLM | 成熟的 CUDA 内核，多 GPU 支持 |
-| 学习推理引擎原理 | **Hetero-Paged-Infer** | 清晰代码，详尽文档，属性测试 |
-| 边缘部署 | llama.cpp | 低内存，无需 GPU |
-| 自定义内核开发 | TensorRT-LLM | 灵活的内核 API |
-| 安全关键应用 | **Hetero-Paged-Infer** | Rust 内存安全 |
-| 快速原型开发 | vLLM | Python 生态 |
-
-## 路线图
-
-我们正在积极开发：
-
-1. **真实 CUDA 内核** - Paged attention 内核实现
-2. **异步 CPU/GPU 重叠** - 双缓冲提升吞吐
-3. **前缀缓存** - 常见前缀的 KV cache 复用
-4. **推测解码** - 草稿模型加速
-5. **多 GPU 支持** - 张量并行
-
-## 参考文献
-
-- [vLLM 论文](https://arxiv.org/abs/2309.06180) - PagedAttention 原始论文
-- [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) - NVIDIA 推理库
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - Georgi Gerganov 推理引擎
-- [TGI](https://github.com/huggingface/text-generation-inference) - HuggingFace 服务方案
+但今天不要把它当成已经能在生产吞吐对比中直接替代 vLLM 或 TensorRT-LLM 的项目。请结合阅读[基准方法学](/zh/benchmarks/methodology)与[参考资料](/zh/references/)。

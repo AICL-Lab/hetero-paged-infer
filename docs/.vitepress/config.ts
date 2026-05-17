@@ -101,6 +101,7 @@ export default withMermaid(
               {
                 text: 'Benchmarks',
                 items: [
+                  { text: 'Methodology', link: '/en/benchmarks/methodology' },
                   { text: 'Memory Efficiency', link: '/en/benchmarks/memory-efficiency' },
                   { text: 'Throughput', link: '/en/benchmarks/throughput' },
                   { text: 'Latency', link: '/en/benchmarks/latency' }
@@ -238,6 +239,7 @@ export default withMermaid(
               {
                 text: '基准',
                 items: [
+                  { text: '方法学', link: '/zh/benchmarks/methodology' },
                   { text: '内存效率', link: '/zh/benchmarks/memory-efficiency' },
                   { text: '吞吐量', link: '/zh/benchmarks/throughput' },
                   { text: '延迟', link: '/zh/benchmarks/latency' }
