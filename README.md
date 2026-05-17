@@ -234,7 +234,7 @@ npm run build
 
 | Approach | Memory Waste | Throughput | Description |
 |----------|:------------:|:----------:|-------------|
-| Static Allocation | Prior-art pattern: ~40-60% | Baseline context | Pre-allocate max context for each request |
+| Static Allocation | Prior-art pattern: ~40-60% | Prior-art baseline | Pre-allocate max context for each request |
 | Dynamic Allocation | Prior-art pattern: ~20-30% | Literature context: +20% | Resize per request but still fragmented |
 | **PagedAttention** | **Literature context: <5%** | **Literature context: +50%** | Block-based sharing with copy-on-write |
 
