@@ -50,7 +50,10 @@ export default withMermaid(
               {
                 text: 'Whitepaper',
                 items: [
-                  { text: 'Overview', link: '/en/whitepaper/' }
+                  { text: 'Overview', link: '/en/whitepaper/' },
+                  { text: 'Positioning', link: '/en/whitepaper/positioning' },
+                  { text: 'Proof and Limits', link: '/en/whitepaper/proof' },
+                  { text: 'Roadmap', link: '/en/whitepaper/roadmap' }
                 ]
               }
             ],
@@ -184,7 +187,10 @@ export default withMermaid(
               {
                 text: '白皮书',
                 items: [
-                  { text: '概览', link: '/zh/whitepaper/' }
+                  { text: '概览', link: '/zh/whitepaper/' },
+                  { text: '项目定位', link: '/zh/whitepaper/positioning' },
+                  { text: '证据与边界', link: '/zh/whitepaper/proof' },
+                  { text: '路线图', link: '/zh/whitepaper/roadmap' }
                 ]
               }
             ],

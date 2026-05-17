@@ -1,81 +1,25 @@
 # PagedAttention
 
-PagedAttention 是一种革命性的 KV Cache 内存管理技术，将内存浪费从传统的 40-60% 降低到 <5%。
+## 问题
 
-## 核心思想
+KV Cache 难做的核心原因，是序列长度不可预测。若一开始就按最大长度预留大块连续内存，短请求会浪费大量空间；若只做临时性增长而没有清晰映射模型，内存统计会变得脆弱，服务层也很难基于真实资源做准入决策。
 
-PagedAttention 借鉴了操作系统的虚拟内存概念：
+对推理引擎来说，真正的问题因此有两层：既要减少可变长度请求带来的浪费，又要给执行后端提供稳定、可追踪的块表视图。PagedAttention 的意义，就是把“序列内存”重新定义成一个显式映射问题。
 
-1. **逻辑块 vs 物理块**：序列看到连续的逻辑块，实际映射到离散的物理块
-2. **按需分配**：仅在需要时分配物理块，避免预分配浪费
-3. **引用计数**：支持 Copy-on-Write，实现高效的序列共享
+## 设计选择
 
-<ThemeAwareFigure
-  light="/images/figures/paged-attention-light.svg"
-  dark="/images/figures/paged-attention-dark.svg"
-  alt="PagedAttention 逻辑块、页表与物理块池示意图"
-  caption="PagedAttention 让序列保持连续逻辑视图，同时把 Token 映射到可复用的物理 KV 块中。"
-/>
+Hetero-Paged-Infer 采用固定大小的物理块池，加上按序列维护的页表。序列在逻辑上连续增长，系统在物理上按需分配块，并把映射关系明确记录下来。内存统计、空闲链表状态和块归属都保留在 Rust 控制平面里，而不是藏在不透明的执行器内部。
 
-## 核心操作
+当前块模型故意保持简洁。代码里已经有引用计数，为未来的 Copy-on-Write 风格复用留出了方向；但当前实现首先聚焦于单引擎路径里可确定、可释放、可计数的分配与回收。
 
-### 块分配
+## 权衡
 
-```rust
-impl KVCacheManager {
-    /// 为序列分配新块
-    pub fn allocate_block(&mut self, seq_id: SeqId) -> Result<BlockIdx, MemoryError> {
-        // 1. 检查空闲列表
-        if self.block_pool.free_list.is_empty() {
-            return Err(MemoryError::OutOfMemory);
-        }
-        
-        // 2. 从空闲列表弹出
-        let block_idx = self.block_pool.free_list.pop_front().unwrap();
-        
-        // 3. 设置引用计数
-        self.block_pool.blocks[block_idx].ref_count = 1;
-        
-        // 4. 添加到序列的页表
-        self.page_tables.get_mut(&seq_id).unwrap().push(block_idx);
-        
-        Ok(block_idx)
-    }
-}
-```
+这种设计最大的好处，是把内存浪费和内存策略都变成可以推理的问题。固定块大小让碎片边界更清楚，页表则给调度器提供了做准入和压力判断的真实依据。相比“每个请求想要多少就分多少，然后希望后端别崩”，这是更强的系统论证。
 
-### Copy-on-Write (序列分支)
+它的代价是额外的间接层和调参空间。块越小，尾部浪费越少，但元数据和查表开销越高；块越大，管理更简单，但尾部浪费更明显。当前管理器也明显偏向直接、单进程的实现，而不是并发极重的复杂优化——这与仓库现阶段目标相匹配，但不是生产扩展性的最终答案。
 
-```rust
-impl KVCacheManager {
-    /// 分支序列 (用于 beam search 等)
-    pub fn fork_sequence(&mut self, parent_id: SeqId) -> Result<SeqId, MemoryError> {
-        let child_id = self.next_seq_id();
-        
-        // 复制页表 (增加引用计数)
-        let parent_table = self.page_tables.get(&parent_id).unwrap();
-        
-        for block_idx in parent_table.logical_blocks.iter() {
-            // 增加引用计数
-            self.block_pool.blocks[*block_idx].ref_count += 1;
-        }
-        
-        Ok(child_id)
-    }
-}
-```
+## 当前实现状态
 
-## 内存效率分析
+仓库今天已经具备块池、空闲链表分配、按序列页表、内存统计，以及序列完成后的回收逻辑。这些部分都是实装代码、可测试行为，并且已经和调度器行为直接关联。
 
-### 传统静态分配 vs PagedAttention
-
-| 方法 | 内存浪费 | 说明 |
-|------|:--------:|------|
-| 静态分配 | ~40-60% | 预分配最大长度，大量浪费 |
-| **PagedAttention** | **<5%** | 按需分配，仅最后一个块有碎片 |
-
-## 相关
-
-- [内存管理](/zh/architecture/memory-management)
-- [连续批处理](/zh/architecture/continuous-batching)
-- [内存效率基准](/zh/benchmarks/memory-efficiency)
+还没有完成的是最后一公里：真实 GPU kernel 以高性能方式消费这套结构，以及比当前引用计数脚手架更完整的高级复用能力。因此，页表化设计本身今天已经真实存在；最终应该充分利用它的高性能后端，仍然属于未来工作。
