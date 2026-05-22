@@ -185,6 +185,10 @@ pub enum SchedulerError {
     #[error("内存压力: 无法接受新的 prefill 请求")]
     MemoryPressure,
 
+    /// 超出最大并发序列数：{0}
+    #[error("超出最大并发序列数: {0}")]
+    MaxConcurrentSequencesReached(u32),
+
     /// 请求不存在：{0}
     #[error("请求不存在: {0}")]
     RequestNotFound(u64),

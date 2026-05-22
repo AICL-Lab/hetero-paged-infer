@@ -22,6 +22,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
+
+const STREAM_CHUNK_CHARS: usize = 32;
 
 /// 推理后端 trait
 ///
@@ -263,6 +266,13 @@ struct ErrorMessage {
     message: String,
 }
 
+struct PreparedGenerationRequest {
+    model: String,
+    prompt: String,
+    params: GenerationParams,
+    stream: bool,
+}
+
 /// 根据配置创建 router
 pub fn create_router(config: EngineConfig) -> Result<Router, EngineError> {
     let state = Arc::new(AppState::new(config)?);
@@ -306,31 +316,37 @@ async fn completions(
         .inflight_requests
         .fetch_add(1, Ordering::Relaxed);
 
-    let params = generation_params(request.max_tokens, request.temperature, request.top_p);
-    let model = request
-        .model
-        .unwrap_or_else(|| state.config.serving.model_name.clone());
-    let stream = request.stream.unwrap_or(false);
+    let prepared = match prepare_completion_request(&state, request) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            state
+                .metrics
+                .inflight_requests
+                .fetch_sub(1, Ordering::Relaxed);
+            state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
+            return error_response(StatusCode::BAD_REQUEST, &message);
+        }
+    };
 
-    let result = state.generate(&request.prompt, params).await;
+    let result = state.generate(&prepared.prompt, prepared.params).await;
     state
         .metrics
         .inflight_requests
         .fetch_sub(1, Ordering::Relaxed);
 
     match result {
-        Ok(generated) if stream => {
+        Ok(generated) if prepared.stream => {
             state
                 .metrics
                 .streaming_requests_total
                 .fetch_add(1, Ordering::Relaxed);
-            completion_stream_response(&state, &model, generated).into_response()
+            completion_stream_response(&state, &prepared.model, generated).into_response()
         }
         Ok(generated) => Json(CompletionResponse {
             id: state.next_id("cmpl"),
             object: "text_completion",
             created: unix_timestamp(),
-            model,
+            model: prepared.model,
             choices: vec![CompletionChoice {
                 text: generated.text.clone(),
                 index: 0,
@@ -356,37 +372,37 @@ async fn chat_completions(
         .inflight_requests
         .fetch_add(1, Ordering::Relaxed);
 
-    let prompt = request
-        .messages
-        .iter()
-        .map(|message| format!("{}: {}", message.role, message.content))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let params = generation_params(request.max_tokens, request.temperature, request.top_p);
-    let model = request
-        .model
-        .unwrap_or_else(|| state.config.serving.model_name.clone());
-    let stream = request.stream.unwrap_or(false);
+    let prepared = match prepare_chat_request(&state, request) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            state
+                .metrics
+                .inflight_requests
+                .fetch_sub(1, Ordering::Relaxed);
+            state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
+            return error_response(StatusCode::BAD_REQUEST, &message);
+        }
+    };
 
-    let result = state.generate(&prompt, params).await;
+    let result = state.generate(&prepared.prompt, prepared.params).await;
     state
         .metrics
         .inflight_requests
         .fetch_sub(1, Ordering::Relaxed);
 
     match result {
-        Ok(generated) if stream => {
+        Ok(generated) if prepared.stream => {
             state
                 .metrics
                 .streaming_requests_total
                 .fetch_add(1, Ordering::Relaxed);
-            chat_stream_response(&state, &model, generated).into_response()
+            chat_stream_response(&state, &prepared.model, generated).into_response()
         }
         Ok(generated) => Json(ChatCompletionResponse {
             id: state.next_id("chatcmpl"),
             object: "chat.completion",
             created: unix_timestamp(),
-            model,
+            model: prepared.model,
             choices: vec![ChatCompletionChoice {
                 index: 0,
                 message: ChatMessage {
@@ -466,15 +482,21 @@ async fn run_command_bridge(
     prompt: &str,
     params: GenerationParams,
 ) -> Result<GenerationResult, String> {
-    let output = Command::new(&command.program)
-        .args(&command.args)
-        .env("HETERO_PROMPT", prompt)
-        .env("HETERO_MAX_TOKENS", params.max_tokens.to_string())
-        .env("HETERO_TEMPERATURE", params.temperature.to_string())
-        .env("HETERO_TOP_P", params.top_p.to_string())
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut child = Command::new(&command.program);
+    child.kill_on_drop(true);
+    let output = timeout(
+        Duration::from_millis(command.timeout_ms),
+        child
+            .args(&command.args)
+            .env("HETERO_PROMPT", prompt)
+            .env("HETERO_MAX_TOKENS", params.max_tokens.to_string())
+            .env("HETERO_TEMPERATURE", params.temperature.to_string())
+            .env("HETERO_TOP_P", params.top_p.to_string())
+            .output(),
+    )
+    .await
+    .map_err(|_| format!("bridge command timed out after {} ms", command.timeout_ms))?
+    .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(format!(
@@ -495,15 +517,67 @@ async fn run_command_bridge(
     })
 }
 
+fn prepare_completion_request(
+    state: &AppState,
+    request: CompletionRequest,
+) -> Result<PreparedGenerationRequest, String> {
+    let prompt = validate_prompt(request.prompt)?;
+    Ok(PreparedGenerationRequest {
+        model: request
+            .model
+            .unwrap_or_else(|| state.config.serving.model_name.clone()),
+        prompt,
+        params: generation_params(request.max_tokens, request.temperature, request.top_p)?,
+        stream: request.stream.unwrap_or(false),
+    })
+}
+
+fn prepare_chat_request(
+    state: &AppState,
+    request: ChatCompletionRequest,
+) -> Result<PreparedGenerationRequest, String> {
+    if request.messages.is_empty() {
+        return Err("messages must not be empty".to_string());
+    }
+
+    let prompt = validate_prompt(
+        request
+            .messages
+            .iter()
+            .map(|message| format!("{}: {}", message.role, message.content))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+
+    Ok(PreparedGenerationRequest {
+        model: request
+            .model
+            .unwrap_or_else(|| state.config.serving.model_name.clone()),
+        prompt,
+        params: generation_params(request.max_tokens, request.temperature, request.top_p)?,
+        stream: request.stream.unwrap_or(false),
+    })
+}
+
 fn generation_params(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
-) -> GenerationParams {
-    GenerationParams {
+) -> Result<GenerationParams, String> {
+    let params = GenerationParams {
         max_tokens: max_tokens.unwrap_or(16),
         temperature: temperature.unwrap_or(1.0),
         top_p: top_p.unwrap_or(1.0),
+    };
+    params.validate().map_err(|err| err.to_string())?;
+    Ok(params)
+}
+
+fn validate_prompt(prompt: String) -> Result<String, String> {
+    if prompt.trim().is_empty() {
+        Err("prompt must not be empty".to_string())
+    } else {
+        Ok(prompt)
     }
 }
 
@@ -529,12 +603,29 @@ fn estimate_tokens(text: &str) -> usize {
 }
 
 fn text_chunks(text: &str) -> Vec<String> {
-    let chunks = text.chars().map(|ch| ch.to_string()).collect::<Vec<_>>();
-    if chunks.is_empty() {
-        vec![String::new()]
-    } else {
-        chunks
+    if text.is_empty() {
+        return vec![String::new()];
     }
+
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0;
+
+    for ch in text.chars() {
+        current.push(ch);
+        current_len += 1;
+
+        if current_len == STREAM_CHUNK_CHARS {
+            chunks.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    chunks
 }
 
 fn unix_timestamp() -> u64 {
@@ -554,4 +645,26 @@ fn error_response(status: StatusCode, message: &str) -> Response {
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::text_chunks;
+
+    #[test]
+    fn test_text_chunks_keeps_empty_text_as_single_chunk() {
+        assert_eq!(text_chunks(""), vec![String::new()]);
+    }
+
+    #[test]
+    fn test_text_chunks_groups_output_into_bounded_chunks() {
+        let text = "a".repeat(65);
+
+        let chunks = text_chunks(&text);
+
+        assert_eq!(
+            chunks,
+            vec!["a".repeat(32), "a".repeat(32), "a".to_string()]
+        );
+    }
 }
