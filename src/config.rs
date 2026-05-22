@@ -106,13 +106,30 @@ pub enum ServingBackendKind {
 }
 
 /// 命令桥接配置
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommandBridgeConfig {
     /// 可执行程序路径
     pub program: String,
     /// 额外参数
     #[serde(default)]
     pub args: Vec<String>,
+    /// 子进程超时时间（毫秒）
+    #[serde(default = "default_command_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+const fn default_command_timeout_ms() -> u64 {
+    30_000
+}
+
+impl Default for CommandBridgeConfig {
+    fn default() -> Self {
+        Self {
+            program: String::new(),
+            args: Vec::new(),
+            timeout_ms: default_command_timeout_ms(),
+        }
+    }
 }
 
 /// Serving 后端配置
@@ -647,6 +664,7 @@ mod tests {
         assert_eq!(config.serving.model_name, "hetero-infer");
         assert_eq!(config.serving.backend.kind, ServingBackendKind::LocalEngine);
         assert_eq!(config.serving.backend.command, None);
+        assert_eq!(CommandBridgeConfig::default().timeout_ms, 30_000);
     }
 
     #[test]
@@ -674,6 +692,7 @@ mod tests {
                     command: Some(CommandBridgeConfig {
                         program: String::new(),
                         args: Vec::new(),
+                        timeout_ms: 30_000,
                     }),
                 },
                 ..Default::default()
@@ -703,6 +722,7 @@ mod tests {
                     command: Some(CommandBridgeConfig {
                         program: "/usr/bin/mock-backend".to_string(),
                         args: vec!["--serve".to_string()],
+                        timeout_ms: 5_000,
                     }),
                 },
             },
@@ -729,6 +749,7 @@ mod tests {
             Some(CommandBridgeConfig {
                 program: "/usr/bin/mock-backend".to_string(),
                 args: vec!["--serve".to_string()],
+                timeout_ms: 5_000,
             })
         );
     }

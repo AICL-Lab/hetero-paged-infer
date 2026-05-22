@@ -322,6 +322,7 @@ impl InferenceEngine {
         completed_requests
             .into_iter()
             .map(|req| {
+                let input_text = self.tokenizer.try_decode(&req.input_tokens).ok();
                 let decoded_output = self.tokenizer.try_decode(&req.output_tokens);
                 let tokenization_error = decoded_output.as_ref().err().cloned();
                 let output_text = decoded_output.unwrap_or_default();
@@ -342,7 +343,7 @@ impl InferenceEngine {
 
                 CompletedRequest {
                     request_id: req.id,
-                    input_text: None,
+                    input_text,
                     output_text,
                     output_tokens: req.output_tokens,
                     success,
@@ -795,6 +796,21 @@ mod tests {
         for _ in 0..10 {
             let _ = engine.step();
         }
+    }
+
+    #[test]
+    fn test_completed_request_preserves_input_text() {
+        let config = create_test_config();
+        let mut engine = InferenceEngine::new(config).unwrap();
+        engine.set_max_steps(100);
+
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].input_text.as_deref(), Some("Hello"));
     }
 
     #[test]

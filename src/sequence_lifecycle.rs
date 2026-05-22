@@ -94,8 +94,11 @@ impl SequenceLifecycle {
             return Err(SchedulerError::MemoryPressure);
         }
 
-        if self.num_active_sequences() >= self.config.max_num_seqs as usize {
-            return Err(SchedulerError::MemoryPressure);
+        let total_sequences = self.pending_queue.len() + self.num_active_sequences();
+        if total_sequences >= self.config.max_num_seqs as usize {
+            return Err(SchedulerError::MaxConcurrentSequencesReached(
+                self.config.max_num_seqs,
+            ));
         }
 
         let seq_id = self.generate_seq_id();
@@ -147,8 +150,7 @@ impl SequenceLifecycle {
     /// 成功返回 `Ok(())`；失败返回包含错误信息的 `Err`。
     pub fn grow_decode_sequence(&mut self, seq_id: SeqId) -> Result<(), String> {
         let Some(seq) = self.decode_sequences.get(&seq_id) else {
-            debug_assert!(false, "seq_id {} expected in decode but missing", seq_id);
-            return Ok(());
+            return Err(format!("Decode sequence not found: {seq_id}"));
         };
 
         let current_tokens = seq.context_len();
@@ -159,7 +161,7 @@ impl SequenceLifecycle {
             match self.kv_cache.allocate_block(seq_id) {
                 Ok(physical_ref) => {
                     let Some(sequence) = self.decode_sequences.get_mut(&seq_id) else {
-                        return Ok(());
+                        return Err(format!("Decode sequence not found: {seq_id}"));
                     };
                     let logical_idx = sequence.logical_blocks.len() as u32;
                     sequence
@@ -236,10 +238,17 @@ impl SequenceLifecycle {
     /// GPU 执行后更新序列状态（追加 token、prefill→decode 转换、检测完成）
     pub fn update_sequences(&mut self, outputs: &ExecutionOutput, eos_token_id: TokenId) {
         let mut to_complete = Vec::new();
+        let mut to_fail = Vec::new();
         let max_model_len = self.config.max_model_len as usize;
 
         for (i, &seq_id) in outputs.seq_ids.iter().enumerate() {
-            let next_token = outputs.next_tokens.get(i).copied().unwrap_or(0);
+            let Some(next_token) = outputs.next_tokens.get(i).copied() else {
+                to_fail.push((
+                    seq_id,
+                    format!("Malformed execution output: missing next token for seq_id {seq_id}"),
+                ));
+                continue;
+            };
 
             if self.prefill_sequences.contains_key(&seq_id) {
                 self.transition_prefill_to_decode(seq_id);
@@ -254,9 +263,17 @@ impl SequenceLifecycle {
                 {
                     to_complete.push(seq_id);
                 }
+            } else {
+                to_fail.push((
+                    seq_id,
+                    format!("Malformed execution output: unknown seq_id {seq_id}"),
+                ));
             }
         }
 
+        for (seq_id, reason) in to_fail {
+            self.fail_sequence(seq_id, &reason);
+        }
         for seq_id in to_complete {
             self.complete_sequence(seq_id);
         }
@@ -375,5 +392,92 @@ impl SequenceLifecycle {
     /// 取走所有已完成请求
     pub fn get_completed(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.completed_requests)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::SchedulerError;
+    use crate::types::GenerationParams;
+
+    fn test_config() -> EngineConfig {
+        EngineConfig {
+            block_size: 4,
+            max_num_blocks: 32,
+            max_batch_size: 8,
+            max_num_seqs: 4,
+            max_model_len: 32,
+            max_total_tokens: 32,
+            memory_threshold: 0.9,
+            ..Default::default()
+        }
+    }
+
+    fn test_request(id: u64, max_tokens: u32) -> Request {
+        Request::new(
+            id,
+            vec![10, 11, 12],
+            GenerationParams {
+                max_tokens,
+                ..GenerationParams::default()
+            },
+        )
+    }
+
+    #[test]
+    fn test_add_request_counts_pending_toward_max_num_seqs() {
+        let mut lifecycle = SequenceLifecycle::new(EngineConfig {
+            max_num_seqs: 1,
+            ..test_config()
+        });
+
+        assert!(lifecycle.add_request(test_request(1, 2)).is_ok());
+        let result = lifecycle.add_request(test_request(2, 2));
+
+        assert!(matches!(
+            result,
+            Err(SchedulerError::MaxConcurrentSequencesReached(1))
+        ));
+    }
+
+    #[test]
+    fn test_grow_decode_sequence_fails_for_missing_sequence() {
+        let mut lifecycle = SequenceLifecycle::new(test_config());
+
+        let result = lifecycle.grow_decode_sequence(999);
+
+        assert!(result.is_err(), "missing decode sequence must return Err");
+    }
+
+    #[test]
+    fn test_update_sequences_fails_request_when_output_missing_token() {
+        let mut lifecycle = SequenceLifecycle::new(test_config());
+        let seq_id = lifecycle.add_request(test_request(1, 1)).unwrap();
+        let (pending_seq_id, request) = lifecycle.pop_pending().unwrap();
+        assert_eq!(pending_seq_id, seq_id);
+        lifecycle.try_start_prefill(seq_id, request).unwrap();
+        lifecycle.transition_prefill_to_decode(seq_id);
+
+        lifecycle.update_sequences(
+            &ExecutionOutput {
+                next_tokens: Vec::new(),
+                logits: None,
+                seq_ids: vec![seq_id],
+            },
+            2,
+        );
+
+        assert!(lifecycle.get_sequence(seq_id).is_none());
+        let completed = lifecycle.get_completed();
+        assert_eq!(completed.len(), 1);
+        assert!(
+            matches!(&completed[0].state, RequestState::Failed(message) if message.contains("missing next token")),
+            "malformed output should fail request instead of fabricating token"
+        );
+        assert!(
+            completed[0].output_tokens.is_empty(),
+            "malformed output must not append synthetic tokens"
+        );
     }
 }
