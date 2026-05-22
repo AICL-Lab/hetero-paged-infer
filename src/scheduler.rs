@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_queue_does_not_count_toward_max_sequences() {
+    fn test_pending_queue_counts_toward_max_sequences() {
         let config = EngineConfig {
             max_num_seqs: 1,
             ..create_test_config()
@@ -338,7 +338,10 @@ mod tests {
         let second = create_test_request(2, 16);
 
         assert!(scheduler.add_request(first).is_ok());
-        assert!(scheduler.add_request(second).is_ok());
+        assert!(matches!(
+            scheduler.add_request(second),
+            Err(SchedulerError::MaxConcurrentSequencesReached(1))
+        ));
     }
 
     #[test]
