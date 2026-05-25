@@ -260,4 +260,3 @@ proptest! {
 
 - [PagedAttention](/en/architecture/paged-attention)
 - [Continuous Batching](/en/architecture/continuous-batching)
-- [Memory Efficiency Benchmarks](/en/benchmarks/memory-efficiency)

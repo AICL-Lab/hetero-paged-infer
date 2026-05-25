@@ -96,61 +96,6 @@ impl Default for TokenizerConfig {
     }
 }
 
-/// Serving 后端类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ServingBackendKind {
-    #[default]
-    LocalEngine,
-    CommandBridge,
-}
-
-/// 命令桥接配置
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CommandBridgeConfig {
-    /// 可执行程序路径
-    pub program: String,
-    /// 额外参数
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// 子进程超时时间（毫秒）
-    #[serde(default = "default_command_timeout_ms")]
-    pub timeout_ms: u64,
-}
-
-const fn default_command_timeout_ms() -> u64 {
-    30_000
-}
-
-impl Default for CommandBridgeConfig {
-    fn default() -> Self {
-        Self {
-            program: String::new(),
-            args: Vec::new(),
-            timeout_ms: default_command_timeout_ms(),
-        }
-    }
-}
-
-/// Serving 后端配置
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ServingBackendConfig {
-    /// 后端类型
-    pub kind: ServingBackendKind,
-    /// 命令桥接配置
-    #[serde(default)]
-    pub command: Option<CommandBridgeConfig>,
-}
-
-impl Default for ServingBackendConfig {
-    fn default() -> Self {
-        Self {
-            kind: ServingBackendKind::LocalEngine,
-            command: None,
-        }
-    }
-}
-
 /// Serving 配置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServingConfig {
@@ -160,8 +105,6 @@ pub struct ServingConfig {
     pub port: u16,
     /// 对外暴露的模型名称
     pub model_name: String,
-    /// 运行时后端
-    pub backend: ServingBackendConfig,
 }
 
 impl Default for ServingConfig {
@@ -170,7 +113,6 @@ impl Default for ServingConfig {
             host: "127.0.0.1".to_string(),
             port: 3000,
             model_name: "hetero-infer".to_string(),
-            backend: ServingBackendConfig::default(),
         }
     }
 }
@@ -400,14 +342,6 @@ impl EngineConfig {
         if self.serving.model_name.trim().is_empty() {
             return Err(ConfigError::InvalidModelName);
         }
-        if matches!(self.serving.backend.kind, ServingBackendKind::CommandBridge) {
-            let Some(command) = &self.serving.backend.command else {
-                return Err(ConfigError::InvalidCommandProgram);
-            };
-            if command.program.trim().is_empty() {
-                return Err(ConfigError::InvalidCommandProgram);
-            }
-        }
         // Note: max_retry_attempts can be 0 (no retries) or any positive value
         Ok(())
     }
@@ -439,11 +373,6 @@ impl EngineConfig {
                 || self.tokenizer.path.is_some())
             && self.serving.port > 0
             && !self.serving.model_name.trim().is_empty()
-            && (!matches!(self.serving.backend.kind, ServingBackendKind::CommandBridge)
-                || matches!(
-                    self.serving.backend.command.as_ref(),
-                    Some(command) if !command.program.trim().is_empty()
-                ))
     }
 
     /// 从 JSON 文件加载配置
@@ -662,9 +591,6 @@ mod tests {
         assert_eq!(config.serving.host, "127.0.0.1");
         assert_eq!(config.serving.port, 3000);
         assert_eq!(config.serving.model_name, "hetero-infer");
-        assert_eq!(config.serving.backend.kind, ServingBackendKind::LocalEngine);
-        assert_eq!(config.serving.backend.command, None);
-        assert_eq!(CommandBridgeConfig::default().timeout_ms, 30_000);
     }
 
     #[test]
@@ -684,29 +610,6 @@ mod tests {
     }
 
     #[test]
-    fn test_command_bridge_requires_program() {
-        let config = EngineConfig {
-            serving: ServingConfig {
-                backend: ServingBackendConfig {
-                    kind: ServingBackendKind::CommandBridge,
-                    command: Some(CommandBridgeConfig {
-                        program: String::new(),
-                        args: Vec::new(),
-                        timeout_ms: 30_000,
-                    }),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::InvalidCommandProgram)
-        ));
-    }
-
-    #[test]
     fn test_config_round_trip_preserves_serving_and_tokenizer_settings() {
         let config = EngineConfig {
             tokenizer: TokenizerConfig {
@@ -717,14 +620,6 @@ mod tests {
                 host: "0.0.0.0".to_string(),
                 port: 8080,
                 model_name: "demo-model".to_string(),
-                backend: ServingBackendConfig {
-                    kind: ServingBackendKind::CommandBridge,
-                    command: Some(CommandBridgeConfig {
-                        program: "/usr/bin/mock-backend".to_string(),
-                        args: vec!["--serve".to_string()],
-                        timeout_ms: 5_000,
-                    }),
-                },
             },
             ..Default::default()
         };
@@ -740,18 +635,6 @@ mod tests {
         assert_eq!(decoded.serving.host, "0.0.0.0");
         assert_eq!(decoded.serving.port, 8080);
         assert_eq!(decoded.serving.model_name, "demo-model");
-        assert_eq!(
-            decoded.serving.backend.kind,
-            ServingBackendKind::CommandBridge
-        );
-        assert_eq!(
-            decoded.serving.backend.command,
-            Some(CommandBridgeConfig {
-                program: "/usr/bin/mock-backend".to_string(),
-                args: vec!["--serve".to_string()],
-                timeout_ms: 5_000,
-            })
-        );
     }
 }
 

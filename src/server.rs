@@ -2,7 +2,7 @@
 //!
 //! 提供 OpenAI 兼容的最小服务接口、健康检查与指标暴露。
 
-use crate::config::{CommandBridgeConfig, EngineConfig, ServingBackendKind};
+use crate::config::EngineConfig;
 use crate::error::{EngineError, SchedulerError};
 use crate::types::GenerationParams;
 use crate::InferenceEngine;
@@ -15,102 +15,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::process::Command;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
 
 const STREAM_CHUNK_CHARS: usize = 32;
-
-/// 推理后端 trait
-///
-/// 定义 Server 与推理引擎之间的 seam，隐藏 LocalEngine / CommandBridge 的差异。
-pub trait InferenceBackend: Send + Sync {
-    /// 执行单次生成
-    fn generate<'a>(
-        &'a self,
-        prompt: &'a str,
-        params: GenerationParams,
-    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>>;
-}
-
-/// LocalEngine 后端适配器
-#[derive(Clone)]
-pub struct LocalEngineBackend {
-    engine: Arc<Mutex<InferenceEngine>>,
-}
-
-impl LocalEngineBackend {
-    pub fn new(engine: InferenceEngine) -> Self {
-        Self {
-            engine: Arc::new(Mutex::new(engine)),
-        }
-    }
-}
-
-impl InferenceBackend for LocalEngineBackend {
-    fn generate<'a>(
-        &'a self,
-        prompt: &'a str,
-        params: GenerationParams,
-    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut engine = self.engine.lock().await;
-            let request_id = engine
-                .submit_request(prompt, params)
-                .map_err(|e| e.to_string())?;
-            engine.set_max_steps(1024);
-            let completed = engine.run();
-            let result = completed
-                .into_iter()
-                .find(|item| item.request_id == request_id)
-                .ok_or_else(|| {
-                    EngineError::Scheduler(SchedulerError::RequestNotFound(request_id)).to_string()
-                })?;
-
-            if result.success {
-                let text = result.output_text;
-                let completion_tokens = estimate_tokens(&text);
-                Ok(GenerationResult {
-                    text,
-                    prompt_tokens: estimate_tokens(prompt),
-                    completion_tokens,
-                })
-            } else {
-                Err(result
-                    .error
-                    .unwrap_or_else(|| "generation failed".to_string()))
-            }
-        })
-    }
-}
-
-/// CommandBridge 后端适配器
-#[derive(Clone)]
-pub struct CommandBridgeBackend {
-    config: CommandBridgeConfig,
-}
-
-impl CommandBridgeBackend {
-    pub fn new(config: CommandBridgeConfig) -> Self {
-        Self { config }
-    }
-}
-
-impl InferenceBackend for CommandBridgeBackend {
-    fn generate<'a>(
-        &'a self,
-        prompt: &'a str,
-        params: GenerationParams,
-    ) -> Pin<Box<dyn Future<Output = Result<GenerationResult, String>> + Send + 'a>> {
-        let config = self.config.clone();
-        Box::pin(async move { run_command_bridge(&config, prompt, params).await })
-    }
-}
 
 #[derive(Default)]
 struct ServerMetrics {
@@ -135,7 +45,7 @@ impl ServerMetrics {
 #[derive(Clone)]
 struct AppState {
     config: EngineConfig,
-    backend: Arc<dyn InferenceBackend>,
+    engine: Arc<Mutex<InferenceEngine>>,
     metrics: Arc<ServerMetrics>,
     response_counter: Arc<AtomicU64>,
 }
@@ -143,23 +53,11 @@ struct AppState {
 impl AppState {
     fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
-        let backend: Arc<dyn InferenceBackend> = match config.serving.backend.kind {
-            ServingBackendKind::LocalEngine => Arc::new(LocalEngineBackend::new(
-                InferenceEngine::new(config.clone())?,
-            )),
-            ServingBackendKind::CommandBridge => Arc::new(CommandBridgeBackend::new(
-                config
-                    .serving
-                    .backend
-                    .command
-                    .clone()
-                    .ok_or(crate::ConfigError::InvalidCommandProgram)?,
-            )),
-        };
+        let engine = InferenceEngine::new(config.clone())?;
 
         Ok(Self {
             config,
-            backend,
+            engine: Arc::new(Mutex::new(engine)),
             metrics: Arc::new(ServerMetrics::default()),
             response_counter: Arc::new(AtomicU64::new(1)),
         })
@@ -175,7 +73,32 @@ impl AppState {
         prompt: &str,
         params: GenerationParams,
     ) -> Result<GenerationResult, String> {
-        self.backend.generate(prompt, params).await
+        let mut engine = self.engine.lock().await;
+        let request_id = engine
+            .submit_request(prompt, params)
+            .map_err(|e| e.to_string())?;
+        engine.set_max_steps(1024);
+        let completed = engine.run();
+        let result = completed
+            .into_iter()
+            .find(|item| item.request_id == request_id)
+            .ok_or_else(|| {
+                EngineError::Scheduler(SchedulerError::RequestNotFound(request_id)).to_string()
+            })?;
+
+        if result.success {
+            let text = result.output_text;
+            let completion_tokens = estimate_tokens(&text);
+            Ok(GenerationResult {
+                text,
+                prompt_tokens: estimate_tokens(prompt),
+                completion_tokens,
+            })
+        } else {
+            Err(result
+                .error
+                .unwrap_or_else(|| "generation failed".to_string()))
+        }
     }
 }
 
@@ -475,46 +398,6 @@ fn chat_stream_response(
     })
     .keep_alive(KeepAlive::default())
     .into_response()
-}
-
-async fn run_command_bridge(
-    command: &CommandBridgeConfig,
-    prompt: &str,
-    params: GenerationParams,
-) -> Result<GenerationResult, String> {
-    let mut child = Command::new(&command.program);
-    child.kill_on_drop(true);
-    let output = timeout(
-        Duration::from_millis(command.timeout_ms),
-        child
-            .args(&command.args)
-            .env("HETERO_PROMPT", prompt)
-            .env("HETERO_MAX_TOKENS", params.max_tokens.to_string())
-            .env("HETERO_TEMPERATURE", params.temperature.to_string())
-            .env("HETERO_TOP_P", params.top_p.to_string())
-            .output(),
-    )
-    .await
-    .map_err(|_| format!("bridge command timed out after {} ms", command.timeout_ms))?
-    .map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "bridge command failed with status {}",
-            output.status
-        ));
-    }
-
-    let text = String::from_utf8(output.stdout)
-        .map_err(|e| e.to_string())?
-        .trim_end()
-        .to_string();
-
-    Ok(GenerationResult {
-        prompt_tokens: estimate_tokens(prompt),
-        completion_tokens: estimate_tokens(&text),
-        text,
-    })
 }
 
 fn prepare_completion_request(

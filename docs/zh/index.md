@@ -25,7 +25,6 @@ title: Hetero-Paged-Infer
   { title: '架构', summary: '引擎结构、调度模型与内存管理设计。', href: '/zh/architecture/overview' },
   { title: '安装配置', summary: '安装、配置与本地使用。', href: '/zh/setup/quickstart' },
   { title: 'API', summary: '核心类型与 HTTP API 参考。', href: '/zh/api/' },
-  { title: '性能基准', summary: '当前测量结果与方法学。', href: '/zh/benchmarks/' },
   { title: '部署', summary: 'Docker 与生产部署说明。', href: '/zh/deployment/' },
   { title: '开发', summary: '贡献流程与验证命令。', href: '/zh/development/contributing' },
 ]" />
@@ -33,5 +32,5 @@ title: Hetero-Paged-Infer
 ## 当前边界
 
 - 仓库已提供可本地运行的引擎、调度器、KV Cache 管理器与 HTTP 服务层。
-- 文档站聚焦实现与使用说明，不再承载 Changelog 历史页面。
-- 真实 CUDA Kernel 仍处于后续规划阶段。
+- 文档站仅保留当前实现所需的说明，移除了历史性、展示性和白皮书式内容。
+- 真实 CUDA Kernel 仍是后续工作，不被当作当前能力描述。

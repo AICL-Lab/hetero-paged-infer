@@ -8,7 +8,7 @@
 
 **A High-Performance LLM Inference Engine with PagedAttention & Continuous Batching**
 
-> ⚠️ **Development Status**: This project is in early development (v0.1.0). It currently uses a Mock GPU executor for testing and demonstration purposes. Real CUDA kernel support is planned but not yet implemented.
+> ⚠️ **Development Status**: This project is in early development (v0.1.0). The default path still uses a Mock GPU executor. The optional `cuda` feature now compiles and exercises a real CUDA kernel path, with host fallback when no CUDA device is available. Full production attention kernels are still future work.
 
 **[English](README.md) | [中文](README.zh.md) | [Documentation](https://aicl-lab.github.io/hetero-paged-infer/)**
 
@@ -28,7 +28,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 | **Modular Architecture** | Trait-based abstractions | ✅ |
 | **Comprehensive Testing** | 121+ tests | ✅ |
 | **OpenAI-Compatible Server** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
-| **CUDA Kernels** | Real GPU execution | 🚧 Planned |
+| **CUDA Feature** | nvcc-built executor with kernel path and host fallback | ✅ Experimental |
 
 ## Architecture
 
@@ -70,6 +70,15 @@ cargo build --release
 
 # Run the test suite (121+ tests)
 cargo test
+```
+
+Optional nvcc-backed build:
+
+```bash
+CC=/usr/bin/gcc-12 \
+CXX=/usr/bin/g++-12 \
+CUDAHOSTCXX=/usr/bin/g++-12 \
+cargo test --all-features
 ```
 
 ### CLI Usage
@@ -170,11 +179,7 @@ Config file (`config.json`):
   "serving": {
     "host": "127.0.0.1",
     "port": 3000,
-    "model_name": "hetero-infer",
-    "backend": {
-      "kind": "local_engine",
-      "command": null
-    }
+    "model_name": "hetero-infer"
   }
 }
 ```
@@ -188,22 +193,6 @@ For a HuggingFace tokenizer file:
   "tokenizer": {
     "kind": "huggingface",
     "path": "tokenizer.json"
-  }
-}
-```
-
-For command bridge mode:
-
-```json
-{
-  "serving": {
-    "backend": {
-      "kind": "command_bridge",
-      "command": {
-        "program": "/bin/sh",
-        "args": ["-c", "printf 'bridge:%s' \"$HETERO_PROMPT\""]
-      }
-    }
   }
 }
 ```
@@ -238,7 +227,7 @@ npm run build
 | Dynamic Allocation | Prior-art pattern: ~20-30% | Literature context: +20% | Resize per request but still fragmented |
 | **PagedAttention** | **Literature context: <5%** | **Literature context: +50%** | Block-based sharing with copy-on-write |
 
-> Note: Current benchmark figures are either measured with the mock executor or derived from architecture-level estimates. Real CUDA measurements are out of scope until the GPU backend is implemented.
+> Note: Current benchmark figures are still measured with the mock path or derived from architecture-level estimates. The `cuda` feature now validates a minimal real kernel path, but it is not yet a production attention-kernel implementation.
 
 ### Why PagedAttention?
 
@@ -284,6 +273,7 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] Continuous Batching Scheduler
 - [x] Memory Pressure Awareness
 - [x] Property-Based Testing
+- [x] nvcc-backed CUDA build path
 - [ ] Real CUDA Kernels
 - [ ] Real Tokenizer Integration
 - [ ] Async CPU/GPU Overlap

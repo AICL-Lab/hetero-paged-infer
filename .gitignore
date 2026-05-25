@@ -27,13 +27,6 @@ Thumbs.db
 lcov.info
 coverage/
 
-# Claude Code local state
-.claude/
-CLAUDE.local.md
-
-# OMC local state
-.omc/
-
 # Local git worktrees
 .worktrees/
 worktrees/

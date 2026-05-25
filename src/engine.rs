@@ -52,7 +52,7 @@
 use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
 use crate::execution_pipeline::BatchExecutionPipeline;
-use crate::gpu_executor::{GPUExecutorTrait, MockGPUExecutor};
+use crate::gpu_executor::{create_default_gpu_executor, GPUExecutorTrait};
 use crate::scheduler::{Scheduler, SchedulerTrait};
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
@@ -132,7 +132,7 @@ impl InferenceEngine {
         let eos_token_id = tokenizer.eos_token_id();
 
         let scheduler = Scheduler::new(config.clone());
-        let gpu_executor = Box::new(MockGPUExecutor::new(config.clone(), vocab_size));
+        let gpu_executor = create_default_gpu_executor(config.clone(), vocab_size)?;
         let execution_pipeline = BatchExecutionPipeline::new(gpu_executor, &config);
 
         Ok(Self {

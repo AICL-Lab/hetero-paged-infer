@@ -9,7 +9,7 @@
 
 **高性能 LLM 推理引擎 - PagedAttention + Continuous Batching**
 
-> ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。目前使用 Mock GPU 执行器进行测试和演示。真实的 CUDA 内核支持已规划但尚未实现。
+> ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。默认路径仍使用 Mock GPU 执行器。可选的 `cuda` feature 现在会编译并执行一条真实的 CUDA kernel 路径；若没有可用设备则自动回退到 host 路径。完整的生产级注意力 kernel 仍是后续工作。
 
 **[English](README.md) | [中文](README.zh.md) | [文档](https://aicl-lab.github.io/hetero-paged-infer/zh/)**
 
@@ -29,7 +29,7 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模�
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **全面测试** | 121+ 个测试 | ✅ |
-| **CUDA Kernel** | 真实 GPU 执行 | 🚧 规划中 |
+| **CUDA Feature** | 接入由 nvcc 构建、带 kernel 路径和 host 回退的执行器 | ✅ 实验性 |
 
 ## 系统架构
 
@@ -72,6 +72,15 @@ cargo build --release
 
 # 运行测试套件（121+ 个测试）
 cargo test
+```
+
+可选的 nvcc 构建验证：
+
+```bash
+CC=/usr/bin/gcc-12 \
+CXX=/usr/bin/g++-12 \
+CUDAHOSTCXX=/usr/bin/g++-12 \
+cargo test --all-features
 ```
 
 ### 命令行用法
@@ -200,7 +209,7 @@ npm run build
 | 动态分配 | 先验模式：~20-30% | 文献背景：+20% | 按请求调整但仍有碎片 |
 | **PagedAttention** | **文献背景：<5%** | **文献背景：+50%** | 基于块的共享与写时复制 |
 
-> 说明：当前性能数字要么来自 mock executor 的实测，要么来自架构层面的估算；真实 CUDA 指标需等 GPU 后端落地后再公布。
+> 说明：当前性能数字仍然主要来自 mock 路径或架构层面的估算。`cuda` feature 现在已经接入最小真实 kernel 路径，但它还不是生产级注意力 kernel 实现。
 
 ### 为什么选择 PagedAttention？
 
@@ -248,6 +257,7 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] 属性测试
 - [x] OpenAI 兼容 HTTP 服务
 - [x] HuggingFace Tokenizer 集成
+- [x] nvcc 驱动的 CUDA 构建路径
 - [ ] 真实 CUDA Kernel
 - [ ] 异步 CPU/GPU 重叠
 
