@@ -28,7 +28,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 | **Modular Architecture** | Trait-based abstractions | ✅ |
 | **Comprehensive Testing** | 121+ tests | ✅ |
 | **OpenAI-Compatible Server** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
-| **CUDA Feature** | nvcc-built executor with kernel path and host fallback | ✅ Experimental |
+| **CUDA Feature** | Prefers an nvcc-built kernel path and falls back to a host-compatible backend when nvcc is absent | ✅ Experimental |
 
 ## Architecture
 
@@ -80,6 +80,8 @@ CXX=/usr/bin/g++-12 \
 CUDAHOSTCXX=/usr/bin/g++-12 \
 cargo test --all-features
 ```
+
+If `nvcc` is not available, `cargo test --all-features` now falls back to a host-compatible backend so CI can still build and test the CUDA feature surface.
 
 ### CLI Usage
 

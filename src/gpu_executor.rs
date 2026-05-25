@@ -331,6 +331,7 @@ pub struct CudaExecutor {
     vocab_size: u32,
     token_counter: u32,
     backend_name: String,
+    compiled_with_nvcc: bool,
     device_available: bool,
     last_launch_used_device: bool,
 }
@@ -338,12 +339,7 @@ pub struct CudaExecutor {
 #[cfg(feature = "cuda")]
 impl CudaExecutor {
     pub fn new(config: EngineConfig, vocab_size: u32) -> Result<Self, ExecutionError> {
-        if !cuda_backend::compiled_with_nvcc() {
-            return Err(ExecutionError::CudaError(
-                "CUDA backend was not compiled by nvcc".to_string(),
-            ));
-        }
-
+        let compiled_with_nvcc = cuda_backend::compiled_with_nvcc();
         let backend_name = cuda_backend::backend_name()?;
         let device_available = cuda_backend::device_available();
         let batch_data = GPUBatchData::new(
@@ -360,6 +356,7 @@ impl CudaExecutor {
             vocab_size,
             token_counter: 100,
             backend_name,
+            compiled_with_nvcc,
             device_available,
             last_launch_used_device: false,
         })
@@ -367,6 +364,10 @@ impl CudaExecutor {
 
     pub fn backend_name(&self) -> &str {
         &self.backend_name
+    }
+
+    pub fn compiled_with_nvcc(&self) -> bool {
+        self.compiled_with_nvcc
     }
 
     pub fn device_available(&self) -> bool {
@@ -648,7 +649,14 @@ mod tests {
         let config = create_test_config();
         let executor = CudaExecutor::new(config, 32000).unwrap();
 
-        assert_eq!(executor.backend_name(), "nvcc-compiled-cuda-backend");
+        assert!(
+            executor.backend_name() == "nvcc-compiled-cuda-backend"
+                || executor.backend_name() == "host-fallback-cuda-backend"
+        );
+        assert_eq!(
+            executor.compiled_with_nvcc(),
+            executor.backend_name() == "nvcc-compiled-cuda-backend"
+        );
         assert!(!executor.last_launch_used_device());
         assert!(!executor.has_captured_graph());
     }

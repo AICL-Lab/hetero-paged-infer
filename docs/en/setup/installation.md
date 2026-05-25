@@ -259,7 +259,7 @@ CUDAHOSTCXX=/usr/bin/g++-12 \
 cargo test --all-features --release
 ```
 
-This currently validates a minimal real CUDA kernel path with host fallback. It does **not** yet imply that production CUDA attention kernels are implemented.
+With `nvcc` available, this validates a minimal real CUDA kernel path. Without `nvcc`, the same feature set falls back to a host-compatible backend so CI can still compile and test the CUDA-facing Rust integration. It does **not** yet imply that production CUDA attention kernels are implemented.
 
 ## Troubleshooting
 
@@ -303,6 +303,8 @@ nvcc: command not found
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ```
+
+If you only need the Rust-side CUDA feature surface to compile and test, the build now falls back automatically and does not require `nvcc`.
 
 ## Uninstallation
 

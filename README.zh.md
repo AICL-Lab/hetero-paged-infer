@@ -29,7 +29,7 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模�
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **全面测试** | 121+ 个测试 | ✅ |
-| **CUDA Feature** | 接入由 nvcc 构建、带 kernel 路径和 host 回退的执行器 | ✅ 实验性 |
+| **CUDA Feature** | 优先使用 nvcc 构建的 kernel 路径；若缺少 nvcc，则回退到 ABI 兼容的 host 后端 | ✅ 实验性 |
 
 ## 系统架构
 
@@ -82,6 +82,8 @@ CXX=/usr/bin/g++-12 \
 CUDAHOSTCXX=/usr/bin/g++-12 \
 cargo test --all-features
 ```
+
+如果环境里没有 `nvcc`，`cargo test --all-features` 现在会自动回退到 host 兼容后端，因此 CI 仍能覆盖 CUDA feature 的编译和测试面。
 
 ### 命令行用法
 
