@@ -33,3 +33,7 @@ CLAUDE.local.md
 
 # OMC local state
 .omc/
+
+# Local git worktrees
+.worktrees/
+worktrees/

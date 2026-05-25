@@ -8,11 +8,11 @@ title: Hetero-Paged-Infer
 <div class="language-select">
   <a class="language-card" href="./en/">
     <div class="language-name">English</div>
-    <div class="language-desc">Flagship whitepaper, architecture guide, benchmarks, references</div>
+    <div class="language-desc">Architecture, setup, API, deployment, and development guides</div>
   </a>
   <a class="language-card" href="./zh/">
     <div class="language-name">简体中文</div>
-    <div class="language-desc">技术白皮书、架构拆解、性能证据、参考资料</div>
+    <div class="language-desc">架构、安装配置、API、部署与开发指南</div>
   </a>
 </div>
 

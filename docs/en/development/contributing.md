@@ -1,62 +1,31 @@
-# Contributing Guide
+# Contributing
 
-Thank you for your interest in contributing to Hetero-Paged-Infer!
+This page mirrors the repository workflow in [`CONTRIBUTING.md`](https://github.com/AICL-Lab/hetero-paged-infer/blob/master/CONTRIBUTING.md).
 
-## Development Setup
+## Quick start
 
 ```bash
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 cargo build
-cargo test
 ```
 
-## Code Style
+## Validation
 
 ```bash
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy --all-targets -- -D warnings
-
-# Check formatting
-cargo fmt --check
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --verbose
+cargo test --doc --verbose
+cargo doc --no-deps
+cargo bench --no-run
+cd docs && npm run build
 ```
 
-## Testing
+## Contribution flow
 
-```bash
-# Run all tests
-cargo test
-
-# Run specific test
-cargo test test_engine_creation
-
-# Run property tests
-cargo test -- --test-threads=1
-```
-
-## Submitting Changes
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Commit Message Format
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+1. Create a focused branch.
+2. Implement the change and add tests when behavior changes.
+3. Run validation commands.
+4. Update documentation and root `CHANGELOG.md` when project-facing behavior changes.
+5. Open a pull request.

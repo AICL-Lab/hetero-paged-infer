@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
-import llmstxt from 'vitepress-plugin-llms'
 
 // 动态 base path 处理
 const rawBase = process.env.VITEPRESS_BASE
@@ -348,7 +347,6 @@ export default withMermaid(
 
     // Vite 配置
     vite: {
-      plugins: [llmstxt()],
       logLevel: 'info'
     }
   })

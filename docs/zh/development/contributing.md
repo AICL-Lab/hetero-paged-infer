@@ -1,62 +1,31 @@
 # 贡献指南
 
-感谢您对 Hetero-Paged-Infer 贡献的关注！
+本页与仓库根目录 [`CONTRIBUTING.md`](https://github.com/AICL-Lab/hetero-paged-infer/blob/master/CONTRIBUTING.md) 保持一致。
 
-## 开发环境搭建
+## 快速开始
 
 ```bash
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 cargo build
-cargo test
 ```
 
-## 代码风格
+## 验证命令
 
 ```bash
-# 格式化代码
-cargo fmt
-
-# 运行 linter
-cargo clippy --all-targets -- -D warnings
-
-# 检查格式化
-cargo fmt --check
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --verbose
+cargo test --doc --verbose
+cargo doc --no-deps
+cargo bench --no-run
+cd docs && npm run build
 ```
 
-## 测试
+## 贡献流程
 
-```bash
-# 运行所有测试
-cargo test
-
-# 运行特定测试
-cargo test test_engine_creation
-
-# 运行属性测试
-cargo test -- --test-threads=1
-```
-
-## 提交更改
-
-1. Fork 仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交您的更改 (`git commit -m 'feat: add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 提交 Pull Request
-
-## 提交信息格式
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-类型: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-## 许可证
-
-参与贡献即表示您同意您的贡献将根据 MIT 许可证进行授权。
+1. 创建聚焦的功能分支。
+2. 实现变更，并在行为变化时补充测试。
+3. 运行验证命令。
+4. 若涉及项目可见变化，同步更新文档与根目录 `CHANGELOG.md`。
+5. 提交 Pull Request。
