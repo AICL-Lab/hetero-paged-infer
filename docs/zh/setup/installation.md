@@ -259,7 +259,7 @@ CUDAHOSTCXX=/usr/bin/g++-12 \
 cargo test --all-features --release
 ```
 
-这里验证的是 **最小真实 CUDA kernel 路径及其 host 回退能力**，并不代表生产级 CUDA 注意力 kernel 已经实现。
+如果环境里有 `nvcc`，这里验证的是 **最小真实 CUDA kernel 路径**；如果没有 `nvcc`，同一套 feature 会自动回退到 host 兼容后端，以便 CI 继续覆盖 CUDA 相关的 Rust 集成面。这并不代表生产级 CUDA 注意力 kernel 已经实现。
 
 ## 故障排除
 
@@ -303,6 +303,8 @@ nvcc: command not found
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ```
+
+如果你只是需要让 Rust 侧的 CUDA feature 通过编译和测试，现在构建会自动回退，不再强制要求 `nvcc`。
 
 ## 卸载
 

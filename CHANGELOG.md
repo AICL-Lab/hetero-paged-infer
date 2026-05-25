@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path with host fallback, and feature-gated CUDA executor tests.
+- A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path, a no-nvcc host-compatible fallback build for CI, and feature-gated CUDA executor tests.
 
 ### Removed
 
