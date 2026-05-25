@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path with host fallback, and feature-gated CUDA executor tests.
+
 ### Removed
 
+- Command bridge serving path and its related config, tests, and exported API surface.
+- Local AI-tool residue in `.gitignore` (`.claude/`, `CLAUDE.local.md`, `.omc/`).
+- GitHub Pages sections for whitepaper, benchmarks, comparison, references, and speculative advanced configuration.
 - Repository-scoped AI workflow scaffolding: `CLAUDE.md` and the full `openspec/` tree.
 - Changelog mirrors under GitHub Pages (`docs/en/changelog/`, `docs/zh/changelog/`).
 - Unused docs dependency `vitepress-plugin-llms`.
@@ -16,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Serving now runs a single local-engine path instead of maintaining alternate backend abstractions.
+- Configuration and API docs were rewritten to document only the capabilities that currently exist in the repository.
 - Contributor workflow simplified to direct code/test/docs maintenance in `CONTRIBUTING.md`.
 - Docs landing pages simplified to focus on core engine capabilities and practical navigation.
 - Root `CHANGELOG.md` is now the single project changelog source.

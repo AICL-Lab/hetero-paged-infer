@@ -79,6 +79,7 @@
 //! ### GPU 执行器
 //!
 //! - [`MockGPUExecutor`] - Mock GPU 执行器（测试用）
+//! - [`CudaExecutor`] - nvcc 编译的 CUDA 后端桥接执行器（启用 `cuda` feature）
 //! - [`GPUExecutorTrait`] - GPU 执行器 trait 接口
 //! - [`build_execution_batch`] - 构建执行批次
 //!
@@ -124,21 +125,18 @@ pub mod types;
 pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
-pub use config::{
-    CommandBridgeConfig, EngineConfig, ServingBackendConfig, ServingBackendKind, ServingConfig,
-    SpecialTokenIds, TokenizerConfig, TokenizerKind,
-};
+pub use config::{EngineConfig, ServingConfig, SpecialTokenIds, TokenizerConfig, TokenizerKind};
 pub use engine::{EngineMetrics, InferenceEngine, RecoveryAction};
 pub use error::{
     ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
 };
 pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
-pub use gpu_executor::{GPUExecutorTrait, MockGPUExecutor};
+#[cfg(feature = "cuda")]
+pub use gpu_executor::CudaExecutor;
+pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
 pub use kv_cache::{KVCacheManager, KVCacheManagerTrait};
 pub use scheduler::{Scheduler, SchedulerTrait};
-pub use server::{
-    create_router, CommandBridgeBackend, GenerationResult, InferenceBackend, LocalEngineBackend,
-};
+pub use server::{create_router, GenerationResult};
 pub use tokenizer::{
     build_tokenizer, HuggingFaceTokenizer, RoundTripTokenizer, SimpleTokenizer, TokenizerTrait,
 };

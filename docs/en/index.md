@@ -25,7 +25,6 @@ title: Hetero-Paged-Infer
   { title: 'Architecture', summary: 'Engine structure, scheduling model, and memory management design.', href: '/en/architecture/overview' },
   { title: 'Setup', summary: 'Installation, configuration, and local usage.', href: '/en/setup/quickstart' },
   { title: 'API', summary: 'Core types and HTTP API references.', href: '/en/api/' },
-  { title: 'Benchmarks', summary: 'Current measurements and methodology.', href: '/en/benchmarks/' },
   { title: 'Deployment', summary: 'Docker and production-oriented deployment notes.', href: '/en/deployment/' },
   { title: 'Development', summary: 'Contributing and validation workflow.', href: '/en/development/contributing' },
 ]" />
@@ -33,5 +32,5 @@ title: Hetero-Paged-Infer
 ## Current scope
 
 - The repository already provides a usable local engine, scheduler, KV cache manager, and HTTP serving layer.
-- The docs site focuses on implementation and usage details, not changelog history.
-- Real CUDA kernel execution remains planned work.
+- The docs site now keeps only current implementation guidance and omits historical, whitepaper, and showcase content.
+- Real CUDA kernel execution remains future work and is not documented as available functionality.

@@ -51,7 +51,7 @@ rustup target add x86_64-unknown-linux-musl
 
 ## 安装 CUDA（可选）
 
-用于 GPU 加速：
+用于实验性的 `cuda` feature：
 
 ### Ubuntu 22.04
 
@@ -249,12 +249,17 @@ cargo test --release
 ### 检查 CUDA 支持（如适用）
 
 ```bash
-# Verify CUDA is available
-nvidia-smi
+# 验证 nvcc 可用
+nvcc --version
 
-# Test GPU executor
-cargo test --features cuda --release
+# 明确使用系统工具链，而不是 conda 包装的编译器
+CC=/usr/bin/gcc-12 \
+CXX=/usr/bin/g++-12 \
+CUDAHOSTCXX=/usr/bin/g++-12 \
+cargo test --all-features --release
 ```
+
+这里验证的是 **最小真实 CUDA kernel 路径及其 host 回退能力**，并不代表生产级 CUDA 注意力 kernel 已经实现。
 
 ## 故障排除
 

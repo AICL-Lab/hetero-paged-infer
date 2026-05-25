@@ -38,32 +38,20 @@ export default withMermaid(
         link: '/en/',
         themeConfig: {
           nav: [
-            { text: 'Whitepaper', link: '/en/whitepaper/', activeMatch: '/en/whitepaper/' },
             { text: 'Architecture', link: '/en/architecture/overview', activeMatch: '/en/architecture/' },
-            { text: 'Benchmarks', link: '/en/benchmarks/', activeMatch: '/en/benchmarks/' },
-            { text: 'Comparison', link: '/en/comparison/', activeMatch: '/en/comparison/' },
-            { text: 'References', link: '/en/references/', activeMatch: '/en/references/' }
+            { text: 'Setup', link: '/en/setup/quickstart', activeMatch: '/en/setup/' },
+            { text: 'API', link: '/en/api/', activeMatch: '/en/api/' },
+            { text: 'Deployment', link: '/en/deployment/', activeMatch: '/en/deployment/' },
+            { text: 'Development', link: '/en/development/', activeMatch: '/en/development/' }
           ],
           sidebar: {
-            '/en/whitepaper/': [
-              {
-                text: 'Whitepaper',
-                items: [
-                  { text: 'Overview', link: '/en/whitepaper/' },
-                  { text: 'Positioning', link: '/en/whitepaper/positioning' },
-                  { text: 'Proof and Limits', link: '/en/whitepaper/proof' },
-                  { text: 'Roadmap', link: '/en/whitepaper/roadmap' }
-                ]
-              }
-            ],
             '/en/setup/': [
               {
                 text: 'Setup',
                 items: [
                   { text: 'Quick Start', link: '/en/setup/quickstart' },
                   { text: 'Installation', link: '/en/setup/installation' },
-                  { text: 'Configuration', link: '/en/setup/configuration' },
-                  { text: 'Advanced Configuration', link: '/en/setup/advanced-config' }
+                  { text: 'Configuration', link: '/en/setup/configuration' }
                 ]
               }
             ],
@@ -85,36 +73,6 @@ export default withMermaid(
                 items: [
                   { text: 'Core Types', link: '/en/api/core-types' },
                   { text: 'Full Reference', link: '/en/api/reference' }
-                ]
-              }
-            ],
-            '/en/comparison/': [
-              {
-                text: 'Comparison',
-                items: [
-                  { text: 'Overview', link: '/en/comparison/' }
-                ]
-              }
-            ],
-            '/en/benchmarks/': [
-              {
-                text: 'Benchmarks',
-                items: [
-                  { text: 'Overview', link: '/en/benchmarks/' },
-                  { text: 'Methodology', link: '/en/benchmarks/methodology' },
-                  { text: 'Memory Efficiency', link: '/en/benchmarks/memory-efficiency' },
-                  { text: 'Throughput', link: '/en/benchmarks/throughput' },
-                  { text: 'Latency', link: '/en/benchmarks/latency' }
-                ]
-              }
-            ],
-            '/en/references/': [
-              {
-                text: 'References',
-                items: [
-                  { text: 'Overview', link: '/en/references/' },
-                  { text: 'Papers', link: '/en/references/papers' },
-                  { text: 'Projects', link: '/en/references/projects' }
                 ]
               }
             ],
@@ -178,32 +136,20 @@ export default withMermaid(
         link: '/zh/',
         themeConfig: {
           nav: [
-            { text: '白皮书', link: '/zh/whitepaper/', activeMatch: '/zh/whitepaper/' },
             { text: '架构', link: '/zh/architecture/overview', activeMatch: '/zh/architecture/' },
-            { text: '基准', link: '/zh/benchmarks/', activeMatch: '/zh/benchmarks/' },
-            { text: '对比', link: '/zh/comparison/', activeMatch: '/zh/comparison/' },
-            { text: '参考', link: '/zh/references/', activeMatch: '/zh/references/' }
+            { text: '安装配置', link: '/zh/setup/quickstart', activeMatch: '/zh/setup/' },
+            { text: 'API', link: '/zh/api/', activeMatch: '/zh/api/' },
+            { text: '部署', link: '/zh/deployment/', activeMatch: '/zh/deployment/' },
+            { text: '开发', link: '/zh/development/', activeMatch: '/zh/development/' }
           ],
           sidebar: {
-            '/zh/whitepaper/': [
-              {
-                text: '白皮书',
-                items: [
-                  { text: '概览', link: '/zh/whitepaper/' },
-                  { text: '项目定位', link: '/zh/whitepaper/positioning' },
-                  { text: '证据与边界', link: '/zh/whitepaper/proof' },
-                  { text: '路线图', link: '/zh/whitepaper/roadmap' }
-                ]
-              }
-            ],
             '/zh/setup/': [
               {
                 text: '安装配置',
                 items: [
                   { text: '快速开始', link: '/zh/setup/quickstart' },
                   { text: '安装', link: '/zh/setup/installation' },
-                  { text: '配置', link: '/zh/setup/configuration' },
-                  { text: '高级配置', link: '/zh/setup/advanced-config' }
+                  { text: '配置', link: '/zh/setup/configuration' }
                 ]
               }
             ],
@@ -225,36 +171,6 @@ export default withMermaid(
                 items: [
                   { text: '核心类型', link: '/zh/api/core-types' },
                   { text: '完整参考', link: '/zh/api/reference' }
-                ]
-              }
-            ],
-            '/zh/comparison/': [
-              {
-                text: '对比',
-                items: [
-                  { text: '概览', link: '/zh/comparison/' }
-                ]
-              }
-            ],
-            '/zh/benchmarks/': [
-              {
-                text: '基准',
-                items: [
-                  { text: '概览', link: '/zh/benchmarks/' },
-                  { text: '方法学', link: '/zh/benchmarks/methodology' },
-                  { text: '内存效率', link: '/zh/benchmarks/memory-efficiency' },
-                  { text: '吞吐量', link: '/zh/benchmarks/throughput' },
-                  { text: '延迟', link: '/zh/benchmarks/latency' }
-                ]
-              }
-            ],
-            '/zh/references/': [
-              {
-                text: '参考',
-                items: [
-                  { text: '概览', link: '/zh/references/' },
-                  { text: '论文引用', link: '/zh/references/papers' },
-                  { text: '项目引用', link: '/zh/references/projects' }
                 ]
               }
             ],

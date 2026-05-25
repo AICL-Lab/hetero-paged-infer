@@ -104,4 +104,3 @@ proptest! {
 
 - [PagedAttention](/zh/architecture/paged-attention)
 - [连续批处理](/zh/architecture/continuous-batching)
-- [内存效率基准](/zh/benchmarks/memory-efficiency)

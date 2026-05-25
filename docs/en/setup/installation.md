@@ -51,7 +51,7 @@ rustup target add x86_64-unknown-linux-musl
 
 ## Install CUDA (Optional)
 
-For GPU acceleration:
+For the experimental `cuda` feature:
 
 ### Ubuntu 22.04
 
@@ -249,12 +249,17 @@ cargo test --release
 ### Check CUDA Support (if applicable)
 
 ```bash
-# Verify CUDA is available
-nvidia-smi
+# Verify nvcc is available
+nvcc --version
 
-# Test GPU executor
-cargo test --features cuda --release
+# Use the system toolchain instead of a conda compiler wrapper
+CC=/usr/bin/gcc-12 \
+CXX=/usr/bin/g++-12 \
+CUDAHOSTCXX=/usr/bin/g++-12 \
+cargo test --all-features --release
 ```
+
+This currently validates a minimal real CUDA kernel path with host fallback. It does **not** yet imply that production CUDA attention kernels are implemented.
 
 ## Troubleshooting
 

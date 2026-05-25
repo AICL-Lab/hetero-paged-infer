@@ -1,9 +1,6 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
-use hetero_infer::{
-    create_router, CommandBridgeConfig, EngineConfig, ServingBackendConfig, ServingBackendKind,
-    ServingConfig,
-};
+use hetero_infer::{create_router, EngineConfig, ServingConfig};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -171,53 +168,6 @@ async fn test_completions_stream_returns_done_event() {
 }
 
 #[tokio::test]
-async fn test_command_bridge_backend_uses_prompt_env() {
-    let config = EngineConfig {
-        serving: ServingConfig {
-            model_name: "bridge-model".to_string(),
-            backend: ServingBackendConfig {
-                kind: ServingBackendKind::CommandBridge,
-                command: Some(CommandBridgeConfig {
-                    program: "/bin/sh".to_string(),
-                    args: vec![
-                        "-c".to_string(),
-                        "printf 'bridge:%s' \"$HETERO_PROMPT\"".to_string(),
-                    ],
-                    timeout_ms: 30_000,
-                }),
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let app = create_router(config).unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/v1/completions")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "model": "bridge-model",
-                        "prompt": "hello bridge",
-                        "max_tokens": 2
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["choices"][0]["text"], "bridge:hello bridge");
-}
-
-#[tokio::test]
 async fn test_completions_rejects_invalid_sampling_params() {
     let app = create_router(create_test_config()).unwrap();
 
@@ -241,53 +191,6 @@ async fn test_completions_rejects_invalid_sampling_params() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn test_command_bridge_backend_times_out() {
-    let config = EngineConfig {
-        serving: ServingConfig {
-            model_name: "bridge-model".to_string(),
-            backend: ServingBackendConfig {
-                kind: ServingBackendKind::CommandBridge,
-                command: Some(CommandBridgeConfig {
-                    program: "/bin/sh".to_string(),
-                    args: vec!["-c".to_string(), "sleep 0.05".to_string()],
-                    timeout_ms: 1,
-                }),
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let app = create_router(config).unwrap();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/v1/completions")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "model": "bridge-model",
-                        "prompt": "hello bridge",
-                        "max_tokens": 2
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let json: Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("timed out"));
 }
 
 #[tokio::test]
