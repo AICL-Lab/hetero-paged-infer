@@ -387,17 +387,9 @@ impl InferenceEngine {
                     all_completed.extend(completed);
                 }
                 Err(e) => {
-                    log::error!("推理步骤失败: {}", e);
-                    match self.handle_error(&e) {
-                        RecoveryAction::Shutdown => {
-                            self.running = false;
-                        }
-                        // 执行级重试/跳过已在 BatchExecutionPipeline 和 Scheduler 中处理，
-                        // 引擎级只需继续循环即可恢复。
-                        RecoveryAction::Retry { .. }
-                        | RecoveryAction::SkipSequence
-                        | RecoveryAction::ResetBatch => {}
-                    }
+                    // step() 已将失败序列标记为 Failed 并释放资源，
+                    // 此处仅记录日志，循环继续处理剩余工作。
+                    log::error!("推理步骤失败: {e}");
                 }
             }
 
@@ -433,53 +425,6 @@ impl InferenceEngine {
     /// 获取配置
     pub fn config(&self) -> &EngineConfig {
         &self.config
-    }
-}
-
-/// 错误恢复策略
-///
-/// 定义执行错误发生时的恢复行为。
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecoveryAction {
-    /// 重试操作
-    Retry {
-        /// 最大重试次数
-        max_attempts: u32,
-    },
-    /// 跳过问题序列
-    SkipSequence,
-    /// 重置当前批次
-    ResetBatch,
-    /// 关闭引擎
-    Shutdown,
-}
-
-impl InferenceEngine {
-    /// 处理执行错误并确定恢复策略
-    ///
-    /// # 参数
-    ///
-    /// * `error` - 发生的错误
-    ///
-    /// # 返回
-    ///
-    /// 推荐的恢复策略。
-    pub fn handle_error(&self, error: &EngineError) -> RecoveryAction {
-        match error {
-            EngineError::Execution(exec_err) => match exec_err {
-                crate::error::ExecutionError::CudaError(_) => RecoveryAction::SkipSequence,
-                crate::error::ExecutionError::GpuTimeout => RecoveryAction::Retry {
-                    max_attempts: self.config.max_retry_attempts,
-                },
-                crate::error::ExecutionError::InvalidOutput => RecoveryAction::SkipSequence,
-                crate::error::ExecutionError::KernelLaunchFailed(_) => RecoveryAction::ResetBatch,
-            },
-            EngineError::Memory(_) => RecoveryAction::ResetBatch,
-            EngineError::Config(_) => RecoveryAction::Shutdown,
-            EngineError::Validation(_) => RecoveryAction::SkipSequence,
-            EngineError::Scheduler(_) => RecoveryAction::Retry { max_attempts: 1 },
-            EngineError::Tokenization(_) => RecoveryAction::SkipSequence,
-        }
     }
 }
 
@@ -829,25 +774,6 @@ mod tests {
 
         let completed = engine.run();
         assert!(!completed.is_empty() || !engine.has_pending_work());
-    }
-
-    #[test]
-    fn test_recovery_action() {
-        let config = create_test_config();
-        let engine = InferenceEngine::new(config).unwrap();
-
-        let cuda_error =
-            EngineError::Execution(crate::error::ExecutionError::CudaError("test".to_string()));
-        assert_eq!(
-            engine.handle_error(&cuda_error),
-            RecoveryAction::SkipSequence
-        );
-
-        let timeout_error = EngineError::Execution(crate::error::ExecutionError::GpuTimeout);
-        assert_eq!(
-            engine.handle_error(&timeout_error),
-            RecoveryAction::Retry { max_attempts: 2 }
-        );
     }
 
     #[test]

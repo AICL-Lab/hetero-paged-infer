@@ -3,8 +3,8 @@
 //! These tests verify end-to-end functionality across all components.
 
 use hetero_infer::{
-    EngineConfig, ExecutionBatch, ExecutionError, ExecutionOutput, GPUExecutorTrait,
-    GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
+    test_utils::create_test_config, EngineConfig, ExecutionBatch, ExecutionError, ExecutionOutput,
+    GPUExecutorTrait, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
 };
 
 struct FailingExecutor;
@@ -42,23 +42,6 @@ fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
         Box::new(FailingExecutor),
     )
     .unwrap()
-}
-
-// Integration tests can't use #[cfg(test)] pub mod test_utils from lib.rs directly,
-// so we duplicate the minimal helper here.
-fn create_test_config() -> EngineConfig {
-    EngineConfig {
-        block_size: 16,
-        max_num_blocks: 100,
-        max_batch_size: 8,
-        max_num_seqs: 32,
-        max_model_len: 2048,
-        max_total_tokens: 512,
-        memory_threshold: 0.9,
-        max_retry_attempts: 2,
-        special_tokens: Default::default(),
-        ..Default::default()
-    }
 }
 
 /// **Integration Test: End-to-End Request Flow**

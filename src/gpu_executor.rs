@@ -22,7 +22,7 @@
 
 use crate::config::EngineConfig;
 use crate::error::ExecutionError;
-use crate::types::{BlockIdx, ExecutionBatch, ExecutionOutput, TokenId};
+use crate::types::{ExecutionBatch, ExecutionOutput, TokenId};
 
 #[cfg(feature = "cuda")]
 mod cuda_backend {
@@ -131,135 +131,6 @@ mod cuda_backend {
     }
 }
 
-/// Pinned buffer for CPU-GPU transfer
-///
-/// Mock 实现：底层使用普通 `Vec<T>`。
-/// 生产环境应替换为 CUDA pinned memory (`cudaMallocHost`)
-/// 以实现 PCIe DMA 零拷贝传输。
-#[derive(Debug, Clone)]
-pub struct PinnedBuffer<T> {
-    data: Vec<T>,
-}
-
-impl<T: Clone + Default> PinnedBuffer<T> {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            data: Vec::with_capacity(capacity),
-        }
-    }
-
-    pub fn from_vec(data: Vec<T>) -> Self {
-        Self { data }
-    }
-
-    pub fn as_slice(&self) -> &[T] {
-        &self.data
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        &mut self.data
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.data.clear();
-    }
-
-    pub fn push(&mut self, value: T) {
-        self.data.push(value);
-    }
-
-    pub fn extend(&mut self, iter: impl IntoIterator<Item = T>) {
-        self.data.extend(iter);
-    }
-}
-
-/// GPU batch data with pinned buffers for efficient transfer
-#[derive(Debug, Clone)]
-pub struct GPUBatchData {
-    /// Token IDs for all sequences (flattened)
-    pub input_ids: PinnedBuffer<TokenId>,
-    /// Position IDs for each token
-    pub positions: PinnedBuffer<u32>,
-    /// Sequence start locations (cumulative)
-    pub seq_start_locs: PinnedBuffer<u32>,
-    /// Sequence lengths
-    pub seq_lens: PinnedBuffer<u32>,
-    /// Block tables (flattened, padded)
-    pub block_tables: PinnedBuffer<BlockIdx>,
-    /// Context lengths for attention
-    pub context_lens: PinnedBuffer<u32>,
-    /// Maximum blocks per sequence (for padding)
-    pub max_blocks_per_seq: u32,
-}
-
-impl GPUBatchData {
-    pub fn new(max_batch_size: u32, max_blocks_per_seq: u32, max_total_tokens: u32) -> Self {
-        Self {
-            input_ids: PinnedBuffer::new(max_total_tokens as usize),
-            positions: PinnedBuffer::new(max_total_tokens as usize),
-            seq_start_locs: PinnedBuffer::new(max_batch_size as usize + 1),
-            seq_lens: PinnedBuffer::new(max_batch_size as usize),
-            block_tables: PinnedBuffer::new((max_batch_size * max_blocks_per_seq) as usize),
-            context_lens: PinnedBuffer::new(max_batch_size as usize),
-            max_blocks_per_seq,
-        }
-    }
-
-    /// Prepare batch data from execution batch
-    pub fn prepare(&mut self, batch: &ExecutionBatch) {
-        self.clear();
-
-        // Copy input tokens and positions
-        self.input_ids.extend(batch.input_tokens.iter().copied());
-        self.positions.extend(batch.positions.iter().copied());
-
-        // Build sequence metadata
-        let mut cumulative = 0u32;
-        self.seq_start_locs.push(0);
-
-        for &seq_len in &batch.seq_lens {
-            cumulative += seq_len;
-            self.seq_start_locs.push(cumulative);
-            self.seq_lens.push(seq_len);
-        }
-
-        // Copy context lengths
-        self.context_lens.extend(batch.context_lens.iter().copied());
-
-        // Flatten and pad block tables
-        for block_table in &batch.block_tables {
-            for &block_idx in block_table {
-                self.block_tables.push(block_idx);
-            }
-            // Pad to max_blocks_per_seq
-            for _ in block_table.len()..self.max_blocks_per_seq as usize {
-                self.block_tables.push(0);
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.input_ids.clear();
-        self.positions.clear();
-        self.seq_start_locs.clear();
-        self.seq_lens.clear();
-        self.block_tables.clear();
-        self.context_lens.clear();
-    }
-}
-
-fn max_blocks_per_seq(config: &EngineConfig) -> u32 {
-    config.max_model_len / config.block_size + 1
-}
-
 fn validate_execution_batch(
     config: &EngineConfig,
     batch: &ExecutionBatch,
@@ -325,7 +196,6 @@ pub fn create_default_gpu_executor(
 #[derive(Debug)]
 pub struct CudaExecutor {
     config: EngineConfig,
-    batch_data: GPUBatchData,
     graph_captured: bool,
     captured_batch_size: u32,
     vocab_size: u32,
@@ -342,15 +212,9 @@ impl CudaExecutor {
         let compiled_with_nvcc = cuda_backend::compiled_with_nvcc();
         let backend_name = cuda_backend::backend_name()?;
         let device_available = cuda_backend::device_available();
-        let batch_data = GPUBatchData::new(
-            config.max_batch_size,
-            max_blocks_per_seq(&config),
-            config.max_total_tokens,
-        );
 
         Ok(Self {
             config,
-            batch_data,
             graph_captured: false,
             captured_batch_size: 0,
             vocab_size,
@@ -388,7 +252,6 @@ impl GPUExecutorTrait for CudaExecutor {
             return Ok(ExecutionOutput::default());
         }
 
-        self.batch_data.prepare(batch);
         let generated = cuda_backend::generate_next_tokens(
             &batch.seq_ids,
             self.token_counter,
@@ -443,12 +306,11 @@ impl GPUExecutorTrait for CudaExecutor {
 
 /// Mock GPU Executor for testing without actual GPU
 ///
-/// This executor simulates GPU execution by generating random tokens.
+/// This executor simulates GPU execution by generating deterministic tokens.
 /// Replace with real CUDA implementation for production use.
 #[derive(Debug)]
 pub struct MockGPUExecutor {
     config: EngineConfig,
-    batch_data: GPUBatchData,
     graph_captured: bool,
     captured_batch_size: u32,
     /// Vocabulary size for token generation
@@ -459,15 +321,8 @@ pub struct MockGPUExecutor {
 
 impl MockGPUExecutor {
     pub fn new(config: EngineConfig, vocab_size: u32) -> Self {
-        let batch_data = GPUBatchData::new(
-            config.max_batch_size,
-            max_blocks_per_seq(&config),
-            config.max_total_tokens,
-        );
-
         Self {
             config,
-            batch_data,
             graph_captured: false,
             captured_batch_size: 0,
             vocab_size,
@@ -481,23 +336,15 @@ impl MockGPUExecutor {
         self.token_counter = self.token_counter.wrapping_add(1);
         token
     }
-
-    /// Validate batch for execution
-    fn validate_batch(&self, batch: &ExecutionBatch) -> Result<(), ExecutionError> {
-        validate_execution_batch(&self.config, batch)
-    }
 }
 
 impl GPUExecutorTrait for MockGPUExecutor {
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        self.validate_batch(batch)?;
+        validate_execution_batch(&self.config, batch)?;
 
         if batch.is_empty() {
             return Ok(ExecutionOutput::default());
         }
-
-        // Prepare batch data for "GPU transfer"
-        self.batch_data.prepare(batch);
 
         // Generate one token per sequence
         let mut next_tokens = Vec::with_capacity(batch.num_sequences());
@@ -532,6 +379,14 @@ impl GPUExecutorTrait for MockGPUExecutor {
             return Err(ExecutionError::KernelLaunchFailed(
                 "No CUDA graph captured".to_string(),
             ));
+        }
+
+        if batch.num_sequences() != self.captured_batch_size as usize {
+            return Err(ExecutionError::KernelLaunchFailed(format!(
+                "Captured batch size {} does not match requested batch size {}",
+                self.captured_batch_size,
+                batch.num_sequences()
+            )));
         }
 
         // For mock, just use regular execution
@@ -606,41 +461,23 @@ mod tests {
     }
 
     #[test]
-    fn test_gpu_batch_data_prepare() {
-        let mut batch_data = GPUBatchData::new(8, 16, 4096);
-
+    fn test_mock_graph_execute_requires_matching_batch_size() {
+        let config = create_test_config();
+        let mut executor = MockGPUExecutor::new(config, 32000);
         let batch = ExecutionBatch {
             input_tokens: vec![1, 2, 3],
             positions: vec![0, 1, 2],
             seq_lens: vec![3],
-            block_tables: vec![vec![0, 1]],
-            is_prefill: vec![true],
-            seq_ids: vec![1],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![false],
+            seq_ids: vec![7],
             context_lens: vec![3],
         };
 
-        batch_data.prepare(&batch);
+        executor.capture_decode_graph(2).unwrap();
+        let error = executor.execute_graph(&batch).unwrap_err();
 
-        assert_eq!(batch_data.input_ids.len(), 3);
-        assert_eq!(batch_data.positions.len(), 3);
-        assert_eq!(batch_data.seq_lens.len(), 1);
-    }
-
-    #[test]
-    fn test_pinned_buffer() {
-        let mut buffer: PinnedBuffer<u32> = PinnedBuffer::new(10);
-
-        assert!(buffer.is_empty());
-
-        buffer.push(1);
-        buffer.push(2);
-        buffer.push(3);
-
-        assert_eq!(buffer.len(), 3);
-        assert_eq!(buffer.as_slice(), &[1, 2, 3]);
-
-        buffer.clear();
-        assert!(buffer.is_empty());
+        assert!(matches!(error, ExecutionError::KernelLaunchFailed(_)));
     }
 
     #[cfg(feature = "cuda")]
@@ -712,7 +549,7 @@ mod tests {
 mod property_tests {
     use super::*;
     use crate::test_utils::create_test_config_with_limits;
-    use crate::types::SeqId;
+    use crate::types::{BlockIdx, SeqId};
     use proptest::prelude::*;
 
     proptest! {

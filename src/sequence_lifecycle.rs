@@ -375,11 +375,16 @@ impl SequenceLifecycle {
         self.pending_queue.iter().any(|p| p.seq_id == seq_id)
     }
 
-    /// 序列是否恰好在其中一个队列中
+    /// 序列是否恰好在其中一个队列中（pending / prefill / decode）
     pub fn is_in_exactly_one_queue(&self, seq_id: SeqId) -> bool {
+        let in_pending = self.pending_queue.iter().any(|p| p.seq_id == seq_id);
         let in_prefill = self.prefill_sequences.contains_key(&seq_id);
         let in_decode = self.decode_sequences.contains_key(&seq_id);
-        (in_prefill && !in_decode) || (!in_prefill && in_decode)
+        let count = [in_pending, in_prefill, in_decode]
+            .iter()
+            .filter(|&&flag| flag)
+            .count();
+        count == 1
     }
 
     /// 是否还有待处理的工作

@@ -32,30 +32,6 @@ use std::collections::{hash_map::Entry, HashMap};
 use std::path::Path;
 use tokenizers::Tokenizer;
 
-/// Special token IDs (deprecated constants, use SpecialTokenIds instead)
-///
-/// 这些常量保留用于向后兼容。新代码应使用 [`SpecialTokenIds`]。
-#[deprecated(
-    since = "0.2.0",
-    note = "Use SpecialTokenIds from EngineConfig instead"
-)]
-pub const BOS_TOKEN_ID: TokenId = 1;
-#[deprecated(
-    since = "0.2.0",
-    note = "Use SpecialTokenIds from EngineConfig instead"
-)]
-pub const EOS_TOKEN_ID: TokenId = 2;
-#[deprecated(
-    since = "0.2.0",
-    note = "Use SpecialTokenIds from EngineConfig instead"
-)]
-pub const PAD_TOKEN_ID: TokenId = 0;
-#[deprecated(
-    since = "0.2.0",
-    note = "Use SpecialTokenIds from EngineConfig instead"
-)]
-pub const UNK_TOKEN_ID: TokenId = 3;
-
 /// 分词器 trait 接口
 ///
 /// 定义分词器的标准接口。

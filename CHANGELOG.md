@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command bridge serving path and its related config, tests, and exported API surface.
 - Local AI-tool residue in `.gitignore` (`.claude/`, `CLAUDE.local.md`, `.omc/`).
 - GitHub Pages sections for whitepaper, benchmarks, comparison, references, and speculative advanced configuration.
-- Repository-scoped AI workflow scaffolding: `CLAUDE.md` and the full `openspec/` tree.
+- Repository-scoped AI workflow scaffolding: `CLAUDE.md` and the full legacy spec tree.
 - Changelog mirrors under GitHub Pages (`docs/en/changelog/`, `docs/zh/changelog/`).
 - Unused docs dependency `vitepress-plugin-llms`.
 - Unused direct Rust dependencies `tracing` and `tracing-subscriber`.
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Historical Notes
 
-Legacy OpenSpec archive records were removed during repository simplification.
+Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
 [0.1.0]: https://github.com/LessUp/hetero-paged-infer/releases/tag/v0.1.0

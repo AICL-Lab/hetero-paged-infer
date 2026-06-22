@@ -64,7 +64,6 @@
 //!
 //! - [`InferenceEngine`] - 主编排器，协调所有组件
 //! - [`EngineMetrics`] - 运行时指标收集
-//! - [`RecoveryAction`] - 错误恢复策略
 //!
 //! ### 调度器
 //!
@@ -121,12 +120,12 @@ pub mod server;
 pub mod tokenizer;
 pub mod types;
 
-#[cfg(test)]
+#[doc(hidden)]
 pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
 pub use config::{EngineConfig, ServingConfig, SpecialTokenIds, TokenizerConfig, TokenizerKind};
-pub use engine::{EngineMetrics, InferenceEngine, RecoveryAction};
+pub use engine::{EngineMetrics, InferenceEngine};
 pub use error::{
     ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
 };

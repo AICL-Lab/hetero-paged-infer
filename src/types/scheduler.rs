@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::memory::LogicalBlock;
 use super::request::Request;
-use super::{BlockIdx, RequestState, SeqId, TokenId};
+use super::{BlockIdx, SeqId, TokenId};
 
 /// 序列
 ///
@@ -55,15 +55,6 @@ impl Sequence {
             "input token count exceeds u32::MAX"
         );
         input_len as u32 + self.num_generated_tokens
-    }
-
-    /// 计算当前步骤需要处理的 token 数
-    pub fn num_tokens_to_process(&self) -> u32 {
-        match self.request.state {
-            RequestState::Prefill => self.request.input_tokens.len() as u32,
-            RequestState::Decode => 1,
-            _ => 0,
-        }
     }
 
     /// 获取 decode 阶段的输入 token
