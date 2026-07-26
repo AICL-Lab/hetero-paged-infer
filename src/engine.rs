@@ -53,7 +53,7 @@ use crate::config::EngineConfig;
 use crate::error::{EngineError, ValidationError};
 use crate::execution_pipeline::BatchExecutionPipeline;
 use crate::gpu_executor::{create_default_gpu_executor, GPUExecutorTrait};
-use crate::scheduler::{Scheduler, SchedulerTrait};
+use crate::scheduler::Scheduler;
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
 
@@ -78,29 +78,15 @@ use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, Reque
 /// # Ok::<(), hetero_infer::EngineError>(())
 /// ```
 pub struct InferenceEngine {
-    /// 引擎配置
     config: EngineConfig,
-    /// 文本处理器
     tokenizer: Box<dyn TokenizerTrait>,
-    /// 请求调度器
     scheduler: Scheduler,
-    /// 批次执行流水线（封装 GPU 执行与重试）
     execution_pipeline: BatchExecutionPipeline,
-    /// EOS token ID（用于检测完成）
     eos_token_id: u32,
-    /// 运行标志
-    running: bool,
-    /// 最大步数（用于测试，0 = 无限制）
-    max_steps: usize,
-    /// 已提交请求总数
     total_requests: u64,
-    /// 成功完成请求总数
     completed_requests_count: u64,
-    /// 失败请求总数
     failed_requests_count: u64,
-    /// 已生成 token 总数
     total_tokens_generated: u64,
-    /// 请求 ID 计数器（实例级，避免全局状态在测试间泄漏）
     next_request_id: RequestId,
 }
 
@@ -141,8 +127,6 @@ impl InferenceEngine {
             scheduler,
             execution_pipeline,
             eos_token_id,
-            running: false,
-            max_steps: 0,
             total_requests: 0,
             completed_requests_count: 0,
             failed_requests_count: 0,
@@ -176,23 +160,12 @@ impl InferenceEngine {
             scheduler,
             execution_pipeline,
             eos_token_id,
-            running: false,
-            max_steps: 0,
             total_requests: 0,
             completed_requests_count: 0,
             failed_requests_count: 0,
             total_tokens_generated: 0,
             next_request_id: 1,
         })
-    }
-
-    /// 设置最大步数（用于测试）
-    ///
-    /// # 参数
-    ///
-    /// * `max_steps` - 最大执行步数，0 表示无限制
-    pub fn set_max_steps(&mut self, max_steps: usize) {
-        self.max_steps = max_steps;
     }
 
     /// 提交新的推理请求
@@ -377,18 +350,14 @@ impl InferenceEngine {
     /// # Ok::<(), hetero_infer::EngineError>(())
     /// ```
     pub fn run(&mut self) -> Vec<CompletedRequest> {
-        self.running = true;
         let mut all_completed = Vec::new();
-        let mut steps = 0;
 
-        while self.running && self.scheduler.has_pending_work() {
+        while self.scheduler.has_pending_work() {
             match self.step() {
                 Ok(completed) => {
                     all_completed.extend(completed);
                 }
                 Err(e) => {
-                    // step() 已将失败序列标记为 Failed 并释放资源，
-                    // 此处仅记录日志，循环继续处理剩余工作。
                     log::error!("推理步骤失败: {e}");
                 }
             }
@@ -396,20 +365,9 @@ impl InferenceEngine {
             if !self.scheduler.has_pending_work() {
                 all_completed.extend(self.collect_completed_requests());
             }
-
-            steps += 1;
-            if self.max_steps > 0 && steps >= self.max_steps {
-                break;
-            }
         }
 
-        self.running = false;
         all_completed
-    }
-
-    /// 停止推理循环
-    pub fn stop(&mut self) {
-        self.running = false;
     }
 
     /// 检查是否有待处理的工作
@@ -747,7 +705,6 @@ mod tests {
     fn test_completed_request_preserves_input_text() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        engine.set_max_steps(100);
 
         engine
             .submit_request("Hello", GenerationParams::default())
@@ -762,7 +719,6 @@ mod tests {
     fn test_run_to_completion() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        engine.set_max_steps(100);
 
         let params = GenerationParams {
             max_tokens: 3,
@@ -780,7 +736,6 @@ mod tests {
     fn test_multiple_requests() {
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
-        engine.set_max_steps(50);
 
         let params = GenerationParams {
             max_tokens: 2,
@@ -855,7 +810,6 @@ mod tests {
             Box::new(TimeoutThenSuccessExecutor { attempts: 0 }),
         )
         .unwrap();
-        engine.set_max_steps(200);
 
         engine
             .submit_request("Hello", GenerationParams::default())

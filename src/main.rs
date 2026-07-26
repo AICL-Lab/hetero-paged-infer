@@ -131,7 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Submitted request: {}", request_id);
 
         // Run inference
-        engine.set_max_steps(1000);
         let completed = engine.run();
 
         // Print results

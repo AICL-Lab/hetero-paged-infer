@@ -153,7 +153,7 @@ impl Default for ServingConfig {
 ///     ..Default::default()
 /// };
 ///
-/// assert!(config.is_valid());
+/// assert!(config.validate().is_ok());
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -255,7 +255,7 @@ impl EngineConfig {
     /// use hetero_infer::EngineConfig;
     ///
     /// let config = EngineConfig::new(16, 1024, 32, 256, 2048, 4096, 0.9)?;
-    /// assert!(config.is_valid());
+    /// assert!(config.validate().is_ok());
     /// # Ok::<(), hetero_infer::ConfigError>(())
     /// ```
     pub fn new(
@@ -344,35 +344,6 @@ impl EngineConfig {
         }
         // Note: max_retry_attempts can be 0 (no retries) or any positive value
         Ok(())
-    }
-
-    /// 检查配置是否有效
-    ///
-    /// 返回 `true` 表示所有参数都在有效范围内。
-    ///
-    /// # 示例
-    ///
-    /// ```rust
-    /// use hetero_infer::EngineConfig;
-    ///
-    /// assert!(EngineConfig::default().is_valid());
-    ///
-    /// let invalid = EngineConfig { block_size: 0, ..Default::default() };
-    /// assert!(!invalid.is_valid());
-    /// ```
-    pub fn is_valid(&self) -> bool {
-        self.block_size > 0
-            && self.max_num_blocks > 0
-            && self.max_batch_size > 0
-            && self.max_num_seqs > 0
-            && self.max_model_len > 0
-            && self.max_total_tokens > 0
-            && self.memory_threshold > 0.0
-            && self.memory_threshold <= 1.0
-            && (!matches!(self.tokenizer.kind, TokenizerKind::HuggingFace)
-                || self.tokenizer.path.is_some())
-            && self.serving.port > 0
-            && !self.serving.model_name.trim().is_empty()
     }
 
     /// 从 JSON 文件加载配置
@@ -481,7 +452,6 @@ mod tests {
     fn test_default_config_is_valid() {
         let config = EngineConfig::default();
         assert!(config.validate().is_ok());
-        assert!(config.is_valid());
     }
 
     #[test]
@@ -494,7 +464,6 @@ mod tests {
             config.validate(),
             Err(ConfigError::InvalidBlockSize(0))
         ));
-        assert!(!config.is_valid());
     }
 
     #[test]
@@ -671,7 +640,6 @@ mod property_tests {
             };
 
             let validation_result = config.validate();
-            let is_valid = config.is_valid();
 
             // 基于参数范围的预期有效性
             let expected_valid = block_size > 0
@@ -683,19 +651,10 @@ mod property_tests {
                 && memory_threshold > 0.0
                 && memory_threshold <= 1.0;
 
-            // 属性: 验证结果与预期有效性一致
             prop_assert_eq!(
                 validation_result.is_ok(),
                 expected_valid,
                 "验证不匹配，配置: {:?}",
-                config
-            );
-
-            // 属性: is_valid() 与 validate() 一致
-            prop_assert_eq!(
-                is_valid,
-                expected_valid,
-                "is_valid() 与 validate() 不一致，配置: {:?}",
                 config
             );
         }

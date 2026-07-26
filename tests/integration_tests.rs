@@ -57,7 +57,6 @@ fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
 fn test_end_to_end_request_flow() {
     let config = create_test_config();
     let mut engine = InferenceEngine::new(config).unwrap();
-    engine.set_max_steps(100);
 
     let params = GenerationParams {
         max_tokens: 5,
@@ -105,7 +104,6 @@ fn test_end_to_end_request_flow() {
 fn test_multiple_requests_completion() {
     let config = create_test_config();
     let mut engine = InferenceEngine::new(config).unwrap();
-    engine.set_max_steps(200);
 
     let params = GenerationParams {
         max_tokens: 3,
@@ -146,7 +144,6 @@ fn test_multiple_requests_completion() {
 fn test_request_completion_on_max_tokens() {
     let config = create_test_config();
     let mut engine = InferenceEngine::new(config).unwrap();
-    engine.set_max_steps(50);
 
     let max_tokens = 5;
     let params = GenerationParams {
@@ -292,7 +289,6 @@ fn test_continuous_batching() {
     engine.submit_request("Second request", params).unwrap();
 
     // Continue running
-    engine.set_max_steps(100);
     let completed = engine.run();
 
     // Both should complete
@@ -300,34 +296,6 @@ fn test_continuous_batching() {
         !completed.is_empty(),
         "At least one request should complete"
     );
-}
-
-/// **Integration Test: Engine Stop**
-///
-/// Tests that the engine can be stopped gracefully.
-#[test]
-fn test_engine_stop() {
-    let config = create_test_config();
-    let mut engine = InferenceEngine::new(config).unwrap();
-
-    let params = GenerationParams {
-        max_tokens: 100, // Long generation
-        temperature: 1.0,
-        top_p: 0.9,
-    };
-
-    engine.submit_request("Long request", params).unwrap();
-
-    // Run a few steps
-    for _ in 0..5 {
-        let _ = engine.step();
-    }
-
-    // Stop should work
-    engine.stop();
-
-    // Engine should still have pending work (we stopped early)
-    // This is expected behavior
 }
 
 /// **Integration Test: Configuration Validation**
@@ -411,7 +379,6 @@ fn test_memory_pressure_handling() {
     assert!(submitted > 0, "Should submit at least one request");
 
     // Run to completion
-    engine.set_max_steps(500);
     let completed = engine.run();
 
     // Should complete without crashing
@@ -440,7 +407,6 @@ fn test_large_batch_processing() {
     };
 
     let mut engine = InferenceEngine::new(config).unwrap();
-    engine.set_max_steps(300);
 
     let params = GenerationParams {
         max_tokens: 3,
@@ -468,7 +434,6 @@ fn test_large_batch_processing() {
 fn test_sequential_request_processing() {
     let config = create_test_config();
     let mut engine = InferenceEngine::new(config).unwrap();
-    engine.set_max_steps(200);
 
     let params = GenerationParams {
         max_tokens: 2,
@@ -498,7 +463,6 @@ fn test_sequential_request_processing() {
 fn test_execution_failure_surfaces_as_completed_error() {
     let config = create_test_config();
     let mut engine = create_failure_test_engine(config);
-    engine.set_max_steps(50);
 
     let params = GenerationParams {
         max_tokens: 5,

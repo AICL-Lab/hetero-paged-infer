@@ -78,7 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     engine.submit_request("Test input", params)?;
-    engine.set_max_steps(50);
 
     let completed = engine.run();
     println!("  Completed {} requests", completed.len());

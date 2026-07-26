@@ -49,7 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Set max steps
-    engine.set_max_steps(200);
 
     // Run inference
     println!("\nRunning batch inference...");

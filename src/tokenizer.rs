@@ -82,6 +82,8 @@ pub struct SimpleTokenizer {
     vocab_size: u32,
     /// Special token IDs
     special_tokens: SpecialTokenIds,
+    /// Whether encode adds BOS/EOS and decode skips them
+    add_special_tokens: bool,
 }
 
 impl SimpleTokenizer {
@@ -119,7 +121,15 @@ impl SimpleTokenizer {
             id_to_char,
             vocab_size: next_id,
             special_tokens,
+            add_special_tokens: true,
         }
+    }
+
+    /// Create a tokenizer that does not add/strip BOS/EOS (exact round-trip)
+    pub fn without_special_tokens() -> Self {
+        let mut t = Self::new();
+        t.add_special_tokens = false;
+        t
     }
 
     /// Encode a single character
@@ -148,16 +158,17 @@ impl TokenizerTrait for SimpleTokenizer {
     fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
         let mut tokens = Vec::with_capacity(text.len() + 2);
 
-        // Add BOS token
-        tokens.push(self.special_tokens.bos);
+        if self.add_special_tokens {
+            tokens.push(self.special_tokens.bos);
+        }
 
-        // Encode each character
         for c in text.chars() {
             tokens.push(self.encode_char(c));
         }
 
-        // Add EOS token
-        tokens.push(self.special_tokens.eos);
+        if self.add_special_tokens {
+            tokens.push(self.special_tokens.eos);
+        }
 
         Ok(tokens)
     }
@@ -166,10 +177,10 @@ impl TokenizerTrait for SimpleTokenizer {
         let mut result = String::with_capacity(tokens.len());
 
         for &token in tokens {
-            // Skip special tokens
-            if token == self.special_tokens.bos
-                || token == self.special_tokens.eos
-                || token == self.special_tokens.pad
+            if self.add_special_tokens
+                && (token == self.special_tokens.bos
+                    || token == self.special_tokens.eos
+                    || token == self.special_tokens.pad)
             {
                 continue;
             }
@@ -177,7 +188,6 @@ impl TokenizerTrait for SimpleTokenizer {
             if let Some(c) = self.decode_token(token) {
                 result.push(c);
             }
-            // UNK tokens are silently skipped
         }
 
         Ok(result)
@@ -197,33 +207,6 @@ impl TokenizerTrait for SimpleTokenizer {
 
     fn pad_token_id(&self) -> TokenId {
         self.special_tokens.pad
-    }
-}
-
-/// Tokenizer that preserves exact round-trip for ASCII text
-#[derive(Debug, Clone)]
-pub struct RoundTripTokenizer {
-    inner: SimpleTokenizer,
-}
-
-impl RoundTripTokenizer {
-    pub fn new() -> Self {
-        Self {
-            inner: SimpleTokenizer::new(),
-        }
-    }
-
-    /// Create with custom special token IDs
-    pub fn with_special_tokens(special_tokens: SpecialTokenIds) -> Self {
-        Self {
-            inner: SimpleTokenizer::with_special_tokens(special_tokens),
-        }
-    }
-}
-
-impl Default for RoundTripTokenizer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -250,41 +233,6 @@ impl HuggingFaceTokenizer {
             inner,
             special_tokens,
         })
-    }
-}
-
-impl TokenizerTrait for RoundTripTokenizer {
-    fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
-        // Don't add BOS/EOS for round-trip testing
-        Ok(text.chars().map(|c| self.inner.encode_char(c)).collect())
-    }
-
-    fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String> {
-        let mut result = String::with_capacity(tokens.len());
-
-        for &token in tokens {
-            if let Some(c) = self.inner.decode_token(token) {
-                result.push(c);
-            }
-        }
-
-        Ok(result)
-    }
-
-    fn vocab_size(&self) -> u32 {
-        self.inner.vocab_size()
-    }
-
-    fn bos_token_id(&self) -> TokenId {
-        self.inner.bos_token_id()
-    }
-
-    fn eos_token_id(&self) -> TokenId {
-        self.inner.eos_token_id()
-    }
-
-    fn pad_token_id(&self) -> TokenId {
-        self.inner.pad_token_id()
     }
 }
 
@@ -426,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_tokenizer() {
-        let tokenizer = RoundTripTokenizer::new();
+        let tokenizer = SimpleTokenizer::without_special_tokens();
 
         let text = "Hello World 123!";
         let tokens = tokenizer.encode(text);
@@ -507,7 +455,7 @@ mod property_tests {
         fn prop_tokenizer_round_trip(
             text in "[a-zA-Z0-9 .,!?\\-_:;'\"()\\[\\]{}@#$%^&*+=<>/\\\\|~`]{0,100}"
         ) {
-            let tokenizer = RoundTripTokenizer::new();
+            let tokenizer = SimpleTokenizer::without_special_tokens();
 
             let tokens = tokenizer.encode(&text);
             let decoded = tokenizer.decode(&tokens);
@@ -528,7 +476,7 @@ mod property_tests {
             text in prop::collection::vec(32u8..=126, 0..100)
                 .prop_map(|bytes| String::from_utf8(bytes).unwrap())
         ) {
-            let tokenizer = RoundTripTokenizer::new();
+            let tokenizer = SimpleTokenizer::without_special_tokens();
 
             let tokens = tokenizer.encode(&text);
             let decoded = tokenizer.decode(&tokens);

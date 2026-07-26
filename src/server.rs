@@ -77,7 +77,6 @@ impl AppState {
         let request_id = engine
             .submit_request(prompt, params)
             .map_err(|e| e.to_string())?;
-        engine.set_max_steps(1024);
         let completed = engine.run();
         let result = completed
             .into_iter()

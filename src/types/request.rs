@@ -51,15 +51,6 @@ impl GenerationParams {
         }
         Ok(())
     }
-
-    /// 检查参数是否有效
-    pub fn is_valid(&self) -> bool {
-        self.max_tokens > 0
-            && self.temperature > 0.0
-            && self.temperature <= 2.0
-            && self.top_p > 0.0
-            && self.top_p <= 1.0
-    }
 }
 
 /// 推理请求
@@ -154,7 +145,7 @@ mod tests {
             top_p: 0.9,
         };
         assert!(valid.validate().is_ok());
-        assert!(valid.is_valid());
+        assert!(valid.validate().is_ok());
 
         let invalid_max_tokens = GenerationParams {
             max_tokens: 0,
@@ -162,7 +153,7 @@ mod tests {
             top_p: 0.9,
         };
         assert!(invalid_max_tokens.validate().is_err());
-        assert!(!invalid_max_tokens.is_valid());
+        assert!(invalid_max_tokens.validate().is_err());
 
         let invalid_temp = GenerationParams {
             max_tokens: 100,
@@ -227,7 +218,6 @@ mod property_tests {
             };
 
             let validation_result = params.validate();
-            let is_valid = params.is_valid();
 
             let expected_valid = max_tokens > 0
                 && temperature > 0.0
@@ -241,13 +231,6 @@ mod property_tests {
                 "验证不匹配，参数: max_tokens={}, temp={}, top_p={}",
                 max_tokens, temperature, top_p
             );
-
-            prop_assert_eq!(
-                is_valid,
-                expected_valid,
-                "is_valid() 与 validate() 不一致，参数: {:?}",
-                params
-            );
         }
 
         #[test]
@@ -259,49 +242,49 @@ mod property_tests {
                 temperature: 2.0,
                 top_p: 0.5,
             };
-            prop_assert!(params_temp_boundary.is_valid());
+            prop_assert!(params_temp_boundary.validate().is_ok());
 
             let params_top_p_boundary = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 1.0,
                 top_p: 1.0,
             };
-            prop_assert!(params_top_p_boundary.is_valid());
+            prop_assert!(params_top_p_boundary.validate().is_ok());
 
             let params_temp_over = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 2.001,
                 top_p: 0.5,
             };
-            prop_assert!(!params_temp_over.is_valid());
+            prop_assert!(params_temp_over.validate().is_err());
 
             let params_top_p_over = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 1.0,
                 top_p: 1.001,
             };
-            prop_assert!(!params_top_p_over.is_valid());
+            prop_assert!(params_top_p_over.validate().is_err());
 
             let params_zero_temp = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 0.0,
                 top_p: 0.5,
             };
-            prop_assert!(!params_zero_temp.is_valid());
+            prop_assert!(params_zero_temp.validate().is_err());
 
             let params_zero_top_p = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 1.0,
                 top_p: 0.0,
             };
-            prop_assert!(!params_zero_top_p.is_valid());
+            prop_assert!(params_zero_top_p.validate().is_err());
 
             let params_zero_max_tokens = GenerationParams {
                 max_tokens: 0,
                 temperature: 1.0,
                 top_p: 0.5,
             };
-            prop_assert!(!params_zero_max_tokens.is_valid());
+            prop_assert!(params_zero_max_tokens.validate().is_err());
         }
     }
 }

@@ -38,7 +38,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Submitted request with ID: {}", request_id);
 
     // Set maximum steps to prevent infinite loop
-    engine.set_max_steps(100);
 
     // Run inference
     println!("\nRunning inference...");

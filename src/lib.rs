@@ -68,12 +68,10 @@
 //! ### 调度器
 //!
 //! - [`Scheduler`] - Continuous Batching 调度器
-//! - [`SchedulerTrait`] - 调度器 trait 接口
 //!
 //! ### KV Cache 管理
 //!
 //! - [`KVCacheManager`] - `PagedAttention` KV Cache 管理器
-//! - [`KVCacheManagerTrait`] - KV Cache 管理器 trait 接口
 //!
 //! ### GPU 执行器
 //!
@@ -84,8 +82,7 @@
 //!
 //! ### 分词器
 //!
-//! - [`SimpleTokenizer`] - 简单字符级分词器（测试用）
-//! - [`RoundTripTokenizer`] - 精确往返分词器
+//! - [`SimpleTokenizer`] - 简单字符级分词器（测试用，`without_special_tokens()` 可精确往返）
 //! - [`TokenizerTrait`] - 分词器 trait 接口
 //!
 //! ### 类型
@@ -115,7 +112,6 @@ pub mod execution_pipeline;
 pub mod gpu_executor;
 pub mod kv_cache;
 pub mod scheduler;
-pub mod sequence_lifecycle;
 pub mod server;
 pub mod tokenizer;
 pub mod types;
@@ -133,11 +129,11 @@ pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
 #[cfg(feature = "cuda")]
 pub use gpu_executor::CudaExecutor;
 pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
-pub use kv_cache::{KVCacheManager, KVCacheManagerTrait};
-pub use scheduler::{Scheduler, SchedulerTrait};
+pub use kv_cache::KVCacheManager;
+pub use scheduler::Scheduler;
 pub use server::{create_router, GenerationResult};
 pub use tokenizer::{
-    build_tokenizer, HuggingFaceTokenizer, RoundTripTokenizer, SimpleTokenizer, TokenizerTrait,
+    build_tokenizer, HuggingFaceTokenizer, SimpleTokenizer, TokenizerTrait,
 };
 pub use types::{
     BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, LogicalBlock,

@@ -21,7 +21,7 @@
 
 use crate::error::MemoryError;
 use crate::types::{BlockIdx, LogicalBlock, MemoryStats, PhysicalBlockRef, SeqId};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 /// A physical block representing a contiguous GPU memory region
 #[derive(Debug, Clone)]
@@ -30,8 +30,6 @@ pub struct PhysicalBlock {
     pub block_idx: BlockIdx,
     /// Reference count for copy-on-write support
     pub ref_count: u32,
-    /// Whether this block is currently allocated
-    pub is_allocated: bool,
 }
 
 impl PhysicalBlock {
@@ -39,7 +37,6 @@ impl PhysicalBlock {
         Self {
             block_idx,
             ref_count: 0,
-            is_allocated: false,
         }
     }
 }
@@ -77,7 +74,6 @@ impl BlockPool {
     pub fn allocate(&mut self) -> Result<PhysicalBlockRef, MemoryError> {
         if let Some(block_idx) = self.free_list.pop_front() {
             let block = &mut self.blocks[block_idx as usize];
-            block.is_allocated = true;
             block.ref_count = 1;
             Ok(PhysicalBlockRef { block_idx })
         } else {
@@ -93,13 +89,12 @@ impl BlockPool {
         }
 
         let block = &mut self.blocks[block_idx as usize];
-        if !block.is_allocated {
+        if block.ref_count == 0 {
             return Ok(()); // Already free, idempotent
         }
 
-        block.ref_count = block.ref_count.saturating_sub(1);
+        block.ref_count -= 1;
         if block.ref_count == 0 {
-            block.is_allocated = false;
             self.free_list.push_back(block_idx);
         }
         Ok(())
@@ -176,30 +171,6 @@ impl PageTable {
     }
 }
 
-/// Trait defining the KV Cache Manager interface
-pub trait KVCacheManagerTrait {
-    /// Allocate blocks for a new sequence
-    fn allocate_sequence(&mut self, seq_id: SeqId, num_tokens: u32) -> Result<(), MemoryError>;
-
-    /// Allocate additional block when sequence grows
-    fn allocate_block(&mut self, seq_id: SeqId) -> Result<PhysicalBlockRef, MemoryError>;
-
-    /// Free all blocks for a completed sequence
-    fn free_sequence(&mut self, seq_id: SeqId);
-
-    /// Get block table for GPU execution
-    fn get_block_table(&self, seq_id: SeqId) -> Option<Vec<BlockIdx>>;
-
-    /// Query memory status
-    fn get_memory_stats(&self) -> MemoryStats;
-
-    /// Check if can allocate n blocks
-    fn can_allocate(&self, num_blocks: u32) -> bool;
-
-    /// Get block size
-    fn block_size(&self) -> u32;
-}
-
 /// KV Cache Manager implementation
 #[derive(Debug)]
 pub struct KVCacheManager {
@@ -207,8 +178,6 @@ pub struct KVCacheManager {
     block_pool: BlockPool,
     /// Page tables for each sequence
     page_tables: HashMap<SeqId, PageTable>,
-    /// Set of active sequence IDs
-    active_sequences: HashSet<SeqId>,
 }
 
 impl KVCacheManager {
@@ -217,7 +186,6 @@ impl KVCacheManager {
         Self {
             block_pool: BlockPool::new(num_blocks, block_size),
             page_tables: HashMap::new(),
-            active_sequences: HashSet::new(),
         }
     }
 
@@ -229,7 +197,7 @@ impl KVCacheManager {
 
     /// Check if sequence exists
     pub fn has_sequence(&self, seq_id: SeqId) -> bool {
-        self.active_sequences.contains(&seq_id)
+        self.page_tables.contains_key(&seq_id)
     }
 
     /// Get number of blocks allocated for a sequence
@@ -241,21 +209,18 @@ impl KVCacheManager {
     }
 }
 
-impl KVCacheManagerTrait for KVCacheManager {
-    fn allocate_sequence(&mut self, seq_id: SeqId, num_tokens: u32) -> Result<(), MemoryError> {
-        // Check if sequence already exists
-        if self.active_sequences.contains(&seq_id) {
+impl KVCacheManager {
+    pub fn allocate_sequence(&mut self, seq_id: SeqId, num_tokens: u32) -> Result<(), MemoryError> {
+        if self.page_tables.contains_key(&seq_id) {
             return Ok(()); // Idempotent
         }
 
         let num_blocks = self.blocks_for_tokens(num_tokens);
 
-        // Check if we have enough blocks
         if !self.block_pool.can_allocate(num_blocks) {
             return Err(MemoryError::OutOfBlocks);
         }
 
-        // Create page table and allocate blocks
         let mut page_table = PageTable::new(seq_id);
 
         for _ in 0..num_blocks {
@@ -264,13 +229,12 @@ impl KVCacheManagerTrait for KVCacheManager {
         }
 
         self.page_tables.insert(seq_id, page_table);
-        self.active_sequences.insert(seq_id);
 
         Ok(())
     }
 
-    fn allocate_block(&mut self, seq_id: SeqId) -> Result<PhysicalBlockRef, MemoryError> {
-        if !self.active_sequences.contains(&seq_id) {
+    pub fn allocate_block(&mut self, seq_id: SeqId) -> Result<PhysicalBlockRef, MemoryError> {
+        if !self.page_tables.contains_key(&seq_id) {
             return Err(MemoryError::SequenceNotFound(seq_id));
         }
 
@@ -283,9 +247,8 @@ impl KVCacheManagerTrait for KVCacheManager {
         Ok(physical_ref)
     }
 
-    fn free_sequence(&mut self, seq_id: SeqId) {
+    pub fn free_sequence(&mut self, seq_id: SeqId) {
         if let Some(page_table) = self.page_tables.remove(&seq_id) {
-            // Free all physical blocks
             for logical_block in &page_table.logical_blocks {
                 if let Some(physical_ref) = logical_block.physical_block {
                     if let Err(e) = self.block_pool.free(physical_ref) {
@@ -299,27 +262,26 @@ impl KVCacheManagerTrait for KVCacheManager {
                 }
             }
         }
-        self.active_sequences.remove(&seq_id);
     }
 
-    fn get_block_table(&self, seq_id: SeqId) -> Option<Vec<BlockIdx>> {
+    pub fn get_block_table(&self, seq_id: SeqId) -> Option<Vec<BlockIdx>> {
         self.page_tables.get(&seq_id).map(|pt| pt.get_block_table())
     }
 
-    fn get_memory_stats(&self) -> MemoryStats {
+    pub fn get_memory_stats(&self) -> MemoryStats {
         MemoryStats {
             total_blocks: self.block_pool.total_blocks(),
             used_blocks: self.block_pool.num_used_blocks(),
             free_blocks: self.block_pool.num_free_blocks(),
-            num_sequences: self.active_sequences.len() as u32,
+            num_sequences: self.page_tables.len() as u32,
         }
     }
 
-    fn can_allocate(&self, num_blocks: u32) -> bool {
+    pub fn can_allocate(&self, num_blocks: u32) -> bool {
         self.block_pool.can_allocate(num_blocks)
     }
 
-    fn block_size(&self) -> u32 {
+    pub fn block_size(&self) -> u32 {
         self.block_pool.block_size()
     }
 }

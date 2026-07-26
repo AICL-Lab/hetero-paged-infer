@@ -4,8 +4,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hetero_infer::{
-    EngineConfig, GenerationParams, InferenceEngine, KVCacheManager, KVCacheManagerTrait,
-    Scheduler, SchedulerTrait, SpecialTokenIds,
+    EngineConfig, GenerationParams, InferenceEngine, KVCacheManager,
+    Scheduler, SpecialTokenIds,
 };
 use std::hint::black_box;
 
@@ -94,7 +94,6 @@ fn bench_batch_sizes(c: &mut Criterion) {
                     engine
                 },
                 |mut engine| {
-                    engine.set_max_steps(200);
                     let completed = engine.run();
                     black_box(completed)
                 },
