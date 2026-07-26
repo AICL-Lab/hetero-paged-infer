@@ -103,8 +103,6 @@
 //! - [`ExecutionError`] - 执行错误
 //! - [`SchedulerError`] - 调度错误
 
-#![allow(clippy::similar_names)]
-
 pub mod config;
 pub mod engine;
 pub mod error;

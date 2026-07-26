@@ -240,6 +240,3 @@ pub enum EngineError {
     #[error("分词错误: {0}")]
     Tokenization(String),
 }
-
-/// 库级别的 Result 类型别名
-pub type Result<T> = std::result::Result<T, EngineError>;

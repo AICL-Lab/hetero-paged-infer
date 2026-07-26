@@ -49,8 +49,8 @@ assert!(completed.iter().any(|item| item.request_id == request_id));
 以下接口仍然存在，主要服务于内部实现、测试或定向替换：
 
 - `TokenizerTrait`
-- `SchedulerTrait`
-- `KVCacheManagerTrait`
+- `Scheduler`
+- `KVCacheManager`
 - `GPUExecutorTrait`
 
 如果需要查看精确签名，应以生成的 Rustdoc 为准，而不是依赖手写镜像文档。

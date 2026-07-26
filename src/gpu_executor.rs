@@ -348,17 +348,14 @@ impl GPUExecutorTrait for MockGPUExecutor {
 
         // Generate one token per sequence
         let mut next_tokens = Vec::with_capacity(batch.num_sequences());
-        let mut seq_ids = Vec::with_capacity(batch.num_sequences());
-
-        for &seq_id in &batch.seq_ids {
+        for _ in &batch.seq_ids {
             next_tokens.push(self.generate_token());
-            seq_ids.push(seq_id);
         }
 
         Ok(ExecutionOutput {
             next_tokens,
             logits: None,
-            seq_ids,
+            seq_ids: batch.seq_ids.clone(),
         })
     }
 

@@ -30,8 +30,8 @@ Hetero-Paged-Infer 实现了一种**异构计算架构**，将控制流（CPU）
 pub struct InferenceEngine {
     config: EngineConfig,
     tokenizer: Box<dyn TokenizerTrait>,
-    scheduler: Box<dyn SchedulerTrait>,
-    kv_cache_manager: Box<dyn KVCacheManagerTrait>,
+    scheduler: Scheduler,
+    kv_cache_manager: KVCacheManager,
     gpu_executor: Box<dyn GPUExecutorTrait>,
 }
 ```

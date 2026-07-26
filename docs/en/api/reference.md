@@ -49,8 +49,8 @@ The server runs the local engine directly. There is no alternate bridge backend.
 These interfaces still exist for engine internals and targeted replacement work:
 
 - `TokenizerTrait`
-- `SchedulerTrait`
-- `KVCacheManagerTrait`
+- `Scheduler`
+- `KVCacheManager`
 - `GPUExecutorTrait`
 
 They are useful for tests and experimentation, but the canonical source of truth is generated Rust documentation, not handwritten duplicated signatures.
