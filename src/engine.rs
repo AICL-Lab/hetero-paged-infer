@@ -38,7 +38,7 @@
 //!     temperature: 1.0,
 //!     top_p: 0.9,
 //! };
-//! let request_id = engine.submit_request("你好，世界！", params)?;
+//! let (request_id, _prompt_tokens) = engine.submit_request("你好，世界！", params)?;
 //!
 //! // 运行推理
 //! let completed = engine.run();
@@ -58,6 +58,7 @@ use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{
     CompletedRequest, GenerationParams, Request, RequestId, RequestState, SeqId, TokenId,
 };
+use std::collections::HashMap;
 
 /// 推理引擎
 ///
@@ -179,7 +180,8 @@ impl InferenceEngine {
     ///
     /// # 返回
     ///
-    /// 请求的唯一标识符。
+    /// `(请求唯一标识符, prompt token 数)`。prompt token 数来自提交时的
+    /// 同一次分词，供服务层报告精确 usage，无需二次分词。
     ///
     /// # 错误
     ///
@@ -200,14 +202,15 @@ impl InferenceEngine {
     ///     top_p: 0.9,
     /// };
     ///
-    /// let request_id = engine.submit_request("你好", params)?;
+    /// let (request_id, prompt_tokens) = engine.submit_request("你好", params)?;
+    /// assert!(request_id > 0 && prompt_tokens > 0);
     /// # Ok::<(), hetero_infer::EngineError>(())
     /// ```
     pub fn submit_request(
         &mut self,
         text: &str,
         params: GenerationParams,
-    ) -> Result<RequestId, EngineError> {
+    ) -> Result<(RequestId, usize), EngineError> {
         // 验证参数
         params.validate()?;
 
@@ -221,6 +224,7 @@ impl InferenceEngine {
             .tokenizer
             .try_encode(text)
             .map_err(EngineError::Tokenization)?;
+        let prompt_tokens = input_tokens.len();
 
         // 检查 prompt 长度
         if input_tokens.len() > self.config.max_model_len as usize {
@@ -249,18 +253,7 @@ impl InferenceEngine {
         self.scheduler.add_request(request)?;
         self.total_requests += 1;
 
-        Ok(request_id)
-    }
-
-    /// 使用配置的 tokenizer 统计文本的 token 数
-    ///
-    /// 供服务层报告精确的 `prompt_tokens`（与 `submit_request` 内部的分词一致）。
-    pub fn count_prompt_tokens(&self, text: &str) -> Result<usize, EngineError> {
-        Ok(self
-            .tokenizer
-            .try_encode(text)
-            .map_err(EngineError::Tokenization)?
-            .len())
+        Ok((request_id, prompt_tokens))
     }
 
     /// 执行一步推理
@@ -285,7 +278,7 @@ impl InferenceEngine {
 
         if !scheduler_output.is_empty() {
             // seq_id → request_id 映射，用于把生成的 token 归属到请求
-            let request_ids: Vec<(SeqId, RequestId)> = scheduler_output
+            let request_id_by_seq: HashMap<SeqId, RequestId> = scheduler_output
                 .prefill_sequences
                 .iter()
                 .chain(scheduler_output.decode_sequences.iter())
@@ -301,10 +294,8 @@ impl InferenceEngine {
                         .iter()
                         .zip(execution_output.next_tokens.iter())
                     {
-                        if let Some((_, request_id)) =
-                            request_ids.iter().find(|(sid, _)| sid == seq_id)
-                        {
-                            generated.push((*request_id, *token));
+                        if let Some(&request_id) = request_id_by_seq.get(seq_id) {
+                            generated.push((request_id, *token));
                         }
                     }
                     self.scheduler

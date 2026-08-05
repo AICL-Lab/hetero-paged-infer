@@ -39,8 +39,9 @@ fn test_end_to_end_request_flow() {
     };
 
     // Submit request
-    let request_id = engine.submit_request("Hello world", params).unwrap();
+    let (request_id, prompt_tokens) = engine.submit_request("Hello world", params).unwrap();
     assert!(request_id > 0);
+    assert!(prompt_tokens > 0);
 
     // Verify pending work
     assert!(engine.has_pending_work());

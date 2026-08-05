@@ -43,6 +43,14 @@ struct Args {
     #[arg(long)]
     memory_threshold: Option<f32>,
 
+    /// Serve listen host (overrides config file / default 127.0.0.1)
+    #[arg(long)]
+    host: Option<String>,
+
+    /// Serve listen port (overrides config file / default 3000)
+    #[arg(long)]
+    port: Option<u16>,
+
     /// Input text to process
     #[arg(short, long)]
     input: Option<String>,
@@ -70,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    let config = if let Some(config_path) = args.config {
+    let mut config = if let Some(config_path) = args.config {
         // 之前 --config 会静默忽略所有单项 CLI 参数，极易误配；现在显式报错。
         let has_overrides = [
             args.block_size.is_some(),
@@ -92,19 +100,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         EngineConfig::from_file(&config_path)?
     } else {
-        EngineConfig {
-            block_size: args.block_size.unwrap_or(16),
-            max_num_blocks: args.max_num_blocks.unwrap_or(1024),
-            max_batch_size: args.max_batch_size.unwrap_or(32),
-            max_num_seqs: args.max_num_seqs.unwrap_or(256),
-            max_model_len: args.max_model_len.unwrap_or(2048),
-            max_total_tokens: args.max_total_tokens.unwrap_or(4096),
-            memory_threshold: args.memory_threshold.unwrap_or(0.9),
-            max_retry_attempts: 2,
-            special_tokens: Default::default(),
-            ..Default::default()
+        let mut config = EngineConfig::default();
+        if let Some(v) = args.block_size {
+            config.block_size = v;
         }
+        if let Some(v) = args.max_num_blocks {
+            config.max_num_blocks = v;
+        }
+        if let Some(v) = args.max_batch_size {
+            config.max_batch_size = v;
+        }
+        if let Some(v) = args.max_num_seqs {
+            config.max_num_seqs = v;
+        }
+        if let Some(v) = args.max_model_len {
+            config.max_model_len = v;
+        }
+        if let Some(v) = args.max_total_tokens {
+            config.max_total_tokens = v;
+        }
+        if let Some(v) = args.memory_threshold {
+            config.memory_threshold = v;
+        }
+        config
     };
+
+    // serving 覆盖对两种配置来源都生效（--host/--port 可与 --config 组合）
+    if let Some(host) = args.host {
+        config.serving.host = host;
+    }
+    if let Some(port) = args.port {
+        config.serving.port = port;
+    }
 
     info!("Starting Heterogeneous Inference System");
     info!("Configuration: {:?}", config);
@@ -149,8 +176,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
 
         // Submit request
-        let request_id = engine.submit_request(&input_text, params)?;
-        info!("Submitted request: {}", request_id);
+        let (request_id, prompt_tokens) = engine.submit_request(&input_text, params)?;
+        info!(
+            "Submitted request: {} ({} prompt tokens)",
+            request_id, prompt_tokens
+        );
 
         // Run inference
         let completed = engine.run();

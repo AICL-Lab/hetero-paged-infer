@@ -34,8 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_text = "Hello, world!";
     println!("Input: {}", input_text);
 
-    let request_id = engine.submit_request(input_text, params)?;
-    println!("Submitted request with ID: {}", request_id);
+    let (request_id, prompt_tokens) = engine.submit_request(input_text, params)?;
+    println!(
+        "Submitted request with ID: {} ({} prompt tokens)",
+        request_id, prompt_tokens
+    );
 
     // Set maximum steps to prevent infinite loop
 

@@ -413,12 +413,9 @@ fn admit_submission(
 ) {
     let result = engine
         .submit_request(&submission.prompt, submission.params)
-        .and_then(|request_id| {
-            let prompt_tokens = engine.count_prompt_tokens(&submission.prompt)?;
-            Ok(Admission {
-                request_id,
-                prompt_tokens,
-            })
+        .map(|(request_id, prompt_tokens)| Admission {
+            request_id,
+            prompt_tokens,
         });
     if let Ok(admission) = &result {
         waiters.insert(admission.request_id, submission.events);

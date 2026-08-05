@@ -43,7 +43,7 @@
 //!     temperature: 1.0,
 //!     top_p: 0.9,
 //! };
-//! let request_id = engine.submit_request("你好，世界！", params)?;
+//! let (request_id, _prompt_tokens) = engine.submit_request("你好，世界！", params)?;
 //!
 //! // 运行推理
 //! let completed = engine.run();
