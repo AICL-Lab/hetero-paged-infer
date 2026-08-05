@@ -1,7 +1,5 @@
 //! 调度器类型
 
-use std::sync::Arc;
-
 use super::memory::LogicalBlock;
 use super::request::Request;
 use super::{BlockIdx, SeqId, TokenId};
@@ -43,18 +41,16 @@ impl Sequence {
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
         self.logical_blocks
             .iter()
-            .filter_map(|lb| lb.physical_block.map(|pb| pb.block_idx))
+            .map(|lb| lb.physical_block.block_idx)
             .collect()
     }
 
     /// 计算上下文长度（输入 + 已生成）
+    ///
+    /// 使用饱和算术，任何输入下都不会溢出。
     pub fn context_len(&self) -> u32 {
-        let input_len = self.request.input_tokens.len();
-        debug_assert!(
-            input_len <= u32::MAX as usize,
-            "input token count exceeds u32::MAX"
-        );
-        input_len as u32 + self.num_generated_tokens
+        let input_len = u32::try_from(self.request.input_tokens.len()).unwrap_or(u32::MAX);
+        input_len.saturating_add(self.num_generated_tokens)
     }
 
     /// 获取 decode 阶段的输入 token
@@ -74,14 +70,15 @@ impl Sequence {
 
 /// 调度器输出
 ///
-/// 包含一个调度周期内待执行的序列。
+/// 包含一个调度周期内待执行的序列。序列以克隆快照形式持有：
+/// 输出仅在单线程内被执行流水线读取一次后即丢弃，无需共享所有权。
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerOutput {
     /// Prefill 阶段的序列
-    pub prefill_sequences: Vec<Arc<Sequence>>,
+    pub prefill_sequences: Vec<Sequence>,
 
     /// Decode 阶段的序列
-    pub decode_sequences: Vec<Arc<Sequence>>,
+    pub decode_sequences: Vec<Sequence>,
 
     /// 批次总 token 数
     pub total_tokens: u32,

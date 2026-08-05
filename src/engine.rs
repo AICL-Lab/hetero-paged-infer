@@ -55,7 +55,9 @@ use crate::execution_pipeline::BatchExecutionPipeline;
 use crate::gpu_executor::{create_default_gpu_executor, GPUExecutorTrait};
 use crate::scheduler::Scheduler;
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
-use crate::types::{CompletedRequest, GenerationParams, Request, RequestId, RequestState};
+use crate::types::{
+    CompletedRequest, GenerationParams, Request, RequestId, RequestState, SeqId, TokenId,
+};
 
 /// 推理引擎
 ///
@@ -250,6 +252,17 @@ impl InferenceEngine {
         Ok(request_id)
     }
 
+    /// 使用配置的 tokenizer 统计文本的 token 数
+    ///
+    /// 供服务层报告精确的 `prompt_tokens`（与 `submit_request` 内部的分词一致）。
+    pub fn count_prompt_tokens(&self, text: &str) -> Result<usize, EngineError> {
+        Ok(self
+            .tokenizer
+            .try_encode(text)
+            .map_err(EngineError::Tokenization)?
+            .len())
+    }
+
     /// 执行一步推理
     ///
     /// 调度下一批次并通过执行流水线完成 GPU 计算。
@@ -258,15 +271,42 @@ impl InferenceEngine {
     ///
     /// 本次步骤完成的请求列表。
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError> {
+        self.step_events().map(|events| events.completed)
+    }
+
+    /// 执行一步推理，并返回细粒度事件
+    ///
+    /// 除完成请求外，还报告本步为每个请求新生成的 token（已解码为文本片段），
+    /// 供服务层驱动 token 级流式响应。
+    pub fn step_events(&mut self) -> Result<StepEvents, EngineError> {
         // 调度下一批次
         let scheduler_output = self.scheduler.schedule();
+        let mut generated: Vec<(RequestId, TokenId)> = Vec::new();
 
         if !scheduler_output.is_empty() {
+            // seq_id → request_id 映射，用于把生成的 token 归属到请求
+            let request_ids: Vec<(SeqId, RequestId)> = scheduler_output
+                .prefill_sequences
+                .iter()
+                .chain(scheduler_output.decode_sequences.iter())
+                .map(|seq| (seq.seq_id, seq.request.id))
+                .collect();
             let seq_ids = scheduler_output.seq_ids();
 
             // 通过批次执行流水线完成 GPU 计算（含重试）
             match self.execution_pipeline.execute(&scheduler_output) {
                 Ok(execution_output) => {
+                    for (seq_id, token) in execution_output
+                        .seq_ids
+                        .iter()
+                        .zip(execution_output.next_tokens.iter())
+                    {
+                        if let Some((_, request_id)) =
+                            request_ids.iter().find(|(sid, _)| sid == seq_id)
+                        {
+                            generated.push((*request_id, *token));
+                        }
+                    }
                     self.scheduler
                         .update_sequences(&execution_output, self.eos_token_id);
                 }
@@ -277,13 +317,31 @@ impl InferenceEngine {
                     return if completed.is_empty() {
                         Err(engine_error)
                     } else {
-                        Ok(completed)
+                        Ok(StepEvents {
+                            completed,
+                            chunks: Vec::new(),
+                        })
                     };
                 }
             }
         }
 
-        Ok(self.collect_completed_requests())
+        // 将新生成的 token 解码为文本片段（解码失败的片段置空，不影响完成事件）
+        let chunks = generated
+            .into_iter()
+            .map(|(request_id, token)| {
+                let text = self
+                    .tokenizer
+                    .try_decode(std::slice::from_ref(&token))
+                    .unwrap_or_default();
+                (request_id, text)
+            })
+            .collect();
+
+        Ok(StepEvents {
+            completed: self.collect_completed_requests(),
+            chunks,
+        })
     }
 
     fn collect_completed_requests(&mut self) -> Vec<CompletedRequest> {
@@ -386,6 +444,17 @@ impl InferenceEngine {
     }
 }
 
+/// 单步推理事件
+///
+/// 由 [`InferenceEngine::step_events`] 产生，供服务层驱动流式响应。
+#[derive(Debug, Clone, Default)]
+pub struct StepEvents {
+    /// 本步到达终态（成功或失败）的请求
+    pub completed: Vec<CompletedRequest>,
+    /// 本步为各请求新生成的文本片段：`(request_id, 解码后的片段)`
+    pub chunks: Vec<(RequestId, String)>,
+}
+
 /// 引擎指标
 ///
 /// 运行时统计信息。
@@ -437,67 +506,10 @@ mod tests {
     use super::*;
     use crate::config::{TokenizerConfig, TokenizerKind};
     use crate::error::ExecutionError;
-    use crate::test_utils::create_test_config;
+    use crate::test_utils::{create_test_config, write_test_tokenizer_json, AlwaysFailExecutor};
     use crate::tokenizer::SimpleTokenizer;
     use crate::types::{ExecutionBatch, ExecutionOutput};
     use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn write_test_tokenizer_json() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("hetero-engine-tokenizer-{unique}.json"));
-        fs::write(
-            &path,
-            r###"{
-  "version": "1.0",
-  "truncation": null,
-  "padding": null,
-  "added_tokens": [],
-  "normalizer": null,
-  "pre_tokenizer": { "type": "Whitespace" },
-  "post_processor": null,
-  "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
-  "model": {
-    "type": "WordLevel",
-    "vocab": {
-      "[UNK]": 0,
-      "hello": 1,
-      "world": 2
-    },
-    "unk_token": "[UNK]"
-  }
-}"###,
-        )
-        .unwrap();
-        path
-    }
-
-    struct AlwaysFailExecutor;
-
-    impl GPUExecutorTrait for AlwaysFailExecutor {
-        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-            Err(ExecutionError::KernelLaunchFailed("boom".to_string()))
-        }
-
-        fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
-            Ok(())
-        }
-
-        fn execute_graph(
-            &mut self,
-            _batch: &ExecutionBatch,
-        ) -> Result<ExecutionOutput, ExecutionError> {
-            Err(ExecutionError::KernelLaunchFailed("boom".to_string()))
-        }
-
-        fn has_captured_graph(&self) -> bool {
-            false
-        }
-    }
 
     struct TimeoutThenSuccessExecutor {
         attempts: u32,
@@ -516,20 +528,13 @@ mod tests {
                 })
             }
         }
+    }
 
-        fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
-            Ok(())
-        }
+    struct AlwaysTimeoutExecutor;
 
-        fn execute_graph(
-            &mut self,
-            batch: &ExecutionBatch,
-        ) -> Result<ExecutionOutput, ExecutionError> {
-            self.execute(batch)
-        }
-
-        fn has_captured_graph(&self) -> bool {
-            false
+    impl GPUExecutorTrait for AlwaysTimeoutExecutor {
+        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+            Err(ExecutionError::GpuTimeout)
         }
     }
 
@@ -696,9 +701,18 @@ mod tests {
 
         engine.submit_request("Hi", params).unwrap();
 
+        let mut completed = Vec::new();
         for _ in 0..10 {
-            let _ = engine.step();
+            completed.extend(engine.step().unwrap());
         }
+
+        assert_eq!(
+            completed.len(),
+            1,
+            "request should complete within 10 steps"
+        );
+        assert!(completed[0].success);
+        assert!(!engine.has_pending_work());
     }
 
     #[test]
@@ -729,7 +743,9 @@ mod tests {
         engine.submit_request("Test", params).unwrap();
 
         let completed = engine.run();
-        assert!(!completed.is_empty() || !engine.has_pending_work());
+        assert_eq!(completed.len(), 1, "the submitted request must complete");
+        assert!(completed[0].success);
+        assert!(!engine.has_pending_work());
     }
 
     #[test]
@@ -750,7 +766,9 @@ mod tests {
         }
 
         let completed = engine.run();
-        assert!(completed.len() <= 3);
+        assert_eq!(completed.len(), 3, "all three requests must complete");
+        assert!(completed.iter().all(|c| c.success));
+        assert!(!engine.has_pending_work());
     }
 
     #[test]
@@ -823,5 +841,38 @@ mod tests {
         let metrics = engine.get_metrics();
         assert_eq!(metrics.failed_requests, 0);
         assert_eq!(metrics.completed_requests, 1);
+    }
+
+    #[test]
+    fn test_gpu_timeout_exhausts_retries_then_fails_request() {
+        // 执行器持续超时：重试 max_retry_attempts 次后必须放弃，
+        // 将请求标记为失败并释放资源，而不是无限重试或静默挂起。
+        let config = create_test_config(); // max_retry_attempts: 2
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(AlwaysTimeoutExecutor),
+        )
+        .unwrap();
+
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert!(
+            completed[0].error.as_deref().unwrap_or("").contains("GPU"),
+            "error should surface the GPU timeout, got {:?}",
+            completed[0].error
+        );
+        assert!(!engine.has_pending_work());
+
+        let metrics = engine.get_metrics();
+        assert_eq!(metrics.failed_requests, 1);
+        assert_eq!(metrics.completed_requests, 0);
     }
 }

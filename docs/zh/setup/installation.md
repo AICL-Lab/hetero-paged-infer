@@ -4,26 +4,14 @@
 
 ## 系统要求
 
-### 最低要求
-
 | 组件 | 规格 |
 |-----------|--------------|
 | 操作系统 | Linux (Ubuntu 20.04+, CentOS 8+) |
-| CPU | x86_64，支持 AVX2 |
+| CPU | x86_64 |
 | 内存 | 8 GB |
-| GPU | 可选（NVIDIA，需支持 CUDA 11.x） |
 | 磁盘 | 2 GB 可用空间 |
-
-### 生产环境推荐配置
-
-| 组件 | 规格 |
-|-----------|--------------|
-| 操作系统 | Ubuntu 22.04 LTS |
-| CPU | 16+ 核心，推荐支持 AVX-512 |
-| 内存 | 32+ GB |
-| GPU | NVIDIA A100、H100 或 RTX 4090 |
-| 磁盘 | NVMe SSD |
-| 网络 | 1 Gbps+ |
+| Rust | 1.82+（2021 edition） |
+| GPU | 不需要（当前为 mock 计算核心；实验性 `cuda` feature 见下文） |
 
 ## 安装 Rust
 
@@ -34,24 +22,23 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 
-# Verify installation
+# Verify installation (需要 1.82+)
 rustc --version
 cargo --version
 ```
 
-### 必需组件
+### 开发组件（可选）
 
 ```bash
-# Add required components for development
 rustup component add rustfmt clippy
 
-# Add target if cross-compiling (optional)
+# 交叉编译目标（可选）
 rustup target add x86_64-unknown-linux-musl
 ```
 
 ## 安装 CUDA（可选）
 
-用于实验性的 `cuda` feature：
+仅用于实验性的 `cuda` feature；默认构建与 mock 引擎**不需要** CUDA。
 
 ### Ubuntu 22.04
 
@@ -89,112 +76,43 @@ nvcc --version
 
 ## 构建 Hetero-Paged-Infer
 
-### 方法 1：从源码构建（推荐）
+### 从源码构建（推荐）
 
 ```bash
 # Clone repository
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # Build release version
 cargo build --release
 
-# Installation complete
-# Binary: ./target/release/hetero-infer
+# 二进制文件: ./target/release/hetero-infer
 ```
 
-### 方法 2：使用 Make
-
-```bash
-# Build with Makefile (if available)
-make build
-
-# Install to /usr/local/bin
-sudo make install
-```
-
-### 方法 3：使用 Cargo Install
-
-```bash
-# Install directly from crates.io (when published)
-cargo install hetero-infer
-```
+> 尚未发布到 crates.io，因此暂不支持 `cargo install`。
 
 ## Docker 安装
 
-### 使用 Docker
+> 本项目**没有发布镜像**，需从源码本地构建。详见 [Docker 部署](../deployment/docker.md)。
 
 ```bash
-# Pull image
-docker pull ghcr.io/lessup/hetero-paged-infer:latest
-
-# Run
-docker run -it --rm \
-  --gpus all \
-  -v $(pwd)/config.json:/etc/hetero-infer/config.json \
-  ghcr.io/lessup/hetero-paged-infer:latest
-```
-
-### 构建 Docker 镜像
-
-```bash
-# Clone repo
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # Build image
 docker build -t hetero-infer:latest .
 
-# Run container
+# Run container（服务模式，端口 3000）
 docker run -it --rm \
   --name hetero-infer \
-  -p 8080:8080 \
+  -p 3000:3000 \
   hetero-infer:latest
-```
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  hetero-infer:
-    image: ghcr.io/lessup/hetero-paged-infer:latest
-    container_name: hetero-infer
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - RUST_LOG=info
-    volumes:
-      - ./config.json:/etc/hetero-infer/config.json:ro
-    ports:
-      - "8080:8080"
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 ```
 
 ## Kubernetes 部署
 
-### Helm Chart（计划中）
-
-```bash
-# Add Helm repo (when available)
-helm repo add hetero-infer https://lessup.github.io/hetero-paged-infer
-helm repo update
-
-# Install
-helm install hetero-infer hetero-infer/hetero-infer \
-  --set gpu.enabled=true \
-  --set resources.limits.memory=32Gi
-```
-
-### 原始 Kubernetes 清单
+没有 Helm chart；使用原始 Kubernetes 清单（镜像需先本地构建并推送到你的
+registry，`serving.host` 需设为 `0.0.0.0`）：
 
 ```yaml
 apiVersion: apps/v1
@@ -213,13 +131,15 @@ spec:
     spec:
       containers:
       - name: hetero-infer
-        image: ghcr.io/lessup/hetero-paged-infer:latest
+        image: hetero-infer:latest
+        args: ["--serve", "--config", "/etc/hetero-infer/config.json"]
+        ports:
+        - containerPort: 3000
         resources:
           limits:
-            nvidia.com/gpu: 1
-            memory: "32Gi"
+            memory: "8Gi"
           requests:
-            memory: "16Gi"
+            memory: "2Gi"
         volumeMounts:
         - name: config
           mountPath: /etc/hetero-infer
@@ -229,20 +149,21 @@ spec:
           name: hetero-infer-config
 ```
 
+> mock 引擎不消费 GPU，清单中不含 `nvidia.com/gpu`；仅实验性 `cuda` 构建需要。
+> 完整清单（探针、Service）见[生产部署](../deployment/production.md)。
+
 ## 验证安装
 
-### 测试安装
-
 ```bash
-# Check version
-./target/release/hetero-infer --version
+# 查看帮助（注意：没有 --version flag）
+./target/release/hetero-infer --help
 
-# Run basic test
+# 运行一次推理（输出为占位 token，见快速入门）
 ./target/release/hetero-infer \
   --input "Hello, world!" \
   --max-tokens 10
 
-# Run test suite
+# 运行测试套件
 cargo test --release
 ```
 
@@ -272,7 +193,7 @@ error: could not compile
 ```
 **解决方案：**
 ```bash
-# Update Rust
+# Update Rust (需要 1.82+)
 rustup update
 
 # Clean and rebuild
@@ -309,14 +230,11 @@ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 ## 卸载
 
 ```bash
-# Remove binary
-rm /usr/local/bin/hetero-infer
+# Remove built binary
+rm ./target/release/hetero-infer
 
-# Remove config
+# Remove config (if installed system-wide)
 rm -rf /etc/hetero-infer
-
-# Uninstall from cargo
-cargo uninstall hetero-infer
 ```
 
 ---

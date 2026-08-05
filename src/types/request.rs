@@ -1,7 +1,5 @@
 //! 请求类型
 
-use std::time::Instant;
-
 use super::{RequestId, RequestState, TokenId};
 
 /// 生成参数
@@ -13,14 +11,14 @@ use super::{RequestId, RequestState, TokenId};
 /// | 参数 | 有效范围 |
 /// |------|----------|
 /// | `max_tokens` | > 0 |
-/// | `temperature` | (0.0, 2.0] |
+/// | `temperature` | [0.0, 2.0]（0.0 表示贪心解码） |
 /// | `top_p` | (0.0, 1.0] |
 #[derive(Debug, Clone, Copy)]
 pub struct GenerationParams {
     /// 最大生成 token 数
     pub max_tokens: u32,
 
-    /// 采样温度 (0.0, 2.0]
+    /// 采样温度 [0.0, 2.0]，0.0 表示贪心解码
     pub temperature: f32,
 
     /// Top-p（核采样）参数 (0.0, 1.0]
@@ -43,7 +41,7 @@ impl GenerationParams {
         if self.max_tokens == 0 {
             return Err(crate::ValidationError::InvalidMaxTokens(self.max_tokens));
         }
-        if self.temperature <= 0.0 || self.temperature > 2.0 {
+        if !(0.0..=2.0).contains(&self.temperature) {
             return Err(crate::ValidationError::InvalidTemperature(self.temperature));
         }
         if self.top_p <= 0.0 || self.top_p > 1.0 {
@@ -72,9 +70,6 @@ pub struct Request {
 
     /// 当前状态
     pub state: RequestState,
-
-    /// 创建时间戳
-    pub created_at: Instant,
 }
 
 impl Request {
@@ -86,7 +81,6 @@ impl Request {
             output_tokens: Vec::new(),
             params,
             state: RequestState::Pending,
-            created_at: Instant::now(),
         }
     }
 
@@ -157,10 +151,18 @@ mod tests {
 
         let invalid_temp = GenerationParams {
             max_tokens: 100,
-            temperature: 0.0,
+            temperature: 2.1,
             top_p: 0.9,
         };
         assert!(invalid_temp.validate().is_err());
+
+        // temperature == 0.0 表示贪心解码，是合法值
+        let greedy = GenerationParams {
+            max_tokens: 100,
+            temperature: 0.0,
+            top_p: 0.9,
+        };
+        assert!(greedy.validate().is_ok());
 
         let invalid_top_p = GenerationParams {
             max_tokens: 100,
@@ -220,8 +222,7 @@ mod property_tests {
             let validation_result = params.validate();
 
             let expected_valid = max_tokens > 0
-                && temperature > 0.0
-                && temperature <= 2.0
+                && (0.0..=2.0).contains(&temperature)
                 && top_p > 0.0
                 && top_p <= 1.0;
 
@@ -265,12 +266,20 @@ mod property_tests {
             };
             prop_assert!(params_top_p_over.validate().is_err());
 
-            let params_zero_temp = GenerationParams {
+            // temperature == 0.0 表示贪心解码，是合法值
+            let params_greedy_temp = GenerationParams {
                 max_tokens: valid_max_tokens,
                 temperature: 0.0,
                 top_p: 0.5,
             };
-            prop_assert!(params_zero_temp.validate().is_err());
+            prop_assert!(params_greedy_temp.validate().is_ok());
+
+            let params_negative_temp = GenerationParams {
+                max_tokens: valid_max_tokens,
+                temperature: -0.1,
+                top_p: 0.5,
+            };
+            prop_assert!(params_negative_temp.validate().is_err());
 
             let params_zero_top_p = GenerationParams {
                 max_tokens: valid_max_tokens,

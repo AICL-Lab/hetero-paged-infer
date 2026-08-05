@@ -3,20 +3,18 @@
 //! 提供 GPU 执行的抽象接口，支持：
 //! - Paged Attention 块表间接访问
 //! - 批次内可变序列长度
-//! - CUDA Graph 捕获用于 decode 优化
 //!
 //! # 当前实现
 //!
 //! 默认实现为 **Mock 执行器**；启用 `cuda` feature 时，会切换到
-//! 由 `nvcc` 编译的 CUDA 后端桥接执行器。
+//! 由 `nvcc` 编译的 CUDA 后端桥接执行器。两种实现目前都生成确定性
+//! 占位 token，尚未接入真实模型计算。
 //!
 //! # 接口
 //!
-//! ```rust,ignore
-//! trait GPUExecutorTrait {
-//!     fn execute(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
-//!     fn capture_decode_graph(&mut self, batch_size: u32);
-//!     fn execute_graph(&mut self, batch: &ExecutionBatch) -> ExecutionOutput;
+//! ```text
+//! trait GPUExecutorTrait: Send {
+//!     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError>;
 //! }
 //! ```
 
@@ -37,7 +35,9 @@ mod cuda_backend {
         fn hetero_cuda_device_available() -> i32;
         fn hetero_cuda_generate_next_tokens(
             seq_ids: *const u64,
-            num_sequences: usize,
+            // 必须与 C/C++ 侧的 `unsigned long long` 严格一致；
+            // 使用 `usize` 会在 32 位目标上造成 ABI 不匹配（参数错位 → 越界写）。
+            num_sequences: u64,
             seed: u32,
             vocab_size: u32,
             out_tokens: *mut u32,
@@ -87,10 +87,12 @@ mod cuda_backend {
         let mut used_device = 0;
         // SAFETY: All pointers are derived from valid slices owned by Rust for the duration of
         // the call, lengths match the provided slice lengths, and `out_tokens` is writable.
+        // `num_sequences` is passed as `u64` to match the C++ `unsigned long long` parameter
+        // on every target (a `usize` would mismatch the ABI on 32-bit platforms).
         let status = unsafe {
             hetero_cuda_generate_next_tokens(
                 seq_ids.as_ptr(),
-                seq_ids.len(),
+                seq_ids.len() as u64,
                 seed,
                 vocab_size,
                 out_tokens.as_mut_ptr(),
@@ -166,15 +168,6 @@ const fn usize_from_u32(value: u32) -> usize {
 pub trait GPUExecutorTrait: Send {
     /// Execute a batch of sequences
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError>;
-
-    /// Capture CUDA graph for decode phase
-    fn capture_decode_graph(&mut self, batch_size: u32) -> Result<(), ExecutionError>;
-
-    /// Execute using captured CUDA graph
-    fn execute_graph(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError>;
-
-    /// Check if CUDA graph is captured
-    fn has_captured_graph(&self) -> bool;
 }
 
 pub fn create_default_gpu_executor(
@@ -196,8 +189,6 @@ pub fn create_default_gpu_executor(
 #[derive(Debug)]
 pub struct CudaExecutor {
     config: EngineConfig,
-    graph_captured: bool,
-    captured_batch_size: u32,
     vocab_size: u32,
     token_counter: u32,
     backend_name: String,
@@ -215,8 +206,6 @@ impl CudaExecutor {
 
         Ok(Self {
             config,
-            graph_captured: false,
-            captured_batch_size: 0,
             vocab_size,
             token_counter: 100,
             backend_name,
@@ -268,40 +257,6 @@ impl GPUExecutorTrait for CudaExecutor {
             seq_ids: batch.seq_ids.clone(),
         })
     }
-
-    fn capture_decode_graph(&mut self, batch_size: u32) -> Result<(), ExecutionError> {
-        if batch_size == 0 {
-            return Err(ExecutionError::KernelLaunchFailed(
-                "Cannot capture graph with batch size 0".to_string(),
-            ));
-        }
-
-        self.graph_captured = true;
-        self.captured_batch_size = batch_size;
-        Ok(())
-    }
-
-    fn execute_graph(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        if !self.graph_captured {
-            return Err(ExecutionError::KernelLaunchFailed(
-                "No CUDA graph captured".to_string(),
-            ));
-        }
-
-        if batch.num_sequences() != self.captured_batch_size as usize {
-            return Err(ExecutionError::KernelLaunchFailed(format!(
-                "Captured batch size {} does not match requested batch size {}",
-                self.captured_batch_size,
-                batch.num_sequences()
-            )));
-        }
-
-        self.execute(batch)
-    }
-
-    fn has_captured_graph(&self) -> bool {
-        self.graph_captured
-    }
 }
 
 /// Mock GPU Executor for testing without actual GPU
@@ -311,8 +266,6 @@ impl GPUExecutorTrait for CudaExecutor {
 #[derive(Debug)]
 pub struct MockGPUExecutor {
     config: EngineConfig,
-    graph_captured: bool,
-    captured_batch_size: u32,
     /// Vocabulary size for token generation
     vocab_size: u32,
     /// Counter for deterministic token generation in tests
@@ -323,8 +276,6 @@ impl MockGPUExecutor {
     pub fn new(config: EngineConfig, vocab_size: u32) -> Self {
         Self {
             config,
-            graph_captured: false,
-            captured_batch_size: 0,
             vocab_size,
             token_counter: 100,
         }
@@ -346,6 +297,14 @@ impl GPUExecutorTrait for MockGPUExecutor {
             return Ok(ExecutionOutput::default());
         }
 
+        // 与 CUDA 后端（C++ 侧返回 -3）保持一致：空词表无法生成 token。
+        // 不检查会导致下方 `generate_token` 对 vocab_size 取模时除零 panic。
+        if self.vocab_size == 0 {
+            return Err(ExecutionError::CudaError(
+                "GPU executor received an empty vocabulary".to_string(),
+            ));
+        }
+
         // Generate one token per sequence
         let mut next_tokens = Vec::with_capacity(batch.num_sequences());
         for _ in &batch.seq_ids {
@@ -358,41 +317,6 @@ impl GPUExecutorTrait for MockGPUExecutor {
             seq_ids: batch.seq_ids.clone(),
         })
     }
-
-    fn capture_decode_graph(&mut self, batch_size: u32) -> Result<(), ExecutionError> {
-        if batch_size == 0 {
-            return Err(ExecutionError::KernelLaunchFailed(
-                "Cannot capture graph with batch size 0".to_string(),
-            ));
-        }
-
-        self.graph_captured = true;
-        self.captured_batch_size = batch_size;
-        Ok(())
-    }
-
-    fn execute_graph(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        if !self.graph_captured {
-            return Err(ExecutionError::KernelLaunchFailed(
-                "No CUDA graph captured".to_string(),
-            ));
-        }
-
-        if batch.num_sequences() != self.captured_batch_size as usize {
-            return Err(ExecutionError::KernelLaunchFailed(format!(
-                "Captured batch size {} does not match requested batch size {}",
-                self.captured_batch_size,
-                batch.num_sequences()
-            )));
-        }
-
-        // For mock, just use regular execution
-        self.execute(batch)
-    }
-
-    fn has_captured_graph(&self) -> bool {
-        self.graph_captured
-    }
 }
 
 #[cfg(test)]
@@ -401,11 +325,23 @@ mod tests {
     use crate::test_utils::create_test_config;
 
     #[test]
-    fn test_mock_executor_creation() {
+    fn test_mock_executor_rejects_empty_vocabulary() {
         let config = create_test_config();
-        let executor = MockGPUExecutor::new(config, 32000);
+        let mut executor = MockGPUExecutor::new(config, 0);
 
-        assert!(!executor.has_captured_graph());
+        let batch = ExecutionBatch {
+            input_tokens: vec![1],
+            positions: vec![0],
+            seq_lens: vec![1],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![true],
+            seq_ids: vec![1],
+            context_lens: vec![1],
+        };
+
+        // vocab_size == 0 必须返回错误而非除零 panic
+        let result = executor.execute(&batch);
+        assert!(matches!(result, Err(ExecutionError::CudaError(_))));
     }
 
     #[test]
@@ -445,38 +381,6 @@ mod tests {
         assert_eq!(output.next_tokens, vec![100, 101]);
     }
 
-    #[test]
-    fn test_cuda_graph_capture() {
-        let config = create_test_config();
-        let mut executor = MockGPUExecutor::new(config, 32000);
-
-        assert!(!executor.has_captured_graph());
-
-        executor.capture_decode_graph(4).unwrap();
-
-        assert!(executor.has_captured_graph());
-    }
-
-    #[test]
-    fn test_mock_graph_execute_requires_matching_batch_size() {
-        let config = create_test_config();
-        let mut executor = MockGPUExecutor::new(config, 32000);
-        let batch = ExecutionBatch {
-            input_tokens: vec![1, 2, 3],
-            positions: vec![0, 1, 2],
-            seq_lens: vec![3],
-            block_tables: vec![vec![0]],
-            is_prefill: vec![false],
-            seq_ids: vec![7],
-            context_lens: vec![3],
-        };
-
-        executor.capture_decode_graph(2).unwrap();
-        let error = executor.execute_graph(&batch).unwrap_err();
-
-        assert!(matches!(error, ExecutionError::KernelLaunchFailed(_)));
-    }
-
     #[cfg(feature = "cuda")]
     #[test]
     fn test_cuda_executor_creation() {
@@ -492,7 +396,6 @@ mod tests {
             executor.backend_name() == "nvcc-compiled-cuda-backend"
         );
         assert!(!executor.last_launch_used_device());
-        assert!(!executor.has_captured_graph());
     }
 
     #[cfg(feature = "cuda")]
@@ -518,27 +421,6 @@ mod tests {
             executor.last_launch_used_device(),
             executor.device_available()
         );
-    }
-
-    #[cfg(feature = "cuda")]
-    #[test]
-    fn test_cuda_graph_execute_requires_matching_batch_size() {
-        let config = create_test_config();
-        let mut executor = CudaExecutor::new(config, 32000).unwrap();
-        let batch = ExecutionBatch {
-            input_tokens: vec![1, 2, 3],
-            positions: vec![0, 1, 2],
-            seq_lens: vec![3],
-            block_tables: vec![vec![0]],
-            is_prefill: vec![false],
-            seq_ids: vec![7],
-            context_lens: vec![3],
-        };
-
-        executor.capture_decode_graph(2).unwrap();
-        let error = executor.execute_graph(&batch).unwrap_err();
-
-        assert!(matches!(error, ExecutionError::KernelLaunchFailed(_)));
     }
 }
 

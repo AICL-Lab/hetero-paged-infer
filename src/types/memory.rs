@@ -13,30 +13,23 @@ pub struct PhysicalBlockRef {
 
 /// 逻辑块
 ///
-/// 表示映射到物理块的逻辑块。
+/// 表示映射到物理块的逻辑块。逻辑块在创建时即完成物理映射，
+/// 不存在"已分配但未映射"的状态。
 #[derive(Debug, Clone)]
 pub struct LogicalBlock {
     /// 序列内的逻辑块索引
     pub block_idx: u32,
 
-    /// 映射的物理块（未分配时为 None）
-    pub physical_block: Option<PhysicalBlockRef>,
+    /// 映射的物理块
+    pub physical_block: PhysicalBlockRef,
 }
 
 impl LogicalBlock {
-    /// 创建未映射的逻辑块
-    pub fn new(block_idx: u32) -> Self {
-        Self {
-            block_idx,
-            physical_block: None,
-        }
-    }
-
     /// 创建已映射的逻辑块
-    pub fn with_physical(block_idx: u32, physical: PhysicalBlockRef) -> Self {
+    pub fn new(block_idx: u32, physical: PhysicalBlockRef) -> Self {
         Self {
             block_idx,
-            physical_block: Some(physical),
+            physical_block: physical,
         }
     }
 }

@@ -28,7 +28,7 @@ use std::collections::{HashMap, VecDeque};
 pub struct PhysicalBlock {
     /// Unique index of this block
     pub block_idx: BlockIdx,
-    /// Reference count for copy-on-write support
+    /// Reference count; the block is free when it is 0
     pub ref_count: u32,
 }
 
@@ -54,7 +54,15 @@ pub struct BlockPool {
 
 impl BlockPool {
     /// Create a new block pool with the specified number of blocks
+    ///
+    /// # Panics
+    ///
+    /// Debug builds panic if `block_size` is 0; release builds will panic
+    /// later in [`KVCacheManager::blocks_for_tokens`] (division by zero).
+    /// Callers constructing a pool directly must ensure `block_size > 0`
+    /// (the engine's `EngineConfig::validate` enforces this for the normal path).
     pub fn new(num_blocks: u32, block_size: u32) -> Self {
+        debug_assert!(block_size > 0, "block_size must be greater than 0");
         let mut blocks = Vec::with_capacity(num_blocks as usize);
         let mut free_list = VecDeque::with_capacity(num_blocks as usize);
 
@@ -89,8 +97,12 @@ impl BlockPool {
         }
 
         let block = &mut self.blocks[block_idx as usize];
+        debug_assert!(
+            block.ref_count > 0,
+            "block {block_idx} freed more times than it was allocated"
+        );
         if block.ref_count == 0 {
-            return Ok(()); // Already free, idempotent
+            return Ok(()); // Already free, idempotent in release builds
         }
 
         block.ref_count -= 1;
@@ -147,21 +159,14 @@ impl PageTable {
     pub fn add_block(&mut self, physical_ref: PhysicalBlockRef) {
         let logical_idx = self.logical_blocks.len() as u32;
         self.logical_blocks
-            .push(LogicalBlock::with_physical(logical_idx, physical_ref));
-    }
-
-    /// Get physical block for a logical index - O(1) lookup
-    pub fn get_physical(&self, logical_idx: u32) -> Option<PhysicalBlockRef> {
-        self.logical_blocks
-            .get(logical_idx as usize)
-            .and_then(|lb| lb.physical_block)
+            .push(LogicalBlock::new(logical_idx, physical_ref));
     }
 
     /// Get the block table as a vector of physical block indices
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
         self.logical_blocks
             .iter()
-            .filter_map(|lb| lb.physical_block.map(|pb| pb.block_idx))
+            .map(|lb| lb.physical_block.block_idx)
             .collect()
     }
 
@@ -169,6 +174,21 @@ impl PageTable {
     pub fn num_blocks(&self) -> u32 {
         self.logical_blocks.len() as u32
     }
+}
+
+/// Calculate number of blocks needed for a given token count.
+///
+/// Single source of truth for the `ceil(num_tokens / block_size)` formula,
+/// shared by [`KVCacheManager`] and `EngineConfig::blocks_for_tokens` so the
+/// scheduler's estimate and the allocator's actual count can never diverge.
+///
+/// # Panics
+///
+/// Division by zero panics if `block_size` is 0 (debug builds add an explicit
+/// assertion message). Validated engine configs always have `block_size > 0`.
+pub fn blocks_for_tokens(num_tokens: u32, block_size: u32) -> u32 {
+    debug_assert!(block_size > 0, "block_size must be greater than 0");
+    num_tokens.div_ceil(block_size)
 }
 
 /// KV Cache Manager implementation
@@ -182,6 +202,10 @@ pub struct KVCacheManager {
 
 impl KVCacheManager {
     /// Create a new KV Cache Manager
+    ///
+    /// # Panics
+    ///
+    /// Requires `block_size > 0` (see [`BlockPool::new`]).
     pub fn new(num_blocks: u32, block_size: u32) -> Self {
         Self {
             block_pool: BlockPool::new(num_blocks, block_size),
@@ -191,8 +215,8 @@ impl KVCacheManager {
 
     /// Calculate number of blocks needed for given token count
     pub fn blocks_for_tokens(&self, num_tokens: u32) -> u32 {
-        // ceil(num_tokens / block_size) — 公式对 num_tokens==0 也成立
-        num_tokens.div_ceil(self.block_pool.block_size())
+        // 公式对 num_tokens==0 也成立
+        blocks_for_tokens(num_tokens, self.block_pool.block_size())
     }
 
     /// Check if sequence exists
@@ -250,15 +274,14 @@ impl KVCacheManager {
     pub fn free_sequence(&mut self, seq_id: SeqId) {
         if let Some(page_table) = self.page_tables.remove(&seq_id) {
             for logical_block in &page_table.logical_blocks {
-                if let Some(physical_ref) = logical_block.physical_block {
-                    if let Err(e) = self.block_pool.free(physical_ref) {
-                        log::debug!(
-                            "Failed to free block {} for sequence {}: {}",
-                            physical_ref.block_idx,
-                            seq_id,
-                            e
-                        );
-                    }
+                let physical_ref = logical_block.physical_block;
+                if let Err(e) = self.block_pool.free(physical_ref) {
+                    log::debug!(
+                        "Failed to free block {} for sequence {}: {}",
+                        physical_ref.block_idx,
+                        seq_id,
+                        e
+                    );
                 }
             }
         }

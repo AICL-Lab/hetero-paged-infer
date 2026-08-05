@@ -15,8 +15,7 @@
 //!                   ↘ Failed
 //! ```
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::config::EngineConfig;
 use crate::error::SchedulerError;
@@ -40,22 +39,35 @@ pub struct Scheduler {
     config: EngineConfig,
     kv_cache: KVCacheManager,
     pending_queue: VecDeque<PendingRequest>,
-    prefill_sequences: HashMap<SeqId, Sequence>,
-    decode_sequences: HashMap<SeqId, Sequence>,
+    // BTreeMap（而非 HashMap）使调度迭代顺序按 seq_id 单调递增，
+    // 即先提交先调度（FCFS），保证公平性并让调度行为可复现。
+    prefill_sequences: BTreeMap<SeqId, Sequence>,
+    decode_sequences: BTreeMap<SeqId, Sequence>,
     completed_requests: Vec<Request>,
     next_seq_id: SeqId,
     under_memory_pressure: bool,
 }
 
 impl Scheduler {
+    /// 创建调度器
+    ///
+    /// # Panics
+    ///
+    /// 要求 `config.block_size > 0`（否则块数计算会除零 panic）。
+    /// 经由 `InferenceEngine` 构造时 `EngineConfig::validate` 已保证这一点；
+    /// 直接构造底层调度器的调用方需自行确保配置有效。
     pub fn new(config: EngineConfig) -> Self {
+        debug_assert!(
+            config.block_size > 0,
+            "config.block_size must be greater than 0"
+        );
         let kv_cache = KVCacheManager::new(config.max_num_blocks, config.block_size);
         Self {
             config,
             kv_cache,
             pending_queue: VecDeque::new(),
-            prefill_sequences: HashMap::new(),
-            decode_sequences: HashMap::new(),
+            prefill_sequences: BTreeMap::new(),
+            decode_sequences: BTreeMap::new(),
             completed_requests: Vec::new(),
             next_seq_id: 1,
             under_memory_pressure: false,
@@ -98,7 +110,7 @@ impl Scheduler {
                 break;
             }
 
-            if total_tokens + 1 > self.config.max_total_tokens {
+            if total_tokens.saturating_add(1) > self.config.max_total_tokens {
                 break;
             }
 
@@ -108,8 +120,8 @@ impl Scheduler {
             }
 
             if let Some(sequence) = self.decode_sequences.get(&seq_id) {
-                output.decode_sequences.push(Arc::new(sequence.clone()));
-                total_tokens += 1;
+                output.decode_sequences.push(sequence.clone());
+                total_tokens = total_tokens.saturating_add(1);
                 num_sequences += 1;
             }
         }
@@ -146,13 +158,13 @@ impl Scheduler {
                 continue;
             }
 
-            if total_tokens + prefill_tokens > self.config.max_total_tokens {
+            if total_tokens.saturating_add(prefill_tokens) > self.config.max_total_tokens {
                 break;
             }
 
             if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
-                output.prefill_sequences.push(Arc::new(sequence.clone()));
-                total_tokens += prefill_tokens;
+                output.prefill_sequences.push(sequence.clone());
+                total_tokens = total_tokens.saturating_add(prefill_tokens);
                 num_sequences += 1;
             }
         }
@@ -190,7 +202,7 @@ impl Scheduler {
                     continue;
                 }
 
-                if total_tokens + prefill_tokens > self.config.max_total_tokens {
+                if total_tokens.saturating_add(prefill_tokens) > self.config.max_total_tokens {
                     self.pending_queue
                         .push_front(PendingRequest { seq_id, request });
                     break;
@@ -199,8 +211,8 @@ impl Scheduler {
                 match self.try_start_prefill(seq_id, request) {
                     Ok(seq_id) => {
                         if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
-                            output.prefill_sequences.push(Arc::new(sequence.clone()));
-                            total_tokens += prefill_tokens;
+                            output.prefill_sequences.push(sequence.clone());
+                            total_tokens = total_tokens.saturating_add(prefill_tokens);
                             num_sequences += 1;
                         }
                     }
@@ -289,12 +301,6 @@ impl Scheduler {
             .or_else(|| self.decode_sequences.get(&seq_id))
     }
 
-    pub fn get_sequence_mut(&mut self, seq_id: SeqId) -> Option<&mut Sequence> {
-        self.prefill_sequences
-            .get_mut(&seq_id)
-            .or_else(|| self.decode_sequences.get_mut(&seq_id))
-    }
-
     pub fn num_active_sequences(&self) -> usize {
         self.prefill_sequences.len() + self.decode_sequences.len()
     }
@@ -360,9 +366,7 @@ impl Scheduler {
             sequence.logical_blocks = block_table
                 .iter()
                 .enumerate()
-                .map(|(i, &block_idx)| {
-                    LogicalBlock::with_physical(i as u32, PhysicalBlockRef { block_idx })
-                })
+                .map(|(i, &block_idx)| LogicalBlock::new(i as u32, PhysicalBlockRef { block_idx }))
                 .collect();
         }
 
@@ -377,7 +381,9 @@ impl Scheduler {
 
         let current_tokens = seq.context_len();
         let current_blocks = seq.logical_blocks.len() as u32;
-        let blocks_needed = self.config.blocks_for_tokens(current_tokens + 1);
+        let blocks_needed = self
+            .config
+            .blocks_for_tokens(current_tokens.saturating_add(1));
 
         if blocks_needed > current_blocks {
             match self.kv_cache.allocate_block(seq_id) {
@@ -388,7 +394,7 @@ impl Scheduler {
                     let logical_idx = sequence.logical_blocks.len() as u32;
                     sequence
                         .logical_blocks
-                        .push(LogicalBlock::with_physical(logical_idx, physical_ref));
+                        .push(LogicalBlock::new(logical_idx, physical_ref));
                 }
                 Err(err) => {
                     return Err(format!("Failed to allocate KV block: {}", err));
@@ -718,7 +724,9 @@ mod tests {
         );
         let seq_id = scheduler.add_request(request).unwrap();
         let pending = scheduler.pending_queue.pop_front().unwrap();
-        scheduler.try_start_prefill(pending.seq_id, pending.request).unwrap();
+        scheduler
+            .try_start_prefill(pending.seq_id, pending.request)
+            .unwrap();
         scheduler.transition_prefill_to_decode(seq_id);
 
         scheduler.update_sequences(
@@ -955,13 +963,14 @@ mod property_tests {
 
             let output = scheduler.schedule();
 
+            // decode 优先且批次上限（32）远大于 decode 数量（<10）：
+            // 每个在途 decode 序列都必须被调度，一个都不能落下。
             let decode_count = scheduler.num_decode_sequences();
-            if decode_count > 0 && output.num_sequences() > 0 {
-                prop_assert!(
-                    !output.decode_sequences.is_empty() || decode_count == 0,
-                    "Decode sequences should be scheduled when available"
-                );
-            }
+            prop_assert_eq!(
+                output.decode_sequences.len(),
+                decode_count,
+                "every in-flight decode sequence must be scheduled each step"
+            );
         }
 
         #[test]
@@ -1089,9 +1098,13 @@ mod property_tests {
                 let new_request = create_test_request_with_params(999, tokens_per_request, 100);
                 let result = scheduler.add_request(new_request);
 
+                // 利用率达到阈值后，add_request 必须确定性地拒绝（MemoryPressure），
+                // 而不是"可能拒绝也可能接受"。
                 prop_assert!(
-                    result.is_ok() || matches!(result, Err(SchedulerError::MemoryPressure)),
-                    "Should handle memory pressure gracefully"
+                    matches!(result, Err(SchedulerError::MemoryPressure)),
+                    "utilization {} >= threshold 0.5 must reject with MemoryPressure, got {:?}",
+                    utilization,
+                    result
                 );
             }
         }

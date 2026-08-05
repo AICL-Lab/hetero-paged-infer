@@ -4,9 +4,9 @@
 
 [![CI](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
-**A High-Performance LLM Inference Engine with PagedAttention & Continuous Batching**
+**A Paged-Memory, Continuously-Batched Inference Engine Scaffold with a Mock Compute Backend**
 
 > ⚠️ **Development Status**: This project is in early development (v0.1.0). The default path still uses a Mock GPU executor. The optional `cuda` feature now compiles and exercises a real CUDA kernel path, with host fallback when no CUDA device is available. Full production attention kernels are still future work.
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built in Rust, designed with a modular architecture for future production deployment. It implements cutting-edge techniques from [vLLM](https://github.com/vllm-project/vllm) with a modular, testable architecture designed for production deployment.
+Hetero-Paged-Infer is an inference engine scaffold for Large Language Models (LLMs) built in Rust. It implements the paged-memory (PagedAttention-style KV cache) and continuous-batching ideas from [vLLM](https://github.com/vllm-project/vllm) with a modular, testable architecture. The compute backend is currently a deterministic mock — real model computation, sampling, and production-grade kernels are future work.
 
 | Feature | Description | Status |
 |---------|-------------|:------:|
@@ -55,7 +55,7 @@ Hetero-Paged-Infer is an inference engine for Large Language Models (LLMs) built
 
 ### Prerequisites
 
-- **Rust 1.70+** (2021 edition)
+- **Rust 1.82+** (2021 edition)
 - **Linux** (Ubuntu 20.04+ recommended) or **macOS**
 
 ### Installation
@@ -159,8 +159,8 @@ for result in results {
 | `--max-total-tokens` | 4096 | Maximum tokens per batch |
 | `--memory-threshold` | 0.9 | Memory pressure threshold (0.0-1.0) |
 | `--max-tokens` | 100 | Maximum tokens to generate |
-| `--temperature` | 1.0 | Sampling temperature |
-| `--top-p` | 0.9 | Nucleus sampling threshold |
+| `--temperature` | 1.0 | Sampling temperature (currently only range-validated; sampling not yet implemented) |
+| `--top-p` | 0.9 | Nucleus sampling threshold (currently only range-validated; sampling not yet implemented) |
 
 Config file (`config.json`):
 
@@ -237,7 +237,7 @@ Traditional LLM serving allocates contiguous memory blocks for each request's KV
 
 1. **Block-based allocation**: Split KV cache into fixed-size blocks
 2. **On-demand paging**: Allocate blocks only when needed
-3. **Copy-on-write**: Share blocks across sequences for efficient beam search
+3. **Copy-on-write** (not yet implemented — future direction): Share blocks across sequences for efficient beam search
 
 ## Testing
 
@@ -275,9 +275,10 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] Continuous Batching Scheduler
 - [x] Memory Pressure Awareness
 - [x] Property-Based Testing
+- [x] OpenAI-Compatible HTTP Server
+- [x] HuggingFace Tokenizer Integration
 - [x] nvcc-backed CUDA build path
 - [ ] Real CUDA Kernels
-- [ ] Real Tokenizer Integration
 - [ ] Async CPU/GPU Overlap
 
 ## License

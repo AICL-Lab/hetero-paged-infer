@@ -421,7 +421,7 @@ impl EngineConfig {
     /// assert_eq!(config.blocks_for_tokens(17), 2);
     /// ```
     pub fn blocks_for_tokens(&self, num_tokens: u32) -> u32 {
-        num_tokens.div_ceil(self.block_size)
+        crate::kv_cache::blocks_for_tokens(num_tokens, self.block_size)
     }
 
     /// 计算指定块数可容纳的 token 数

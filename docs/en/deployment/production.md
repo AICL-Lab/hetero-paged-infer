@@ -1,100 +1,51 @@
-# Deployment Guide
+# Production Deployment
 
 ## Overview
 
-This guide covers deploying Hetero-Paged-Infer in production environments, including system requirements, build instructions, and operational best practices.
+This guide covers deploying Hetero-Paged-Infer in production: running in server
+mode, health checks, monitoring, and an operations checklist.
+
+> **Current state:** The compute core is currently a **mock implementation**
+> (it emits placeholder tokens, not natural language), and the default CPU
+> backend **does not require a GPU**. Everything below targets the mock engine;
+> GPU tuning advice does not apply to the current version.
 
 ## System Requirements
-
-### Minimum Requirements
 
 | Component | Requirement |
 |-----------|-------------|
 | **OS** | Linux (Ubuntu 20.04+ recommended) |
-| **CPU** | x86_64 with AVX2 support |
+| **CPU** | x86_64 |
 | **Memory** | 8 GB RAM |
-| **GPU** | NVIDIA GPU with CUDA 11.x+ (optional) |
-| **Rust** | 1.70+ (2021 edition) |
-| **Git** | 2.25+ |
+| **Rust** | 1.82+ (2021 edition) |
+| **GPU** | Not required (mock engine; the `cuda` feature is experimental, see [Installation](../setup/installation.md)) |
 
-### Recommended for Production
-
-| Component | Recommendation |
-|-----------|---------------|
-| **OS** | Ubuntu 22.04 LTS |
-| **CPU** | 16+ cores |
-| **Memory** | 32 GB RAM |
-| **GPU** | NVIDIA A100 / H100 / RTX 4090 |
-| **CUDA** | 12.x |
-| **Storage** | NVMe SSD for models |
-
-## Installation
-
-### 1. Install Rust
+## Build
 
 ```bash
-# Using rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Verify installation
-rustc --version  # Should be 1.70+
-```
-
-### 2. Install CUDA (Optional)
-
-For GPU acceleration:
-
-```bash
-# Ubuntu 22.04 example
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
-sudo dpkg -i cuda-keyring_1.0-1_all.deb
-sudo apt-get update
-sudo apt-get install cuda-toolkit-12-1
-
-# Verify
-nvcc --version
-nvidia-smi
-```
-
-### 3. Clone and Build
-
-```bash
-# Clone repository
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
-# Build release version
 cargo build --release
-
-# Run tests
 cargo test --release
 
-# Binary location
 ./target/release/hetero-infer --help
 ```
 
-## Running the Application
+## Running the Server
 
-### Basic Usage
+Production deployments should run in **server mode**: add `--serve` to start the
+OpenAI-compatible HTTP server (binds `127.0.0.1:3000` by default, model name
+`hetero-infer`).
 
-```bash
-# Basic inference
-./target/release/hetero-infer \
-  --input "Hello, world!" \
-  --max-tokens 50
+> **Important:** without `--serve` (and without `--input`) the process prints a
+> hint and **exits immediately**, which is unsuitable for a long-running
+> deployment. To accept external connections, set `serving.host` to `0.0.0.0`
+> in the config file (the default `127.0.0.1` only accepts loopback connections).
 
-# With custom parameters
-./target/release/hetero-infer \
-  --input "Tell me a story" \
-  --max-tokens 200 \
-  --temperature 0.8 \
-  --top-p 0.95
-```
+### Configuration File
 
-### Using Configuration File
-
-Create `production.json`:
+Create `/etc/hetero-infer/config.json` (field reference: [Configuration](../setup/configuration.md)):
 
 ```json
 {
@@ -104,19 +55,14 @@ Create `production.json`:
   "max_num_seqs": 512,
   "max_model_len": 4096,
   "max_total_tokens": 8192,
-  "memory_threshold": 0.9
+  "memory_threshold": 0.9,
+  "serving": {
+    "host": "0.0.0.0",
+    "port": 3000,
+    "model_name": "hetero-infer"
+  }
 }
 ```
-
-Run with configuration:
-
-```bash
-./target/release/hetero-infer \
-  --config production.json \
-  --input "Hello, world!"
-```
-
-## Production Deployment
 
 ### Systemd Service
 
@@ -124,7 +70,7 @@ Create `/etc/systemd/system/hetero-infer.service`:
 
 ```ini
 [Unit]
-Description=Hetero-Paged-Infer Inference Engine
+Description=Hetero-Paged-Infer inference server
 After=network.target
 
 [Service]
@@ -133,14 +79,13 @@ User=hetero
 Group=hetero
 WorkingDirectory=/opt/hetero-paged-infer
 ExecStart=/opt/hetero-paged-infer/target/release/hetero-infer \
+  --serve \
   --config /etc/hetero-infer/config.json
 Restart=always
 RestartSec=5
 
-# Resource limits
 LimitNOFILE=65536
 
-# Environment
 Environment=RUST_LOG=info
 Environment=RUST_BACKTRACE=1
 
@@ -154,50 +99,13 @@ Enable and start:
 sudo systemctl daemon-reload
 sudo systemctl enable hetero-infer
 sudo systemctl start hetero-infer
-sudo systemctl status hetero-infer
 ```
 
-### Docker Deployment
-
-Create `Dockerfile`:
-
-```dockerfile
-FROM rust:1.75-bullseye as builder
-
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bullseye-slim
-
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl1.1 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /app/target/release/hetero-infer /usr/local/bin/
-COPY --from=builder /app/config.example.json /etc/hetero-infer/config.json
-
-USER nobody
-EXPOSE 8080
-
-ENTRYPOINT ["hetero-infer"]
-CMD ["--config", "/etc/hetero-infer/config.json"]
-```
-
-Build and run:
+Health checks go through the HTTP endpoints (there is **no** `--version` flag):
 
 ```bash
-# Build image
-docker build -t hetero-infer:latest .
-
-# Run container
-docker run -d \
-  --name hetero-infer \
-  --gpus all \
-  -v /path/to/config.json:/etc/hetero-infer/config.json \
-  -p 8080:8080 \
-  hetero-infer:latest
+curl -fsS http://127.0.0.1:3000/healthz   # liveness probe
+curl -fsS http://127.0.0.1:3000/readyz    # readiness probe
 ```
 
 ### Kubernetes Deployment
@@ -223,17 +131,25 @@ spec:
     spec:
       containers:
       - name: hetero-infer
-        image: hetero-infer:latest
+        image: hetero-infer:latest        # locally built image, see docker.md
+        args: ["--serve", "--config", "/etc/hetero-infer/config.json"]
         ports:
-        - containerPort: 8080
+        - containerPort: 3000
         resources:
           limits:
-            nvidia.com/gpu: 1
-            memory: "32Gi"
-            cpu: "8"
-          requests:
-            memory: "16Gi"
+            memory: "8Gi"
             cpu: "4"
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 3000
         volumeMounts:
         - name: config
           mountPath: /etc/hetero-infer
@@ -250,189 +166,95 @@ spec:
   selector:
     app: hetero-infer
   ports:
-  - port: 8080
-    targetPort: 8080
-  type: LoadBalancer
+  - port: 3000
+    targetPort: 3000
 ```
 
-Deploy:
+Deploy (`serving.host` in the ConfigMap must be `0.0.0.0`):
 
 ```bash
+kubectl create configmap hetero-infer-config --from-file=config.json=/etc/hetero-infer/config.json
 kubectl apply -f deployment.yaml
 ```
 
+> The mock engine does not consume GPUs, so the manifest contains **no**
+> `nvidia.com/gpu` resource request; add one only when deploying an
+> experimental `cuda` build.
+
+For Docker deployment see [Docker Deployment](docker.md).
+
 ## Monitoring
-
-### Log Levels
-
-Set via `RUST_LOG` environment variable:
-
-```bash
-# Error only
-RUST_LOG=error ./hetero-infer
-
-# Warning and above
-RUST_LOG=warn ./hetero-infer
-
-# Info (default)
-RUST_LOG=info ./hetero-infer
-
-# Debug (verbose)
-RUST_LOG=debug ./hetero-infer
-
-# Trace (very verbose)
-RUST_LOG=trace ./hetero-infer
-```
-
-### Metrics (Future)
-
-Planned metrics endpoints:
-
-- `GET /metrics` - Prometheus-compatible metrics
-- Request rate, latency, batch size
-- Memory utilization, queue depth
-- GPU utilization, temperature
 
 ### Health Checks
 
-Current status check via exit codes:
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /healthz` | Liveness probe; returns 200 while the process is up |
+| `GET /readyz` | Readiness probe; returns 200 when the engine can accept requests |
+
+### Metrics (Implemented)
+
+`GET /metrics` returns Prometheus text-format metrics:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `hetero_requests_total` | counter | Total requests received |
+| `hetero_errors_total` | counter | Total error responses |
+| `hetero_inflight_requests` | gauge | Requests currently in flight |
+| `hetero_streaming_requests_total` | counter | Total SSE streaming requests |
 
 ```bash
-# In systemd service
-ExecStartPre=/path/to/hetero-infer --version
+curl http://127.0.0.1:3000/metrics
 ```
 
-## Performance Optimization
+### Logging
 
-### CPU Optimization
+Set the log level via the `RUST_LOG` environment variable:
 
-1. **CPU Affinity**
-   ```bash
-   taskset -c 0-7 ./hetero-infer
-   ```
+```bash
+RUST_LOG=info ./target/release/hetero-infer --serve    # recommended default
+RUST_LOG=debug ./target/release/hetero-infer --serve   # for troubleshooting
+```
 
-2. **NUMA Awareness**
-   ```bash
-   numactl --cpunodebind=0 --membind=0 ./hetero-infer
-   ```
+## Production Checklist
 
-### GPU Optimization
-
-1. **Persistent Mode**
-   ```bash
-   sudo nvidia-smi -pm 1
-   ```
-
-2. **GPU Clock Settings**
-   ```bash
-   sudo nvidia-smi -ac 877,1530
-   ```
-
-3. **ECC Memory**
-   ```bash
-   # Disable ECC for better performance (if acceptable)
-   sudo nvidia-smi -e 0
-   ```
-
-### Memory Optimization
-
-1. **Huge Pages**
-   ```bash
-   # Enable transparent huge pages
-   echo always > /sys/kernel/mm/transparent_hugepage/enabled
-   ```
-
-2. **Memory Limits**
-   ```bash
-   # In systemd service
-   MemoryMax=64G
-   MemorySwapMax=0
-   ```
+- [ ] Start with `--serve` so the process stays resident
+- [ ] Set `serving.host` for your network topology (`0.0.0.0` inside containers; keep the default `127.0.0.1` for loopback-only)
+- [ ] Wire `/healthz` (liveness) and `/readyz` (readiness) probes into the orchestrator
+- [ ] Scrape `/metrics` into Prometheus or another monitoring system
+- [ ] Handle **429 + `Retry-After`** backpressure on the client side (the server rejects new requests when overloaded)
+- [ ] Rely on **graceful shutdown**: on SIGTERM / Ctrl+C the process stops accepting connections and drains in-flight requests — do not send SIGKILL
+- [ ] Set `RUST_LOG` and ship logs to your log pipeline
 
 ## Troubleshooting
 
-### Build Issues
-
 | Issue | Solution |
 |-------|----------|
-| `linker not found` | Install build-essential: `sudo apt install build-essential` |
-| `CUDA not found` | Set `CUDA_HOME` environment variable |
-| `proptest fails` | Run with `--test-threads=1` |
+| Process exits immediately after start | Make sure the command line includes `--serve` (server mode) |
+| Service unreachable from outside the container | Set `serving.host` to `0.0.0.0` in the config file and map port 3000 |
+| Requests rejected (429) | Overload backpressure: honor `Retry-After`, or raise `max_num_seqs` / `max_num_blocks` |
+| Requests failing (memory pressure) | Lower `max_model_len` / `max_total_tokens`, or raise `max_num_blocks` |
+| Build failure `linker not found` | Install build-essential: `sudo apt install build-essential` |
 
-### Runtime Issues
-
-| Issue | Solution |
-|-------|----------|
-| OOM errors | Reduce `max_num_blocks` or `max_batch_size` |
-| Slow inference | Increase `max_batch_size`, enable CUDA Graphs |
-| Request rejected | Check memory_threshold, reduce concurrent requests |
-| GPU not used | Verify CUDA installation, check `nvidia-smi` |
-
-### Debug Mode
+Debugging:
 
 ```bash
-# Enable backtrace
-RUST_BACKTRACE=1 ./hetero-infer ...
-
-# Full backtrace
-RUST_BACKTRACE=full ./hetero-infer ...
-
-# Debug logging
-RUST_LOG=debug ./hetero-infer ...
+RUST_BACKTRACE=1 RUST_LOG=debug ./target/release/hetero-infer --serve
 ```
 
 ## Security Considerations
 
-1. **Run as non-root user**
+1. **Run as a non-root user**
    ```bash
    useradd -r -s /bin/false hetero
    ```
-
 2. **Restrict file permissions**
    ```bash
    chmod 750 /opt/hetero-paged-infer
    chmod 640 /etc/hetero-infer/config.json
    ```
-
-3. **Network isolation**
-   - Use firewall rules
-   - Deploy behind reverse proxy
-   - Enable TLS for API endpoints
-
-4. **Resource limits**
-   - Set memory limits
-   - Configure CPU quotas
-   - Limit GPU access
-
-## Backup and Recovery
-
-### Configuration Backup
-
-```bash
-# Backup configuration
-sudo tar czf hetero-infer-config-$(date +%Y%m%d).tar.gz \
-  /etc/hetero-infer/
-
-# Automated backup via cron
-0 2 * * * tar czf /backup/hetero-infer-config-$(date +\%Y\%m\%d).tar.gz /etc/hetero-infer/
-```
-
-### Log Rotation
-
-Create `/etc/logrotate.d/hetero-infer`:
-
-```
-/var/log/hetero-infer/*.log {
-    daily
-    rotate 14
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0640 hetero hetero
-}
-```
+3. **Network isolation**: the server binds `127.0.0.1` by default; when exposing it externally, place it behind a reverse proxy with TLS.
 
 ---
 
-*For API details, see [API Reference](../api/core-types). For configuration options, see [Configuration](../setup/configuration).*
+*For API details, see [API Reference](../api/core-types). For configuration options, see [Configuration](../setup/configuration.md).*

@@ -7,39 +7,41 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "hetero-infer")]
-#[command(about = "Heterogeneous Inference System with CPU-GPU co-execution")]
+#[command(
+    about = "Paged-memory, continuously-batched inference engine scaffold with a mock compute backend"
+)]
 struct Args {
     /// Path to configuration file
     #[arg(short, long)]
     config: Option<PathBuf>,
 
     /// Block size (tokens per block)
-    #[arg(long, default_value = "16")]
-    block_size: u32,
+    #[arg(long)]
+    block_size: Option<u32>,
 
     /// Maximum number of blocks
-    #[arg(long, default_value = "1024")]
-    max_num_blocks: u32,
+    #[arg(long)]
+    max_num_blocks: Option<u32>,
 
     /// Maximum batch size
-    #[arg(long, default_value = "32")]
-    max_batch_size: u32,
+    #[arg(long)]
+    max_batch_size: Option<u32>,
 
     /// Maximum number of sequences
-    #[arg(long, default_value = "256")]
-    max_num_seqs: u32,
+    #[arg(long)]
+    max_num_seqs: Option<u32>,
 
     /// Maximum model length
-    #[arg(long, default_value = "2048")]
-    max_model_len: u32,
+    #[arg(long)]
+    max_model_len: Option<u32>,
 
     /// Maximum total tokens per batch
-    #[arg(long, default_value = "4096")]
-    max_total_tokens: u32,
+    #[arg(long)]
+    max_total_tokens: Option<u32>,
 
     /// Memory pressure threshold (0.0 - 1.0)
-    #[arg(long, default_value = "0.9")]
-    memory_threshold: f32,
+    #[arg(long)]
+    memory_threshold: Option<f32>,
 
     /// Input text to process
     #[arg(short, long)]
@@ -69,16 +71,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let config = if let Some(config_path) = args.config {
+        // 之前 --config 会静默忽略所有单项 CLI 参数，极易误配；现在显式报错。
+        let has_overrides = [
+            args.block_size.is_some(),
+            args.max_num_blocks.is_some(),
+            args.max_batch_size.is_some(),
+            args.max_num_seqs.is_some(),
+            args.max_model_len.is_some(),
+            args.max_total_tokens.is_some(),
+            args.memory_threshold.is_some(),
+        ]
+        .contains(&true);
+        if has_overrides {
+            return Err(
+                "--config cannot be combined with individual engine-config flags \
+                        (--block-size, --max-num-blocks, --max-batch-size, --max-num-seqs, \
+                         --max-model-len, --max-total-tokens, --memory-threshold)"
+                    .into(),
+            );
+        }
         EngineConfig::from_file(&config_path)?
     } else {
         EngineConfig {
-            block_size: args.block_size,
-            max_num_blocks: args.max_num_blocks,
-            max_batch_size: args.max_batch_size,
-            max_num_seqs: args.max_num_seqs,
-            max_model_len: args.max_model_len,
-            max_total_tokens: args.max_total_tokens,
-            memory_threshold: args.memory_threshold,
+            block_size: args.block_size.unwrap_or(16),
+            max_num_blocks: args.max_num_blocks.unwrap_or(1024),
+            max_batch_size: args.max_batch_size.unwrap_or(32),
+            max_num_seqs: args.max_num_seqs.unwrap_or(256),
+            max_model_len: args.max_model_len.unwrap_or(2048),
+            max_total_tokens: args.max_total_tokens.unwrap_or(4096),
+            memory_threshold: args.memory_threshold.unwrap_or(0.9),
             max_retry_attempts: 2,
             special_tokens: Default::default(),
             ..Default::default()
@@ -107,7 +128,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
         let app = create_router(config)?;
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+        info!("Server shut down gracefully");
         return Ok(());
     }
 
@@ -150,4 +174,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// 监听 Ctrl+C（以及 Unix 平台的 SIGTERM），触发后让服务器优雅关闭：
+/// 停止接受新连接，排空在途请求。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("Shutdown signal received, draining in-flight requests");
 }

@@ -12,5 +12,14 @@
     "eos": 2,
     "pad": 0,
     "unk": 3
+  },
+  "tokenizer": {
+    "kind": "simple",
+    "path": null
+  },
+  "serving": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "model_name": "hetero-infer"
   }
 }

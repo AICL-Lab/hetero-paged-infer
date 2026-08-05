@@ -1,9 +1,18 @@
 //! Shared test utilities
 //!
 //! Provides common helpers for unit, property, and integration tests.
+//!
+//! This module is only compiled under `cfg(test)` or the `test-utils`
+//! feature (enabled by the crate's own dev-dependencies for integration
+//! tests and benches), so test helpers never ship in release builds.
 
 use crate::config::EngineConfig;
-use crate::types::{GenerationParams, Request, RequestId};
+use crate::error::ExecutionError;
+use crate::gpu_executor::GPUExecutorTrait;
+use crate::types::{ExecutionBatch, ExecutionOutput, GenerationParams, Request, RequestId};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Create a standard test configuration
 pub fn create_test_config() -> EngineConfig {
@@ -57,4 +66,61 @@ pub fn create_test_request_with_params(id: RequestId, num_tokens: usize, max_gen
             top_p: 1.0,
         },
     )
+}
+
+/// Standard generation parameters for tests
+pub fn test_params(max_tokens: u32) -> GenerationParams {
+    GenerationParams {
+        max_tokens,
+        temperature: 1.0,
+        top_p: 0.9,
+    }
+}
+
+/// A GPU executor that always fails with `KernelLaunchFailed`.
+///
+/// Shared by unit and integration tests that exercise engine error paths.
+pub struct AlwaysFailExecutor;
+
+impl GPUExecutorTrait for AlwaysFailExecutor {
+    fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        Err(ExecutionError::KernelLaunchFailed(
+            "test executor failure".to_string(),
+        ))
+    }
+}
+
+/// Minimal HuggingFace `WordLevel` tokenizer definition used by tokenizer tests.
+const TEST_TOKENIZER_JSON: &str = r###"{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [],
+  "normalizer": null,
+  "pre_tokenizer": { "type": "Whitespace" },
+  "post_processor": null,
+  "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "[UNK]": 0,
+      "hello": 1,
+      "world": 2
+    },
+    "unk_token": "[UNK]"
+  }
+}"###;
+
+/// Write a minimal HuggingFace tokenizer JSON to a unique temp file.
+///
+/// Callers own cleanup (`std::fs::remove_file`), which is best-effort:
+/// a failing test may leave the file behind.
+pub fn write_test_tokenizer_json() -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("hetero-test-tokenizer-{unique}.json"));
+    fs::write(&path, TEST_TOKENIZER_JSON).unwrap();
+    path
 }

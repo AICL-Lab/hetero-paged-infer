@@ -1,10 +1,10 @@
 //! # Hetero-Paged-Infer
 //!
-//! 异构推理系统 — 基于 `PagedAttention` 和 Continuous Batching 的 CPU-GPU 协同推理引擎。
+//! 异构推理系统 — 基于 `PagedAttention` 分页内存与 Continuous Batching 的推理引擎脚手架；当前计算后端为 mock。
 //!
 //! ## 概述
 //!
-//! 本库提供了一个高性能推理引擎，实现了以下核心技术：
+//! 本库提供了一个推理引擎脚手架，实现了以下核心技术（计算后端当前为 mock）：
 //!
 //! - **`PagedAttention`**: 分页式 KV Cache 管理，按需分配/释放显存块
 //! - **Continuous Batching**: 连续批处理调度，prefill/decode 分阶段管理
@@ -114,12 +114,15 @@ pub mod server;
 pub mod tokenizer;
 pub mod types;
 
+// 测试辅助模块：仅在单元测试（cfg(test)）或 `test-utils` feature 下编译，
+// 不会进入发布构建。集成测试与 bench 经由 dev-dependencies 启用该 feature。
+#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
 pub use config::{EngineConfig, ServingConfig, SpecialTokenIds, TokenizerConfig, TokenizerKind};
-pub use engine::{EngineMetrics, InferenceEngine};
+pub use engine::{EngineMetrics, InferenceEngine, StepEvents};
 pub use error::{
     ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
 };
@@ -129,10 +132,8 @@ pub use gpu_executor::CudaExecutor;
 pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
 pub use kv_cache::KVCacheManager;
 pub use scheduler::Scheduler;
-pub use server::{create_router, GenerationResult};
-pub use tokenizer::{
-    build_tokenizer, HuggingFaceTokenizer, SimpleTokenizer, TokenizerTrait,
-};
+pub use server::{create_router, create_router_with_engine};
+pub use tokenizer::{build_tokenizer, HuggingFaceTokenizer, SimpleTokenizer, TokenizerTrait};
 pub use types::{
     BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, LogicalBlock,
     MemoryStats, PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId,

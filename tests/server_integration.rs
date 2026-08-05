@@ -1,6 +1,10 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
-use hetero_infer::{create_router, EngineConfig, ServingConfig};
+use hetero_infer::{
+    create_router, create_router_with_engine, test_utils::AlwaysFailExecutor, EngineConfig,
+    ExecutionBatch, ExecutionError, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
+    ServingConfig, SimpleTokenizer,
+};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -13,6 +17,26 @@ fn create_test_config() -> EngineConfig {
         },
         ..Default::default()
     }
+}
+
+/// Assert the `usage` block is present, counts a non-empty prompt,
+/// and reports `total_tokens == prompt_tokens + completion_tokens`.
+fn assert_usage_consistent(json: &Value) {
+    let prompt = json["usage"]["prompt_tokens"]
+        .as_u64()
+        .expect("usage.prompt_tokens must be an integer");
+    let completion = json["usage"]["completion_tokens"]
+        .as_u64()
+        .expect("usage.completion_tokens must be an integer");
+    let total = json["usage"]["total_tokens"]
+        .as_u64()
+        .expect("usage.total_tokens must be an integer");
+    assert!(prompt > 0, "prompt_tokens should be non-zero");
+    assert_eq!(
+        total,
+        prompt + completion,
+        "total_tokens must equal prompt_tokens + completion_tokens"
+    );
 }
 
 #[tokio::test]
@@ -93,6 +117,7 @@ async fn test_completions_returns_openai_shape() {
     assert_eq!(json["object"], "text_completion");
     assert_eq!(json["model"], "test-model");
     assert!(json["choices"][0]["text"].is_string());
+    assert_usage_consistent(&json);
 }
 
 #[tokio::test]
@@ -126,6 +151,7 @@ async fn test_chat_completions_returns_assistant_message() {
     assert_eq!(json["object"], "chat.completion");
     assert_eq!(json["choices"][0]["message"]["role"], "assistant");
     assert!(json["choices"][0]["message"]["content"].is_string());
+    assert_usage_consistent(&json);
 }
 
 #[tokio::test]
@@ -165,6 +191,11 @@ async fn test_completions_stream_returns_done_event() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(body.to_vec()).unwrap();
     assert!(body.contains("data: [DONE]"));
+    // 流必须以带 finish_reason 的终止 chunk 结束，且其 usage 字段完整
+    assert!(
+        body.contains("\"finish_reason\":\"stop\""),
+        "stream must end with a stop chunk, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -243,4 +274,249 @@ async fn test_chat_completions_rejects_empty_messages() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_chat_completions_rejects_invalid_role() {
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "robot", "content": "hi"}],
+                        "max_tokens": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_completions_rejects_unknown_model() {
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "no-such-model",
+                        "prompt": "hello",
+                        "max_tokens": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_unknown_route_returns_json_envelope() {
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(Request::builder().uri("/nope").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+}
+
+#[tokio::test]
+async fn test_completions_rejects_malformed_json_with_envelope() {
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from("this is not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["error"]["message"].is_string(),
+        "rejection must use the JSON error envelope"
+    );
+}
+
+#[tokio::test]
+async fn test_concurrent_requests_both_complete() {
+    // 两个并发请求都必须完成：引擎循环应在两步之间接收第二个请求，
+    // 而不是把它锁在第一个请求的完整生成之后。
+    let app = create_router(create_test_config()).unwrap();
+
+    let make_request = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "model": "test-model",
+                    "prompt": "hello world",
+                    "max_tokens": 3
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    let (first, second) = tokio::join!(
+        app.clone().oneshot(make_request()),
+        app.clone().oneshot(make_request()),
+    );
+
+    for response in [first.unwrap(), second.unwrap()] {
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["choices"][0]["text"].is_string());
+        assert_usage_consistent(&json);
+    }
+}
+
+#[tokio::test]
+async fn test_completions_maps_execution_failure_to_500() {
+    // 注入永远失败的执行器：生成失败必须映射为 500 + internal_error 信封，
+    // 而不是被字符串化吞掉。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(AlwaysFailExecutor),
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["type"], "internal_error");
+    assert!(!json["error"]["message"].as_str().unwrap().is_empty());
+}
+
+/// 每次执行都阻塞一小段时间的执行器，用于制造可复现的过载窗口。
+struct SlowExecutor;
+
+impl GPUExecutorTrait for SlowExecutor {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        Ok(ExecutionOutput {
+            next_tokens: vec![100; batch.seq_ids.len()],
+            logits: None,
+            seq_ids: batch.seq_ids.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_completions_returns_429_when_overloaded() {
+    // max_num_seqs=1 + 慢执行器：第一个请求独占序列槽位期间，
+    // 第二个请求必须收到 429（而非 500），并带 Retry-After。
+    let config = EngineConfig {
+        max_num_seqs: 1,
+        serving: ServingConfig {
+            model_name: "test-model".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(SlowExecutor),
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let make_request = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "model": "test-model",
+                    "prompt": "hello world",
+                    "max_tokens": 5
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+
+    let (first, second) = tokio::join!(
+        app.clone().oneshot(make_request()),
+        app.clone().oneshot(make_request()),
+    );
+
+    let responses = [first.unwrap(), second.unwrap()];
+    let statuses: Vec<StatusCode> = responses.iter().map(|r| r.status()).collect();
+    assert!(
+        statuses.contains(&StatusCode::OK),
+        "one request should succeed, got {statuses:?}"
+    );
+    assert!(
+        statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
+        "the other should be rejected as overloaded, got {statuses:?}"
+    );
+
+    for response in responses {
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            assert!(
+                response.headers().contains_key("retry-after"),
+                "429 must carry Retry-After"
+            );
+        }
+    }
 }

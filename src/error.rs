@@ -129,8 +129,8 @@ pub enum ValidationError {
     #[error("无效的 max_tokens: 必须大于 0，实际值为 {0}")]
     InvalidMaxTokens(u32),
 
-    /// 无效的 temperature：必须在 (0.0, 2.0] 范围内，实际值为 {0}
-    #[error("无效的 temperature: 必须在 (0.0, 2.0] 范围内，实际值为 {0}")]
+    /// 无效的 temperature：必须在 [0.0, 2.0] 范围内，实际值为 {0}
+    #[error("无效的 temperature: 必须在 [0.0, 2.0] 范围内，实际值为 {0}")]
     InvalidTemperature(f32),
 
     /// 无效的 top_p：必须在 (0.0, 1.0] 范围内，实际值为 {0}

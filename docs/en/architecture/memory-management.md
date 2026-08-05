@@ -1,230 +1,118 @@
 # Memory Management
 
-Hetero-Paged-Infer 的内存管理策略结合了 PagedAttention 和内存压力感知，确保高效且安全的内存使用。
+Memory management in Hetero-Paged-Infer consists of a fixed-size block pool, per-sequence page tables, and a single-threshold admission policy. Block allocation and reclamation are pure Rust-side bookkeeping; they are not yet backed by real GPU memory — but this ledger gives the scheduler a real, queryable basis for resource decisions.
 
-## 内存架构
+## Memory Architecture
 
 ```mermaid
 flowchart TB
-    subgraph GPU["GPU 内存"]
-        KV["KV Cache (BlockPool)"]
-        Model["模型权重"]
-        Activations["激活值"]
+    subgraph Ledger["Rust control-plane ledger"]
+        Pool["BlockPool<br/>physical block array + free list"]
+        PageTables["PageTable<br/>per-sequence block tables"]
     end
-    
-    subgraph CPU["CPU 内存"]
-        Config["配置"]
-        Scheduler["调度器状态"]
-        PageTables["页表"]
-    end
-    
+
     subgraph Manager["KVCacheManager"]
-        Allocate["allocate_block()"]
+        Allocate["allocate_sequence() / allocate_block()"]
         Free["free_sequence()"]
         Stats["get_memory_stats()"]
     end
-    
-    Manager --> KV
+
+    Manager --> Pool
     Manager --> PageTables
 ```
 
-## 内存配置
+A physical block (`PhysicalBlock`) carries only `block_idx` and `ref_count`; it holds no KV tensors or GPU pointers. The project loads no model weights, so there is no weights / activations memory region either.
+
+## Memory Configuration
+
+Memory-related parameters live on `EngineConfig` (there is no separate KV cache config struct):
 
 ```rust
-pub struct KVCacheConfig {
-    /// 每个块的 token 数量
-    pub block_size: u32,           // 默认: 16
-    
-    /// 物理块总数
-    pub num_blocks: u32,           // 根据 GPU 内存计算
-    
-    /// 内存压力阈值 (0.0 - 1.0)
-    pub memory_threshold: f32,     // 默认: 0.85
-    
-    /// 是否启用抢占
-    pub enable_preemption: bool,   // 默认: true
+pub struct EngineConfig {
+    /// Tokens per physical block (default: 16)
+    pub block_size: u32,
+
+    /// Maximum number of physical blocks; total capacity = max_num_blocks * block_size tokens (default: 1024)
+    pub max_num_blocks: u32,
+
+    /// Memory pressure threshold, valid range (0.0, 1.0] (default: 0.9)
+    pub memory_threshold: f32,
+    // ... remaining fields are not directly related to memory management
 }
 ```
 
-### 块大小选择
+### Block Size Selection
 
-| 块大小 | 优点 | 缺点 |
-|--------|------|------|
-| 小 (8) | 更细粒度分配 | 更多页表开销 |
-| 中 (16) | 平衡 | 平衡 |
-| 大 (32) | 更少页表开销 | 更多内部碎片 |
+| Block Size | Pros | Cons |
+|------------|------|------|
+| Small (8) | Finer-grained allocation | More page table overhead |
+| Medium (16) | Balanced | Balanced |
+| Large (32) | Less page table overhead | More tail waste in the last block |
 
-**推荐**: 16 tokens/块，与 vLLM 一致。
+The default is 16 tokens/block, also a common value in vLLM.
 
-### 块数量计算
+## Memory Pressure Handling
+
+The system has a single threshold — **no pressure tiers, no preemption, no swap, no eviction**:
+
+- On admission and scheduling, the scheduler computes `utilization = used_blocks / total_blocks`
+- When `utilization >= memory_threshold`, `Scheduler::add_request` returns `SchedulerError::MemoryPressure`, rejecting new requests
+- The HTTP layer maps this error to **429 Too Many Requests** with a `Retry-After` header
+- In-flight decode sequences are unaffected; when they complete or fail, their blocks are reclaimed, utilization drops, and admission recovers automatically
 
 ```rust
-fn calculate_num_blocks(
-    gpu_memory: u64,
-    model_size: u64,
-    block_size: u32,
-    hidden_dim: u32,
-    num_layers: u32,
-) -> u32 {
-    // 每个 token 的 KV Cache 大小
-    let kv_cache_per_token = hidden_dim * num_layers * 2 * 4; // f32 = 4 bytes
-    
-    // 每个块的大小
-    let block_memory = block_size as u64 * kv_cache_per_token as u64;
-    
-    // 可用于 KV Cache 的内存
-    let available_memory = gpu_memory - model_size - ACTIVATION_RESERVE;
-    
-    (available_memory / block_memory) as u32
+pub fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError> {
+    self.update_memory_pressure();
+
+    if self.under_memory_pressure {
+        return Err(SchedulerError::MemoryPressure);
+    }
+    // ... concurrency cap check, then enqueue
 }
 ```
 
-## 内存统计
+Reference counting is used only for block allocation and reclamation: allocation sets `ref_count` to 1, and `free_sequence` brings it back to 0, returning the block to the free list. There is currently no block sharing between sequences; copy-on-write is a future direction, and the reference count is its scaffolding (see also "Current implementation status" in [PagedAttention](/en/architecture/paged-attention)).
+
+## Memory Statistics
 
 ```rust
 pub struct MemoryStats {
-    /// 总块数
+    /// Total number of physical blocks
     pub total_blocks: u32,
-    /// 已使用块数
+    /// Number of used physical blocks
     pub used_blocks: u32,
-    /// 空闲块数
+    /// Number of free physical blocks
     pub free_blocks: u32,
-    /// 内存利用率
-    pub utilization: f32,
-    /// 活跃序列数
-    pub active_sequences: usize,
+    /// Number of active sequences
+    pub num_sequences: u32,
 }
 
-impl KVCacheManager {
-    pub fn get_memory_stats(&self) -> MemoryStats {
-        MemoryStats {
-            total_blocks: self.block_pool.blocks.len() as u32,
-            used_blocks: self.block_pool.blocks.len() as u32 
-                - self.block_pool.free_list.len() as u32,
-            free_blocks: self.block_pool.free_list.len() as u32,
-            utilization: self.calculate_utilization(),
-            active_sequences: self.page_tables.len(),
-        }
-    }
+impl MemoryStats {
+    /// Memory utilization = used_blocks / total_blocks
+    pub fn utilization(&self) -> f32;
 }
 ```
 
-## 内存压力处理
+`KVCacheManager::get_memory_stats()` returns this struct; the scheduler's admission decision and the memory metrics exposed by the serving layer's `/metrics` are both built on it.
 
-### 分级响应
+## Memory Efficiency Verification
 
-```mermaid
-flowchart LR
-    subgraph Levels["内存压力级别"]
-        N["Normal<br/>&lt;80%"]
-        P["Pressure<br/>80-95%"]
-        C["Critical<br/>&gt;95%"]
-    end
-    
-    subgraph Actions["响应措施"]
-        A1["接受所有请求"]
-        A2["暂停新 prefill"]
-        A3["抢占低优先级序列"]
-    end
-    
-    N --> A1
-    P --> A2
-    C --> A3
-```
-
-### 抢占策略
-
-当内存不足时，系统可以抢占低优先级序列：
-
-```rust
-pub enum PreemptionPolicy {
-    /// 抢占最晚到达的序列 (默认)
-    FIFO,
-    /// 抢占剩余 token 最多的序列
-    LongestRemaining,
-    /// 抢占优先级最低的序列
-    LowestPriority,
-}
-
-impl Scheduler {
-    fn preempt_sequence(&mut self) -> Option<SeqId> {
-        match self.preemption_policy {
-            PreemptionPolicy::FIFO => {
-                // 找到最晚的 prefill 序列
-                self.prefill_queue.pop_back()
-            }
-            PreemptionPolicy::LongestRemaining => {
-                // 找到剩余 token 最多的序列
-                self.find_longest_remaining()
-            }
-            PreemptionPolicy::LowestPriority => {
-                // 找到优先级最低的序列
-                self.find_lowest_priority()
-            }
-        }
-    }
-}
-```
-
-### 抢占与恢复
-
-被抢占的序列可以保存状态并稍后恢复：
-
-```rust
-pub struct PreemptedSequence {
-    seq_id: SeqId,
-    /// 已生成的 token
-    generated_tokens: Vec<TokenId>,
-    /// 原始请求
-    request: Request,
-    /// 抢占时间
-    preempted_at: Instant,
-}
-
-impl InferenceEngine {
-    pub fn preempt(&mut self, seq_id: SeqId) -> PreemptedSequence {
-        let seq = self.scheduler.get_sequence(seq_id);
-        
-        // 保存状态
-        let preempted = PreemptedSequence {
-            seq_id,
-            generated_tokens: seq.generated_tokens.clone(),
-            request: seq.request.clone(),
-            preempted_at: Instant::now(),
-        };
-        
-        // 释放内存
-        self.scheduler.remove_sequence(seq_id);
-        self.kv_manager.free_sequence(seq_id);
-        
-        preempted
-    }
-    
-    pub fn restore(&mut self, preempted: PreemptedSequence) -> SeqId {
-        // 重新提交请求
-        self.submit_request(preempted.request)
-    }
-}
-```
-
-## 内存效率验证
-
-通过属性测试验证内存不变量：
+Memory invariants are verified with property tests (proptest, in `src/kv_cache.rs`):
 
 ```rust
 proptest! {
-    /// 验证：used + free == total
+    /// Verifies: used + free == total
     #[test]
     fn prop_block_count_invariant(
-        ops: Vec<KVOperation>,
-        num_blocks: u32,
-        block_size: u32
+        ops in prop::collection::vec(arb_cache_op(), 0..50),
+        num_blocks in 10u32..200,
+        block_size in 1u32..32,
     ) {
         let mut manager = KVCacheManager::new(num_blocks, block_size);
-        
+
         for op in ops {
-            execute_operation(&mut manager, op);
-            
+            apply_operation(&mut manager, op);  // allocate / free / grow
+
             let stats = manager.get_memory_stats();
             prop_assert_eq!(
                 stats.used_blocks + stats.free_blocks,
@@ -232,31 +120,12 @@ proptest! {
             );
         }
     }
-    
-    /// 验证：引用计数一致
-    #[test]
-    fn prop_refcount_consistency(ops: Vec<KVOperation>) {
-        let mut manager = KVCacheManager::new(100, 16);
-        
-        for op in ops {
-            execute_operation(&mut manager, op);
-        }
-        
-        // 所有活跃序列的引用总数应该等于所有非空闲块的引用计数之和
-        let active_refs: u32 = manager.page_tables.values()
-            .map(|pt| pt.len() as u32)
-            .sum();
-        
-        let block_refs: u32 = manager.block_pool.blocks.iter()
-            .map(|b| b.ref_count)
-            .sum();
-        
-        prop_assert_eq!(active_refs, block_refs);
-    }
 }
 ```
 
-## 相关
+The same file also covers initial allocation, growth allocation, and statistics consistency properties (`prop_block_allocation_on_sequence_start`, `prop_block_allocation_on_growth`, `prop_memory_statistics_invariant`).
+
+## Related
 
 - [PagedAttention](/en/architecture/paged-attention)
 - [Continuous Batching](/en/architecture/continuous-batching)

@@ -43,12 +43,26 @@ pub trait TokenizerTrait: Send + Sync {
     fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String>;
 
     /// 将文本编码为 token ID 序列
+    ///
+    /// 这是 [`try_encode`](Self::try_encode) 的便捷封装。引擎内部使用
+    /// `try_encode` 以优雅地处理错误；本方法面向不可能失败的调用场景。
+    ///
+    /// # Panics
+    ///
+    /// 底层 `try_encode` 失败时 panic。
     fn encode(&self, text: &str) -> Vec<TokenId> {
         self.try_encode(text)
             .unwrap_or_else(|err| panic!("tokenizer encode failed: {err}"))
     }
 
     /// 将 token ID 序列解码为文本
+    ///
+    /// 这是 [`try_decode`](Self::try_decode) 的便捷封装。引擎内部使用
+    /// `try_decode` 以优雅地处理错误；本方法面向不可能失败的调用场景。
+    ///
+    /// # Panics
+    ///
+    /// 底层 `try_decode` 失败时 panic。
     fn decode(&self, tokens: &[TokenId]) -> String {
         self.try_decode(tokens)
             .unwrap_or_else(|err| panic!("tokenizer decode failed: {err}"))
@@ -291,41 +305,8 @@ pub fn build_tokenizer(config: &EngineConfig) -> Result<Box<dyn TokenizerTrait>,
 mod tests {
     use super::*;
     use crate::config::{EngineConfig, TokenizerConfig, TokenizerKind};
+    use crate::test_utils::write_test_tokenizer_json;
     use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn write_test_tokenizer_json() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("hetero-tokenizer-{unique}.json"));
-        fs::write(
-            &path,
-            r###"{
-  "version": "1.0",
-  "truncation": null,
-  "padding": null,
-  "added_tokens": [],
-  "normalizer": null,
-  "pre_tokenizer": { "type": "Whitespace" },
-  "post_processor": null,
-  "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
-  "model": {
-    "type": "WordLevel",
-    "vocab": {
-      "[UNK]": 0,
-      "hello": 1,
-      "world": 2
-    },
-    "unk_token": "[UNK]"
-  }
-}"###,
-        )
-        .unwrap();
-        path
-    }
 
     #[test]
     fn test_simple_tokenizer_encode() {

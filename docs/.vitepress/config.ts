@@ -17,7 +17,7 @@ export default withMermaid(
   defineConfig({
     base,
     title: 'Hetero-Paged-Infer',
-    description: 'High-performance LLM inference engine with PagedAttention and Continuous Batching',
+    description: 'Paged-memory, continuously-batched inference engine scaffold with a mock compute backend',
 
     // 源码目录
     srcDir: '.',
@@ -257,7 +257,7 @@ export default withMermaid(
       ['meta', { name: 'theme-color', content: '#14b8a6' }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'Hetero-Paged-Infer' }],
-      ['meta', { property: 'og:description', content: 'High-performance LLM inference engine with PagedAttention and Continuous Batching' }],
+      ['meta', { property: 'og:description', content: 'Paged-memory, continuously-batched inference engine scaffold with a mock compute backend' }],
       ['meta', { property: 'og:image', content: ogImageHref }]
     ],
 

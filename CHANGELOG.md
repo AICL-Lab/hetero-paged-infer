@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path, a no-nvcc host-compatible fallback build for CI, and feature-gated CUDA executor tests.
+- Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `InferenceEngine::count_prompt_tokens()`, and `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests).
+- Server: true token-level SSE streaming, 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
+- Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones; CI now runs the test suite with `--all-features` and a `cargo bench -- --test` smoke run.
+- `test-utils` cargo feature: test helpers are now compiled only under `cfg(test)` or this feature, keeping them out of release builds.
 
 ### Removed
 
@@ -20,14 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changelog mirrors under GitHub Pages (`docs/en/changelog/`, `docs/zh/changelog/`).
 - Unused docs dependency `vitepress-plugin-llms`.
 - Unused direct Rust dependencies `tracing` and `tracing-subscriber`.
+- Dead code: CUDA Graph trait methods (never invoked by the engine), `Request::created_at`, `Scheduler::get_sequence_mut`, `PageTable::get_physical`, `RequestState::is_active`/`is_terminal`, the never-occurring unmapped `LogicalBlock` state, and the misleading copy-on-write comment on `PhysicalBlock::ref_count`.
+- Fake after-the-fact "streaming" (chunking finished text into 32-char slices), replaced by true token-level streaming.
 
 ### Changed
 
-- Serving now runs a single local-engine path instead of maintaining alternate backend abstractions.
-- Configuration and API docs were rewritten to document only the capabilities that currently exist in the repository.
-- Contributor workflow simplified to direct code/test/docs maintenance in `CONTRIBUTING.md`.
-- Docs landing pages simplified to focus on core engine capabilities and practical navigation.
-- Root `CHANGELOG.md` is now the single project changelog source.
+- Server concurrency model: the engine is now owned by a single background loop; handlers submit via channels and await per-request events. Continuous batching now works under concurrent HTTP load, and the async runtime is no longer blocked (previously a global mutex serialized every request behind a full `engine.run()`).
+- Scheduler determinism: active sequences use `BTreeMap` (FCFS by submission order) instead of `HashMap`, making scheduling fair and reproducible.
+- `temperature == 0.0` (greedy decoding) is now accepted; the valid range is `[0.0, 2.0]`.
+- `build_execution_batch` fails fast on an inconsistent decode sequence instead of silently skipping it (which would have left the request stuck forever).
+- Usage reporting uses the real tokenizer: `prompt_tokens` / `completion_tokens` are exact counts, not whitespace estimates.
+- Overflow-safe token arithmetic in the scheduler (`saturating_add`) and an always-safe `Sequence::context_len`.
+- FFI `num_sequences` is now `u64`, matching the C++ `unsigned long long` ABI on all targets (previously `usize`, which would mismatch on 32-bit platforms).
+- Benchmarks rebuilt with `iter_batched` so they no longer panic or degrade into measuring idle/error paths; filler benches removed.
+- Crate metadata, CLI about text, README, and docs now describe the project as a paged-memory + continuous-batching scaffold with a mock compute backend; unsupported claims ("CPU-GPU co-execution", fabricated throughput charts, fictional preemption API) were removed.
+
+### Fixed
+
+- Benchmark suite crashed during warmup (`bench_request_submission` exhausted `max_num_seqs`); the whole suite is now runnable and smoke-tested in CI.
+- Mock executor divide-by-zero panic on an empty vocabulary (now an error, consistent with the CUDA backend).
+- Double-free and zero `block_size` misuse are now caught by debug assertions with clear messages.
 
 ## [0.1.0] - 2026-04-16
 
@@ -48,4 +64,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
-[0.1.0]: https://github.com/LessUp/hetero-paged-infer/releases/tag/v0.1.0
+[0.1.0]: https://github.com/AICL-Lab/hetero-paged-infer/releases/tag/v0.1.0

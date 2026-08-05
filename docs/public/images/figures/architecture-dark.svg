@@ -32,11 +32,11 @@
 
   <rect x="516" y="168" width="372" height="376" rx="26" fill="#083344" stroke="#22d3ee" stroke-width="2"/>
   <text x="544" y="214" fill="#ecfeff" font-size="28" font-weight="700" font-family="Inter, Arial, sans-serif">Compute plane (GPU)</text>
-  <text x="544" y="244" fill="#a5f3fc" font-size="18" font-family="Inter, Arial, sans-serif">High-throughput kernels, KV residency, and token generation.</text>
+  <text x="544" y="244" fill="#a5f3fc" font-size="18" font-family="Inter, Arial, sans-serif">CUDA bridge (placeholder), KV residency, and token generation.</text>
 
   <rect x="544" y="290" width="316" height="92" rx="22" fill="#111827" stroke="#22d3ee" stroke-width="2"/>
   <text x="574" y="332" fill="#f8fafc" font-size="24" font-weight="700" font-family="Inter, Arial, sans-serif">GPU executor</text>
-  <text x="574" y="358" fill="#bae6fd" font-size="15" font-family="Inter, Arial, sans-serif">Attention kernels, graph replay, logits, sampling.</text>
+  <text x="574" y="358" fill="#bae6fd" font-size="15" font-family="Inter, Arial, sans-serif">Mock token backend (deterministic placeholder).</text>
 
   <rect x="544" y="404" width="316" height="114" rx="22" fill="#0f172a" stroke="#67e8f9" stroke-width="2"/>
   <text x="574" y="446" fill="#ecfeff" font-size="24" font-weight="700" font-family="Inter, Arial, sans-serif">Paged KV cache</text>

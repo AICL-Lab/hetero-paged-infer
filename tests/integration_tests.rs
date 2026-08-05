@@ -3,43 +3,17 @@
 //! These tests verify end-to-end functionality across all components.
 
 use hetero_infer::{
-    test_utils::create_test_config, EngineConfig, ExecutionBatch, ExecutionError, ExecutionOutput,
-    GPUExecutorTrait, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
+    test_utils::{create_test_config, AlwaysFailExecutor},
+    EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SchedulerError,
+    SimpleTokenizer,
 };
-
-struct FailingExecutor;
-
-impl GPUExecutorTrait for FailingExecutor {
-    fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        Err(ExecutionError::KernelLaunchFailed(
-            "integration executor failure".to_string(),
-        ))
-    }
-
-    fn capture_decode_graph(&mut self, _batch_size: u32) -> Result<(), ExecutionError> {
-        Ok(())
-    }
-
-    fn execute_graph(
-        &mut self,
-        _batch: &ExecutionBatch,
-    ) -> Result<ExecutionOutput, ExecutionError> {
-        Err(ExecutionError::KernelLaunchFailed(
-            "integration executor failure".to_string(),
-        ))
-    }
-
-    fn has_captured_graph(&self) -> bool {
-        false
-    }
-}
 
 fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
     InferenceEngine::with_components(
         config.clone(),
         Box::new(SimpleTokenizer::new()),
         Scheduler::new(config),
-        Box::new(FailingExecutor),
+        Box::new(AlwaysFailExecutor),
     )
     .unwrap()
 }
@@ -196,11 +170,15 @@ fn test_memory_utilization_tracking() {
     // Schedule to allocate memory
     let _ = engine.step();
 
-    // Utilization should increase
+    // Utilization must strictly increase: five in-flight sequences now hold KV blocks
     let after_util = engine.memory_utilization();
     assert!(
-        after_util >= initial_util,
-        "Utilization should increase after allocation"
+        after_util > initial_util,
+        "Utilization should increase after allocation (initial={initial_util}, after={after_util})"
+    );
+    assert!(
+        after_util > 0.0,
+        "Active sequences must occupy at least one block"
     );
 }
 
@@ -228,14 +206,23 @@ fn test_invalid_request_handling() {
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid params should be rejected");
 
-    // Invalid temperature
+    // Invalid temperature (negative)
     let invalid_params = GenerationParams {
         max_tokens: 10,
-        temperature: 0.0,
+        temperature: -0.5,
         top_p: 0.9,
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid temperature should be rejected");
+
+    // Greedy decoding (temperature == 0.0) is valid
+    let greedy_params = GenerationParams {
+        max_tokens: 10,
+        temperature: 0.0,
+        top_p: 0.9,
+    };
+    let result = engine.submit_request("Hello", greedy_params);
+    assert!(result.is_ok(), "Greedy temperature 0.0 should be accepted");
 
     // Invalid top_p
     let invalid_params = GenerationParams {
@@ -291,11 +278,10 @@ fn test_continuous_batching() {
     // Continue running
     let completed = engine.run();
 
-    // Both should complete
-    assert!(
-        !completed.is_empty(),
-        "At least one request should complete"
-    );
+    // Both requests must complete successfully
+    assert_eq!(completed.len(), 2, "both requests should complete");
+    assert!(completed.iter().all(|c| c.success));
+    assert!(!engine.has_pending_work());
 }
 
 /// **Integration Test: Configuration Validation**
@@ -361,31 +347,47 @@ fn test_memory_pressure_handling() {
         top_p: 0.9,
     };
 
-    // Submit requests until memory pressure
+    // Submit requests until memory pressure, collecting everything that
+    // terminates during the loop (some requests may complete or fail early).
     let mut submitted = 0;
+    let mut saw_memory_pressure = false;
+    let mut finished = Vec::new();
     for i in 0..20 {
-        let result = engine.submit_request(&format!("Request {}", i), params);
-        if result.is_ok() {
-            submitted += 1;
-            // Schedule to allocate memory
-            let _ = engine.step();
-        } else {
-            // Memory pressure reached
-            break;
+        match engine.submit_request(&format!("Request {}", i), params) {
+            Ok(_) => {
+                submitted += 1;
+                // Schedule to allocate memory
+                finished.extend(engine.step().unwrap());
+            }
+            Err(EngineError::Scheduler(SchedulerError::MemoryPressure)) => {
+                saw_memory_pressure = true;
+                break;
+            }
+            Err(other) => panic!("unexpected submit error: {other}"),
         }
     }
 
-    // Should have submitted at least one request
+    // With 10 blocks and a 0.5 threshold, pressure must actually trigger
     assert!(submitted > 0, "Should submit at least one request");
-
-    // Run to completion
-    let completed = engine.run();
-
-    // Should complete without crashing
     assert!(
-        !completed.is_empty() || !engine.has_pending_work(),
-        "Should handle memory pressure gracefully"
+        saw_memory_pressure,
+        "submitting against a nearly-full block pool must be rejected with MemoryPressure"
     );
+
+    // Run to completion: every accepted request must reach a terminal state.
+    // Under extreme pressure a decode may fail to grow its KV allocation and
+    // surface as an explicit failure — what matters is that nothing gets stuck.
+    finished.extend(engine.run());
+    assert_eq!(
+        finished.len(),
+        submitted,
+        "all accepted requests must terminate"
+    );
+    assert!(
+        finished.iter().any(|c| c.success),
+        "at least some requests should succeed"
+    );
+    assert!(!engine.has_pending_work());
 }
 
 /// **Integration Test: Large Batch Processing**
@@ -417,19 +419,24 @@ fn test_large_batch_processing() {
     // Submit many requests
     let num_requests = 20;
     for i in 0..num_requests {
-        let _ = engine.submit_request(&format!("Batch request {}", i), params);
+        engine
+            .submit_request(&format!("Batch request {}", i), params)
+            .unwrap();
     }
 
-    // Run to completion
+    // Run to completion: all requests fit within limits and must complete
     let completed = engine.run();
-
-    // Should complete most requests
-    assert!(!completed.is_empty(), "Should complete some requests");
+    assert_eq!(
+        completed.len(),
+        num_requests,
+        "all submitted requests should complete"
+    );
+    assert!(completed.iter().all(|c| c.success));
 }
 
 /// **Integration Test: Sequential Request Processing**
 ///
-/// Tests that requests are processed in order.
+/// Tests that requests are processed in submission order (FCFS).
 #[test]
 fn test_sequential_request_processing() {
     let config = create_test_config();
@@ -441,22 +448,36 @@ fn test_sequential_request_processing() {
         top_p: 0.9,
     };
 
-    // Submit requests one at a time and process
+    // Submit requests one at a time and process each to completion
+    let mut completed_ids = Vec::new();
     for i in 0..3 {
         engine
             .submit_request(&format!("Sequential {}", i), params)
             .unwrap();
 
         // Run until this request completes
-        let mut completed_count = 0;
+        let mut done = Vec::new();
         for _ in 0..50 {
-            let completed = engine.step().unwrap();
-            completed_count += completed.len();
-            if completed_count > 0 {
+            done.extend(engine.step().unwrap());
+            if !done.is_empty() {
                 break;
             }
         }
+
+        assert_eq!(
+            done.len(),
+            1,
+            "exactly one request should complete per round"
+        );
+        completed_ids.push(done[0].request_id);
     }
+
+    assert_eq!(
+        completed_ids,
+        vec![1, 2, 3],
+        "requests must complete in submission order"
+    );
+    assert!(!engine.has_pending_work());
 }
 
 #[test]
@@ -491,6 +512,8 @@ fn test_metrics_collection() {
 
     // Get initial metrics
     let metrics = engine.get_metrics();
+    assert_eq!(metrics.total_requests, 0);
+    assert_eq!(metrics.completed_requests, 0);
     assert!(metrics.memory_utilization >= 0.0);
     assert!(metrics.memory_utilization <= 1.0);
 
@@ -502,9 +525,24 @@ fn test_metrics_collection() {
     };
 
     engine.submit_request("Test", params).unwrap();
-    let _ = engine.step();
+    let after_submit = engine.get_metrics();
+    assert_eq!(after_submit.total_requests, 1, "submission must be counted");
 
+    let _ = engine.step();
     let metrics_after = engine.get_metrics();
-    // Metrics should be valid
-    assert!(metrics_after.memory_utilization >= 0.0);
+    assert_eq!(
+        metrics_after.active_sequences, 1,
+        "the in-flight request must be tracked as an active sequence"
+    );
+
+    // Run to completion and verify terminal metrics
+    let _ = engine.run();
+    let final_metrics = engine.get_metrics();
+    assert_eq!(final_metrics.completed_requests, 1);
+    assert_eq!(final_metrics.failed_requests, 0);
+    assert_eq!(final_metrics.active_sequences, 0);
+    assert!(
+        final_metrics.total_tokens_generated > 0,
+        "generated tokens must be counted"
+    );
 }

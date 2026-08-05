@@ -4,7 +4,7 @@
 //! 隐藏 `ExecutionBatch` 的构造细节，为推理引擎提供高层次的执行接口。
 
 use crate::config::EngineConfig;
-use crate::error::{EngineError, ExecutionError};
+use crate::error::{EngineError, ExecutionError, SchedulerError};
 use crate::gpu_executor::GPUExecutorTrait;
 use crate::types::{ExecutionBatch, ExecutionOutput, SchedulerOutput};
 
@@ -47,6 +47,7 @@ impl BatchExecutionPipeline {
     /// # 返回
     ///
     /// - `Ok(ExecutionOutput)` — 执行成功
+    /// - `Err(EngineError::Scheduler)` — 批次构建失败（调度器状态不一致）
     /// - `Err(EngineError::Execution)` — 执行失败且重试耗尽
     pub fn execute(
         &mut self,
@@ -56,7 +57,7 @@ impl BatchExecutionPipeline {
             return Ok(ExecutionOutput::default());
         }
 
-        let execution_batch = build_execution_batch(scheduler_output);
+        let execution_batch = build_execution_batch(scheduler_output)?;
 
         let mut retries = 0;
         loop {
@@ -80,7 +81,15 @@ impl BatchExecutionPipeline {
 ///
 /// 将 `SchedulerOutput` 中的 prefill 和 decode 序列转换为 `ExecutionBatch`，
 /// 包含 GPU kernel 所需的扁平化 token、位置、块表等数据。
-pub fn build_execution_batch(scheduler_output: &SchedulerOutput) -> ExecutionBatch {
+///
+/// # 错误
+///
+/// 如果某个 decode 序列缺少输入 token 或无法计算位置（调度器状态不一致），
+/// 返回 [`EngineError::Scheduler`] 而非静默跳过——被跳过的序列既不会被推进
+/// 也不会被标记失败，将导致请求永久停滞。
+pub fn build_execution_batch(
+    scheduler_output: &SchedulerOutput,
+) -> Result<ExecutionBatch, EngineError> {
     let mut batch = ExecutionBatch::default();
 
     // Process prefill sequences
@@ -109,12 +118,16 @@ pub fn build_execution_batch(scheduler_output: &SchedulerOutput) -> ExecutionBat
     for seq in &scheduler_output.decode_sequences {
         let seq_id = seq.seq_id;
         let context_len = seq.context_len();
-        let Some(input_token) = seq.decode_input_token() else {
-            continue;
-        };
-        let Some(position) = seq.decode_position() else {
-            continue;
-        };
+        let input_token = seq.decode_input_token().ok_or_else(|| {
+            EngineError::Scheduler(SchedulerError::InvalidStateTransition(format!(
+                "decode sequence {seq_id} has no input token for batch construction"
+            )))
+        })?;
+        let position = seq.decode_position().ok_or_else(|| {
+            EngineError::Scheduler(SchedulerError::InvalidStateTransition(format!(
+                "decode sequence {seq_id} has zero context length"
+            )))
+        })?;
 
         // For decode, we process the last token already present in the context.
         batch.input_tokens.push(input_token);
@@ -130,14 +143,13 @@ pub fn build_execution_batch(scheduler_output: &SchedulerOutput) -> ExecutionBat
         batch.block_tables.push(seq.get_block_table());
     }
 
-    batch
+    Ok(batch)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::{Request, RequestState, Sequence};
-    use std::sync::Arc;
 
     #[test]
     fn test_decode_batch_uses_last_generated_token_and_position() {
@@ -159,11 +171,11 @@ mod tests {
 
         let scheduler_output = SchedulerOutput {
             prefill_sequences: Vec::new(),
-            decode_sequences: vec![Arc::new(sequence)],
+            decode_sequences: vec![sequence],
             total_tokens: 1,
         };
 
-        let batch = build_execution_batch(&scheduler_output);
+        let batch = build_execution_batch(&scheduler_output).unwrap();
 
         assert_eq!(batch.input_tokens, vec![21]);
         assert_eq!(batch.positions, vec![4]);
@@ -190,15 +202,44 @@ mod tests {
 
         let scheduler_output = SchedulerOutput {
             prefill_sequences: Vec::new(),
-            decode_sequences: vec![Arc::new(sequence)],
+            decode_sequences: vec![sequence],
             total_tokens: 1,
         };
 
-        let batch = build_execution_batch(&scheduler_output);
+        let batch = build_execution_batch(&scheduler_output).unwrap();
 
         assert_eq!(batch.input_tokens, vec![32]);
         assert_eq!(batch.positions, vec![2]);
         assert_eq!(batch.context_lens, vec![3]);
         assert_eq!(batch.seq_ids, vec![9]);
+    }
+
+    #[test]
+    fn test_decode_batch_fails_fast_on_empty_sequence() {
+        // 一个既无输入 token 又无输出 token 的 decode 序列属于调度器状态不一致，
+        // 必须报错而非静默跳过（否则请求会永久滞留队列）。
+        let request = Request::new(1, Vec::new(), crate::types::GenerationParams::default());
+
+        let sequence = Sequence {
+            seq_id: 13,
+            request,
+            logical_blocks: Vec::new(),
+            num_computed_tokens: 0,
+            num_generated_tokens: 0,
+        };
+
+        let scheduler_output = SchedulerOutput {
+            prefill_sequences: Vec::new(),
+            decode_sequences: vec![sequence],
+            total_tokens: 1,
+        };
+
+        let result = build_execution_batch(&scheduler_output);
+        assert!(matches!(
+            result,
+            Err(EngineError::Scheduler(
+                SchedulerError::InvalidStateTransition(_)
+            ))
+        ));
     }
 }

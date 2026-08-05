@@ -4,26 +4,14 @@ Complete installation instructions for various environments.
 
 ## System Requirements
 
-### Minimum Requirements
-
 | Component | Specification |
 |-----------|--------------|
 | OS | Linux (Ubuntu 20.04+, CentOS 8+) |
-| CPU | x86_64 with AVX2 support |
+| CPU | x86_64 |
 | RAM | 8 GB |
-| GPU | Optional (NVIDIA with CUDA 11.x) |
 | Disk | 2 GB free space |
-
-### Recommended for Production
-
-| Component | Specification |
-|-----------|--------------|
-| OS | Ubuntu 22.04 LTS |
-| CPU | 16+ cores, AVX-512 preferred |
-| RAM | 32+ GB |
-| GPU | NVIDIA A100, H100, or RTX 4090 |
-| Disk | NVMe SSD |
-| Network | 1 Gbps+ |
+| Rust | 1.82+ (2021 edition) |
+| GPU | Not required (the compute core is currently a mock; the experimental `cuda` feature is covered below) |
 
 ## Install Rust
 
@@ -34,24 +22,24 @@ Complete installation instructions for various environments.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 
-# Verify installation
+# Verify installation (1.82+ required)
 rustc --version
 cargo --version
 ```
 
-### Required Components
+### Development Components (Optional)
 
 ```bash
-# Add required components for development
 rustup component add rustfmt clippy
 
-# Add target if cross-compiling (optional)
+# Cross-compilation target (optional)
 rustup target add x86_64-unknown-linux-musl
 ```
 
 ## Install CUDA (Optional)
 
-For the experimental `cuda` feature:
+Only needed for the experimental `cuda` feature; the default build and the mock
+engine do **not** require CUDA.
 
 ### Ubuntu 22.04
 
@@ -89,112 +77,44 @@ nvcc --version
 
 ## Build Hetero-Paged-Infer
 
-### Method 1: From Source (Recommended)
+### From Source (Recommended)
 
 ```bash
 # Clone repository
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # Build release version
 cargo build --release
 
-# Installation complete
 # Binary: ./target/release/hetero-infer
 ```
 
-### Method 2: Using Make
-
-```bash
-# Build with Makefile (if available)
-make build
-
-# Install to /usr/local/bin
-sudo make install
-```
-
-### Method 3: Cargo Install
-
-```bash
-# Install directly from crates.io (when published)
-cargo install hetero-infer
-```
+> Not published on crates.io yet, so `cargo install` is not available.
 
 ## Docker Installation
 
-### Using Docker
+> This project has **no published images**; build locally from source.
+> See [Docker Deployment](../deployment/docker.md) for details.
 
 ```bash
-# Pull image
-docker pull ghcr.io/lessup/hetero-paged-infer:latest
-
-# Run
-docker run -it --rm \
-  --gpus all \
-  -v $(pwd)/config.json:/etc/hetero-infer/config.json \
-  ghcr.io/lessup/hetero-paged-infer:latest
-```
-
-### Build Docker Image
-
-```bash
-# Clone repo
-git clone https://github.com/LessUp/hetero-paged-infer.git
+git clone https://github.com/AICL-Lab/hetero-paged-infer.git
 cd hetero-paged-infer
 
 # Build image
 docker build -t hetero-infer:latest .
 
-# Run container
+# Run container (server mode, port 3000)
 docker run -it --rm \
   --name hetero-infer \
-  -p 8080:8080 \
+  -p 3000:3000 \
   hetero-infer:latest
-```
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  hetero-infer:
-    image: ghcr.io/lessup/hetero-paged-infer:latest
-    container_name: hetero-infer
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - RUST_LOG=info
-    volumes:
-      - ./config.json:/etc/hetero-infer/config.json:ro
-    ports:
-      - "8080:8080"
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 ```
 
 ## Kubernetes Deployment
 
-### Helm Chart (Planned)
-
-```bash
-# Add Helm repo (when available)
-helm repo add hetero-infer https://lessup.github.io/hetero-paged-infer
-helm repo update
-
-# Install
-helm install hetero-infer hetero-infer/hetero-infer \
-  --set gpu.enabled=true \
-  --set resources.limits.memory=32Gi
-```
-
-### Raw Kubernetes Manifest
+There is no Helm chart; use a raw Kubernetes manifest (build the image locally
+first and push it to your registry; `serving.host` must be set to `0.0.0.0`):
 
 ```yaml
 apiVersion: apps/v1
@@ -213,13 +133,15 @@ spec:
     spec:
       containers:
       - name: hetero-infer
-        image: ghcr.io/lessup/hetero-paged-infer:latest
+        image: hetero-infer:latest
+        args: ["--serve", "--config", "/etc/hetero-infer/config.json"]
+        ports:
+        - containerPort: 3000
         resources:
           limits:
-            nvidia.com/gpu: 1
-            memory: "32Gi"
+            memory: "8Gi"
           requests:
-            memory: "16Gi"
+            memory: "2Gi"
         volumeMounts:
         - name: config
           mountPath: /etc/hetero-infer
@@ -229,20 +151,22 @@ spec:
           name: hetero-infer-config
 ```
 
+> The mock engine does not consume GPUs, so the manifest contains no
+> `nvidia.com/gpu`; only the experimental `cuda` build needs one.
+> For the full manifest (probes, Service), see [Production Deployment](../deployment/production.md).
+
 ## Verification
 
-### Test Installation
-
 ```bash
-# Check version
-./target/release/hetero-infer --version
+# Show help (note: there is no --version flag)
+./target/release/hetero-infer --help
 
-# Run basic test
+# Run one inference (output is placeholder tokens, see Quick Start)
 ./target/release/hetero-infer \
   --input "Hello, world!" \
   --max-tokens 10
 
-# Run test suite
+# Run the test suite
 cargo test --release
 ```
 
@@ -272,7 +196,7 @@ error: could not compile
 ```
 **Solutions:**
 ```bash
-# Update Rust
+# Update Rust (1.82+ required)
 rustup update
 
 # Clean and rebuild
@@ -309,14 +233,11 @@ If you only need the Rust-side CUDA feature surface to compile and test, the bui
 ## Uninstallation
 
 ```bash
-# Remove binary
-rm /usr/local/bin/hetero-infer
+# Remove built binary
+rm ./target/release/hetero-infer
 
-# Remove config
+# Remove config (if installed system-wide)
 rm -rf /etc/hetero-infer
-
-# Uninstall from cargo
-cargo uninstall hetero-infer
 ```
 
 ---

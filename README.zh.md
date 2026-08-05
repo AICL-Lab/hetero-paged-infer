@@ -5,9 +5,9 @@
 [![CI](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
-**高性能 LLM 推理引擎 - PagedAttention + Continuous Batching**
+**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎脚手架（计算后端为 mock）**
 
 > ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。默认路径仍使用 Mock GPU 执行器。可选的 `cuda` feature 现在会编译并执行一条真实的 CUDA kernel 路径；若没有可用设备则自动回退到 host 路径。完整的生产级注意力 kernel 仍是后续工作。
 
@@ -19,7 +19,7 @@
 
 ## 项目概述
 
-Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模块化架构设计，面向未来的生产部署，实现了 [vLLM](https://github.com/vllm-project/vllm) 的核心技术，具有模块化、可测试的架构，专为生产部署而设计。
+Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。当前计算后端为 mock（确定性占位 token），真实模型计算、采样与生产级 kernel 均为后续工作。
 
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
@@ -57,7 +57,7 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，采用模�
 
 ### 环境要求
 
-- **Rust 1.70+** (2021 edition)
+- **Rust 1.82+** (2021 edition)
 - **Linux** (推荐 Ubuntu 20.04+) 或 **macOS**
 
 ### 安装
@@ -161,8 +161,8 @@ for result in results {
 | `--max-total-tokens` | 4096 | 每批次最大 token 总数 |
 | `--memory-threshold` | 0.9 | 内存压力阈值 (0.0-1.0) |
 | `--max-tokens` | 100 | 最大生成 token 数 |
-| `--temperature` | 1.0 | 采样温度 |
-| `--top-p` | 0.9 | 核采样阈值 |
+| `--temperature` | 1.0 | 采样温度（当前仅做范围校验，采样尚未实现） |
+| `--top-p` | 0.9 | 核采样阈值（当前仅做范围校验，采样尚未实现） |
 
 配置文件 (`config.json`):
 
@@ -219,7 +219,7 @@ npm run build
 
 1. **块级分配**：将 KV 缓存分割为固定大小的块
 2. **按需分页**：仅在需要时分配块
-3. **写时复制**：跨序列共享块，实现高效的 beam search
+3. **写时复制**（尚未实现，未来方向）：跨序列共享块，实现高效的 beam search
 
 ## 测试
 

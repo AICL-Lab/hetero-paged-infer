@@ -2,14 +2,14 @@
 
 ## Design Philosophy
 
-Hetero-Paged-Infer implements a **heterogeneous computing architecture** that separates control flow (CPU) from compute-intensive operations (GPU).
+Hetero-Paged-Infer is an LLM inference engine scaffold: it implements PagedAttention-style paged memory, a continuous batching scheduler, and an OpenAI-compatible HTTP serving layer. The compute backend is currently a mock / placeholder implementation — scheduling, memory accounting, and the serving path are real, runnable, tested code; real model computation (weight loading, attention kernels) is future work. See the "Current boundaries" section on the landing page.
 
 ### Core Principles
 
-1. **CPU Orchestration** - Scheduling, memory management, batch preparation
-2. **GPU Computation** - Attention kernels, matrix operations, token generation
-3. **Memory Efficiency** - PagedAttention eliminates memory waste
-4. **Throughput Optimization** - Continuous batching maximizes GPU utilization
+1. **Rust Control Plane** - Scheduling, block accounting, page tables, and batch construction all live in Rust, where they can be reasoned about and tested
+2. **Pluggable Compute Backend** - `GPUExecutorTrait` abstracts batch execution; the default mock executor generates deterministic placeholder tokens
+3. **Memory Efficiency** - Block pool + page table paged allocation avoids the waste of reserving contiguous memory per request
+4. **Continuous Batching** - Decode-priority batch construction prioritizes in-flight requests
 
 ## High-Level Architecture
 
@@ -31,16 +31,17 @@ pub struct InferenceEngine {
     config: EngineConfig,
     tokenizer: Box<dyn TokenizerTrait>,
     scheduler: Scheduler,
-    kv_cache_manager: KVCacheManager,
-    gpu_executor: Box<dyn GPUExecutorTrait>,
+    execution_pipeline: BatchExecutionPipeline,
+    eos_token_id: u32,
+    // internal counters: total/completed/failed requests, tokens generated, etc.
 }
 ```
 
 **Responsibilities:**
-- Request lifecycle management
-- Step-by-step execution loop
-- Error recovery strategies
-- Metrics collection
+- Request lifecycle management (submit, step, complete/fail)
+- Step-wise execution loop (schedule → execute → collect results)
+- Execution retry (`max_retry_attempts`, for GpuTimeout)
+- Metrics collection (exposed via the serving layer's `/metrics`)
 
 ### 2. Scheduler
 
@@ -62,22 +63,21 @@ stateDiagram-v2
 **Scheduling Algorithm:**
 
 ```
-1. Collect decode requests (highest priority)
-2. Fill remaining batch slots with prefill
-3. Respect memory and size constraints
-4. Update request states
+1. Collect decode requests (highest priority, lower latency for in-flight requests)
+2. Fill remaining batch slots with prefill requests (in seq_id order, FCFS)
+3. Respect batch size, total token, concurrency, and memory constraints
+4. Update request states; reject new requests when utilization ≥ memory_threshold
 ```
 
 ### 3. KV Cache Manager
 
-Implements **PagedAttention** memory management:
+Implements a **PagedAttention**-style paged memory ledger. The block pool is a fixed-size array of physical blocks plus a free list; each sequence maintains a page table:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    GPU Memory Pool                           │
+│          KV Cache Block Pool (Rust control-plane ledger)     │
 ├─────────────────────────────────────────────────────────────┤
 │ Block 0 │ Block 1 │ Block 2 │ ... │ Block N                  │
-│ [K,V]   │ [K,V]   │ [K,V]   │     │ [K,V]                    │
 └─────────────────────────────────────────────────────────────┘
       ↑
 Page Table Mapping:
@@ -85,19 +85,20 @@ Page Table Mapping:
   Sequence 1: [Block 1] → [Block 5] → [Block 9]
 ```
 
+Note: physical blocks currently carry only ledger metadata (`block_idx` + `ref_count`); they do not yet hold real KV tensors. A real backend consuming this block-table structure is future work.
+
 ### 4. GPU Executor
 
-Abstracts GPU computation:
+Abstracts batch execution:
 
 ```rust
-pub trait GPUExecutorTrait {
-    fn execute(&mut self, batch: &ExecutionBatch) 
-        -> ExecutionOutput;
-    fn capture_decode_graph(&mut self, batch_size: u32);
-    fn execute_graph(&mut self, batch: &ExecutionBatch) 
-        -> ExecutionOutput;
+pub trait GPUExecutorTrait: Send {
+    fn execute(&mut self, batch: &ExecutionBatch)
+        -> Result<ExecutionOutput, ExecutionError>;
 }
 ```
+
+The default `MockGPUExecutor` generates deterministic placeholder tokens (independent of input content); the minimal kernel path behind the `cuda` feature likewise only performs `(seed + index) % vocab_size` placeholder generation. Neither loads weights, consumes the KV cache, nor computes attention.
 
 ## Data Flow
 
@@ -110,26 +111,26 @@ sequenceDiagram
     participant T as Tokenizer
     participant S as Scheduler
     participant KVM as KV Cache
-    participant GPU as GPU
+    participant X as Executor
 
     C->>E: Submit Request
     E->>T: Encode Text
     T-->>E: Token IDs
     E->>S: Add Request
     S->>S: Queue Request
-    
-    loop Schedule Loop
-        S->>S: Build Batch
+
+    loop Step Loop
+        E->>S: Schedule
         S->>KVM: Allocate Blocks
         KVM-->>S: Block Tables
-        S->>GPU: Execute Batch
-        GPU-->>S: Next Tokens
-        S->>S: Update States
+        S-->>E: Batch
+        E->>X: Execute Batch
+        X-->>E: Next Tokens
+        E->>S: Update States
     end
-    
-    S->>T: Decode Tokens
-    T-->>S: Text Output
-    S-->>E: Completed
+
+    E->>T: Decode Tokens
+    T-->>E: Text Output
     E-->>C: Response
 ```
 
@@ -139,18 +140,21 @@ sequenceDiagram
 
 ```rust
 pub struct PhysicalBlock {
-    block_id: u32,
-    refcount: u32,
-    data: *mut c_void,  // GPU memory pointer
+    pub block_idx: BlockIdx,  // physical block index
+    pub ref_count: u32,       // reference count; free when zero
 }
 
 pub struct LogicalBlock {
-    logical_idx: u32,
-    physical: Option<PhysicalBlockRef>,
+    pub block_idx: u32,                    // logical block index within the sequence
+    pub physical_block: PhysicalBlockRef,  // mapped physical block
 }
 ```
 
+Physical blocks currently hold no GPU memory pointer; `ref_count` is used only for allocation and reclamation. Copy-on-write style block sharing is a future direction — the reference count is the scaffolding for it.
+
 ### Memory Layout
+
+With the default `block_size = 16`, a sequence's tokens are organized by block:
 
 ```
 Token Positions:
@@ -158,78 +162,42 @@ Token Positions:
 │ Block 0 │ Block 1 │ Block 2 │ Block 3 │ Block 4     │
 │ 0-15    │ 16-31   │ 32-47   │ 48-63   │ 64-79       │
 └─────────────────────────────────────────────────────┘
-
-Attention Mask (Causal):
-┌───┬───┬───┬───┬───┐
-│ 1 │ 0 │ 0 │ 0 │ 0 │  Position 0
-├───┼───┼───┼───┼───┤
-│ 1 │ 1 │ 0 │ 0 │ 0 │  Position 1
-├───┼───┼───┼───┼───┤
-│ 1 │ 1 │ 1 │ 0 │ 0 │  Position 2
-├───┼───┼───┼───┼───┤
-│ 1 │ 1 │ 1 │ 1 │ 0 │  Position 3
-├───┼───┼───┼───┼───┤
-│ 1 │ 1 │ 1 │ 1 │ 1 │  Position 4
-└───┴───┴───┴───┴───┘
 ```
+
+The last block of a sequence is typically not full — this is the only waste boundary inside the block model.
 
 ## Performance Characteristics
 
-### Throughput vs Latency
+### Benchmarks
 
-```mermaid
-xychart-beta
-    title "Throughput vs Batch Size"
-    x-axis [1, 8, 16, 32, 64, 128]
-    y-axis "Throughput (tokens/s)" 0 --> 10000
-    bar [500, 2000, 4000, 7000, 9500, 9800]
-    line [800, 1500, 2500, 4000, 6000, 7000]
-```
+The current benchmarks (`benches/`, Criterion-based) measure engine-level overhead only: engine creation, request submission, single-step scheduling, and KV cache allocation and growth. They **do not measure token throughput** and produce no tokens/s figures.
 
-### Memory Efficiency
+### Memory Efficiency (Literature Context)
+
+The figures below are observations from the PagedAttention paper (Kwon et al., 2023) and related prior art, **not measurements of this project**; they serve only to motivate paged allocation:
 
 | Method | Internal Waste | External Frag | Total |
 |--------|---------------|---------------|-------|
-| Static | 45% | 10% | 55% |
-| Dynamic | 20% | 8% | 28% |
+| Static | ~45% | ~10% | ~55% |
+| Dynamic | ~20% | ~8% | ~28% |
 | **Paged** | **<5%** | **<2%** | **<7%** |
 
 ## Scalability
 
-### Horizontal Scaling
+The engine is currently a single-process implementation: one scheduler, one block pool, one serving instance. Horizontal scaling (multiple instances behind a load balancer) is not a current capability; it is a future direction.
 
-```mermaid
-flowchart LR
-    subgraph LB[Load Balancer]
-        nginx[Nginx/Envoy]
-    end
-    
-    subgraph Workers[Inference Workers]
-        W1[Worker 1]
-        W2[Worker 2]
-        W3[Worker 3]
-        WN[Worker N]
-    end
-    
-    Client --> LB
-    LB --> W1
-    LB --> W2
-    LB --> W3
-    LB --> WN
-```
+Capacity tuning within a single process is done through `EngineConfig`:
 
-### Vertical Scaling
-
-- More GPU memory → More concurrent sequences
-- More CPU cores → Faster batch preparation
-- Larger batch size → Better GPU utilization
+- `max_num_blocks × block_size` determines total KV cache token capacity
+- `max_batch_size` / `max_num_seqs` bound per-batch size and concurrent sequences
+- `memory_threshold` sets the utilization admission cutoff
 
 ## Security Considerations
 
-1. **Resource Isolation** - Per-request memory limits
-2. **Input Validation** - Token count limits
-3. **Timeout Handling** - Prevent hung requests
-4. **Error Boundaries** - Isolate failed requests
+1. **Admission Control** - New requests are rejected when memory utilization ≥ threshold or the concurrency cap is reached (HTTP 429 + `Retry-After`)
+2. **Input Validation** - Token count limits such as `max_model_len`; invalid parameters return 400
+3. **Execution Retry** - GpuTimeout is retried up to `max_retry_attempts`, then the batch is failed
+4. **Error Isolation** - Failed requests release their blocks without affecting other in-flight sequences
 
 ---
 

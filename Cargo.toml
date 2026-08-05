@@ -2,7 +2,7 @@
 name = "hetero-infer"
 version = "0.1.0"
 edition = "2021"
-description = "Heterogeneous Inference System with CPU-GPU co-execution"
+description = "Paged-memory, continuously-batched inference engine scaffold with a mock compute backend"
 authors = ["Developer"]
 
 [dependencies]
@@ -14,10 +14,11 @@ env_logger = "0.11"
 clap = { version = "4.6", features = ["derive"] }
 tokenizers = "0.19"
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 async-stream = "0.3"
 
 [dev-dependencies]
+hetero-infer = { path = ".", features = ["test-utils"] }
 proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 tower = { version = "0.5", features = ["util"] }
@@ -29,6 +30,9 @@ harness = false
 [features]
 default = []
 cuda = []
+# 暴露 src/test_utils.rs 中的测试辅助代码，供集成测试与 bench 使用。
+# 经由本 crate 的 dev-dependencies 启用，不会进入正常发布构建。
+test-utils = []
 
 [[bin]]
 name = "hetero-infer"

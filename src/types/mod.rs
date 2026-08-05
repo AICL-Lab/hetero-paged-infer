@@ -46,18 +46,6 @@ pub enum RequestState {
     Failed(String),
 }
 
-impl RequestState {
-    /// 检查请求是否处于活跃状态（Prefill 或 Decode）
-    pub fn is_active(&self) -> bool {
-        matches!(self, RequestState::Prefill | RequestState::Decode)
-    }
-
-    /// 检查请求是否处于终态（Completed 或 Failed）
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, RequestState::Completed | RequestState::Failed(_))
-    }
-}
-
 pub mod execution;
 pub mod memory;
 pub mod request;
@@ -67,17 +55,3 @@ pub use execution::*;
 pub use memory::*;
 pub use request::*;
 pub use scheduler::*;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_request_state_is_active() {
-        assert!(!RequestState::Pending.is_active());
-        assert!(RequestState::Prefill.is_active());
-        assert!(RequestState::Decode.is_active());
-        assert!(!RequestState::Completed.is_active());
-        assert!(!RequestState::Failed("error".to_string()).is_active());
-    }
-}
