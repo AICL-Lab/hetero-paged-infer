@@ -30,7 +30,6 @@ harness = false
 
 [features]
 default = []
-cuda = []
 # 暴露 src/test_utils.rs 中的测试辅助代码，供集成测试与 bench 使用。
 # 经由本 crate 的 dev-dependencies 启用，不会进入正常发布构建。
 test-utils = []

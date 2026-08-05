@@ -6,143 +6,31 @@
 //!
 //! # 当前实现
 //!
-//! 默认实现为 **Mock 执行器**；启用 `cuda` feature 时，会切换到
-//! 由 `nvcc` 编译的 CUDA 后端桥接执行器。两种实现目前都生成确定性
-//! 占位 token，尚未接入真实模型计算。
+//! 默认实现为 **Mock 执行器**，生成确定性占位 token，尚未接入真实模型计算。
+//! 真实 CUDA kernel 为后续工作，届时再引入 build 脚本与 FFI 桥接。
 //!
 //! # 接口
 //!
 //! ```text
 //! trait GPUExecutorTrait: Send {
-//!     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError>;
+//!     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
 //! }
 //! ```
 
 use crate::config::EngineConfig;
-use crate::error::ExecutionError;
+use crate::error::EngineError;
 use crate::types::{ExecutionBatch, ExecutionOutput, TokenId};
-
-#[cfg(feature = "cuda")]
-mod cuda_backend {
-    use crate::error::ExecutionError;
-    use crate::types::{SeqId, TokenId};
-    use std::ffi::CStr;
-    use std::os::raw::c_char;
-
-    unsafe extern "C" {
-        fn hetero_cuda_compiled_with_nvcc() -> i32;
-        fn hetero_cuda_backend_name() -> *const c_char;
-        fn hetero_cuda_device_available() -> i32;
-        fn hetero_cuda_generate_next_tokens(
-            seq_ids: *const u64,
-            // 必须与 C/C++ 侧的 `unsigned long long` 严格一致；
-            // 使用 `usize` 会在 32 位目标上造成 ABI 不匹配（参数错位 → 越界写）。
-            num_sequences: u64,
-            seed: u32,
-            vocab_size: u32,
-            out_tokens: *mut u32,
-            used_device: *mut i32,
-        ) -> i32;
-    }
-
-    pub fn compiled_with_nvcc() -> bool {
-        // SAFETY: The symbol is provided by the nvcc-compiled static library when the
-        // `cuda` feature is enabled. It takes no arguments and returns a plain integer.
-        unsafe { hetero_cuda_compiled_with_nvcc() != 0 }
-    }
-
-    pub fn backend_name() -> Result<String, ExecutionError> {
-        // SAFETY: The backend name is a null-terminated static string from the nvcc-compiled
-        // library. We validate against null before converting.
-        let ptr = unsafe { hetero_cuda_backend_name() };
-        if ptr.is_null() {
-            return Err(ExecutionError::BackendError(
-                "CUDA backend returned a null name pointer".to_string(),
-            ));
-        }
-
-        // SAFETY: `ptr` was checked for null and points to a valid NUL-terminated static string.
-        let name = unsafe { CStr::from_ptr(ptr) }
-            .to_str()
-            .map_err(|error| ExecutionError::BackendError(error.to_string()))?;
-        Ok(name.to_string())
-    }
-
-    pub fn device_available() -> bool {
-        // SAFETY: The symbol is provided by the nvcc-built backend and takes no arguments.
-        unsafe { hetero_cuda_device_available() != 0 }
-    }
-
-    pub struct GeneratedTokens {
-        pub tokens: Vec<TokenId>,
-        pub used_device: bool,
-    }
-
-    pub fn generate_next_tokens(
-        seq_ids: &[SeqId],
-        seed: u32,
-        vocab_size: u32,
-    ) -> Result<GeneratedTokens, ExecutionError> {
-        let mut out_tokens = vec![0; seq_ids.len()];
-        let mut used_device = 0;
-        // SAFETY: All pointers are derived from valid slices owned by Rust for the duration of
-        // the call, lengths match the provided slice lengths, and `out_tokens` is writable.
-        // `num_sequences` is passed as `u64` to match the C++ `unsigned long long` parameter
-        // on every target (a `usize` would mismatch the ABI on 32-bit platforms).
-        let status = unsafe {
-            hetero_cuda_generate_next_tokens(
-                seq_ids.as_ptr(),
-                seq_ids.len() as u64,
-                seed,
-                vocab_size,
-                out_tokens.as_mut_ptr(),
-                &mut used_device,
-            )
-        };
-
-        match status {
-            0 => Ok(GeneratedTokens {
-                tokens: out_tokens,
-                used_device: used_device != 0,
-            }),
-            -1 => Err(ExecutionError::BackendError(
-                "CUDA backend received a null output buffer".to_string(),
-            )),
-            -2 => Err(ExecutionError::BackendError(
-                "CUDA backend received sequence metadata without sequence IDs".to_string(),
-            )),
-            -3 => Err(ExecutionError::BackendError(
-                "CUDA backend received an empty vocabulary".to_string(),
-            )),
-            -10 => Err(ExecutionError::BackendError(
-                "CUDA backend failed to allocate device output memory".to_string(),
-            )),
-            -11 => Err(ExecutionError::BackendError(
-                "CUDA backend kernel launch failed".to_string(),
-            )),
-            -12 => Err(ExecutionError::BackendError(
-                "CUDA backend kernel synchronization failed".to_string(),
-            )),
-            -13 => Err(ExecutionError::BackendError(
-                "CUDA backend failed to copy results from device".to_string(),
-            )),
-            other => Err(ExecutionError::BackendError(format!(
-                "CUDA backend failed with status {other}"
-            ))),
-        }
-    }
-}
 
 fn validate_execution_batch(
     config: &EngineConfig,
     batch: &ExecutionBatch,
-) -> Result<(), ExecutionError> {
+) -> Result<(), EngineError> {
     if batch.is_empty() {
         return Ok(());
     }
 
     if batch.num_sequences() > config.max_batch_size as usize {
-        return Err(ExecutionError::KernelLaunchFailed(format!(
+        return Err(EngineError::KernelLaunchFailed(format!(
             "Batch size {} exceeds max {}",
             batch.num_sequences(),
             config.max_batch_size
@@ -150,7 +38,7 @@ fn validate_execution_batch(
     }
 
     if batch.total_tokens() > config.max_total_tokens as usize {
-        return Err(ExecutionError::KernelLaunchFailed(format!(
+        return Err(EngineError::KernelLaunchFailed(format!(
             "Total tokens {} exceeds max {}",
             batch.total_tokens(),
             config.max_total_tokens
@@ -163,95 +51,14 @@ fn validate_execution_batch(
 /// GPU Executor trait defining the interface
 pub trait GPUExecutorTrait: Send {
     /// Execute a batch of sequences
-    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError>;
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
 }
 
 pub fn create_default_gpu_executor(
     config: EngineConfig,
     vocab_size: u32,
-) -> Result<Box<dyn GPUExecutorTrait>, ExecutionError> {
-    #[cfg(feature = "cuda")]
-    {
-        Ok(Box::new(CudaExecutor::new(config, vocab_size)?))
-    }
-
-    #[cfg(not(feature = "cuda"))]
-    {
-        Ok(Box::new(MockGPUExecutor::new(config, vocab_size)))
-    }
-}
-
-#[cfg(feature = "cuda")]
-#[derive(Debug)]
-pub struct CudaExecutor {
-    config: EngineConfig,
-    vocab_size: u32,
-    token_counter: u32,
-    backend_name: String,
-    compiled_with_nvcc: bool,
-    device_available: bool,
-    last_launch_used_device: bool,
-}
-
-#[cfg(feature = "cuda")]
-impl CudaExecutor {
-    pub fn new(config: EngineConfig, vocab_size: u32) -> Result<Self, ExecutionError> {
-        let compiled_with_nvcc = cuda_backend::compiled_with_nvcc();
-        let backend_name = cuda_backend::backend_name()?;
-        let device_available = cuda_backend::device_available();
-
-        Ok(Self {
-            config,
-            vocab_size,
-            token_counter: 100,
-            backend_name,
-            compiled_with_nvcc,
-            device_available,
-            last_launch_used_device: false,
-        })
-    }
-
-    pub fn backend_name(&self) -> &str {
-        &self.backend_name
-    }
-
-    pub fn compiled_with_nvcc(&self) -> bool {
-        self.compiled_with_nvcc
-    }
-
-    pub fn device_available(&self) -> bool {
-        self.device_available
-    }
-
-    pub fn last_launch_used_device(&self) -> bool {
-        self.last_launch_used_device
-    }
-}
-
-#[cfg(feature = "cuda")]
-impl GPUExecutorTrait for CudaExecutor {
-    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        validate_execution_batch(&self.config, batch)?;
-
-        if batch.is_empty() {
-            return Ok(ExecutionOutput::default());
-        }
-
-        let generated = cuda_backend::generate_next_tokens(
-            &batch.seq_ids,
-            self.token_counter,
-            self.vocab_size,
-        )?;
-        self.last_launch_used_device = generated.used_device;
-        self.token_counter = self
-            .token_counter
-            .wrapping_add(batch.num_sequences() as u32);
-
-        Ok(ExecutionOutput {
-            next_tokens: generated.tokens,
-            seq_ids: batch.seq_ids.clone(),
-        })
-    }
+) -> Result<Box<dyn GPUExecutorTrait>, EngineError> {
+    Ok(Box::new(MockGPUExecutor::new(config, vocab_size)))
 }
 
 /// Mock GPU Executor for testing without actual GPU
@@ -285,17 +92,16 @@ impl MockGPUExecutor {
 }
 
 impl GPUExecutorTrait for MockGPUExecutor {
-    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
         validate_execution_batch(&self.config, batch)?;
 
         if batch.is_empty() {
             return Ok(ExecutionOutput::default());
         }
 
-        // 与 CUDA 后端（C++ 侧返回 -3）保持一致：空词表无法生成 token。
-        // 不检查会导致下方 `generate_token` 对 vocab_size 取模时除零 panic。
+        // 空词表无法生成 token，不检查会导致下方 `generate_token` 取模时除零 panic。
         if self.vocab_size == 0 {
-            return Err(ExecutionError::BackendError(
+            return Err(EngineError::BackendError(
                 "GPU executor received an empty vocabulary".to_string(),
             ));
         }
@@ -335,7 +141,7 @@ mod tests {
 
         // vocab_size == 0 必须返回错误而非除零 panic
         let result = executor.execute(&batch);
-        assert!(matches!(result, Err(ExecutionError::BackendError(_))));
+        assert!(matches!(result, Err(EngineError::BackendError(_))));
     }
 
     #[test]
@@ -373,48 +179,6 @@ mod tests {
         assert_eq!(output.next_tokens.len(), 2);
         assert_eq!(output.seq_ids.len(), 2);
         assert_eq!(output.next_tokens, vec![100, 101]);
-    }
-
-    #[cfg(feature = "cuda")]
-    #[test]
-    fn test_cuda_executor_creation() {
-        let config = create_test_config();
-        let executor = CudaExecutor::new(config, 32000).unwrap();
-
-        assert!(
-            executor.backend_name() == "nvcc-compiled-cuda-backend"
-                || executor.backend_name() == "host-fallback-cuda-backend"
-        );
-        assert_eq!(
-            executor.compiled_with_nvcc(),
-            executor.backend_name() == "nvcc-compiled-cuda-backend"
-        );
-        assert!(!executor.last_launch_used_device());
-    }
-
-    #[cfg(feature = "cuda")]
-    #[test]
-    fn test_cuda_executor_execute_batch() {
-        let config = create_test_config();
-        let mut executor = CudaExecutor::new(config, 32000).unwrap();
-        let batch = ExecutionBatch {
-            input_tokens: vec![1, 2, 3, 4],
-            positions: vec![0, 1, 2, 3],
-            seq_lens: vec![2, 2],
-            block_tables: vec![vec![0], vec![1]],
-            is_prefill: vec![true, false],
-            seq_ids: vec![11, 22],
-            context_lens: vec![2, 2],
-        };
-
-        let output = executor.execute(&batch).unwrap();
-
-        assert_eq!(output.seq_ids, vec![11, 22]);
-        assert_eq!(output.next_tokens, vec![100, 101]);
-        assert_eq!(
-            executor.last_launch_used_device(),
-            executor.device_available()
-        );
     }
 }
 

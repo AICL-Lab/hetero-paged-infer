@@ -76,7 +76,6 @@
 //! ### GPU 执行器
 //!
 //! - [`MockGPUExecutor`] - Mock GPU 执行器（测试用）
-//! - CudaExecutor - nvcc 编译的 CUDA 后端桥接执行器（启用 `cuda` feature；门控类型，文档链接仅在启用该 feature 时可解析）
 //! - [`GPUExecutorTrait`] - GPU 执行器 trait 接口
 //! - [`build_execution_batch`] - 构建执行批次
 //!
@@ -96,12 +95,8 @@
 //!
 //! ### 错误处理
 //!
-//! - [`EngineError`] - 顶层引擎错误
+//! - [`EngineError`] - 引擎运行时错误（扁平化，覆盖内存 / 验证 / 执行 / 调度 / 分词）
 //! - [`ConfigError`] - 配置错误
-//! - [`ValidationError`] - 验证错误
-//! - [`MemoryError`] - 内存错误
-//! - [`ExecutionError`] - 执行错误
-//! - [`SchedulerError`] - 调度错误
 
 pub mod config;
 pub mod engine;
@@ -123,12 +118,8 @@ pub mod test_utils;
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
 pub use config::{EngineConfig, ServingConfig, SpecialTokenIds, TokenizerConfig, TokenizerKind};
 pub use engine::{EngineMetrics, InferenceEngine, StepEvents};
-pub use error::{
-    ConfigError, EngineError, ExecutionError, MemoryError, SchedulerError, ValidationError,
-};
+pub use error::{ConfigError, EngineError};
 pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
-#[cfg(feature = "cuda")]
-pub use gpu_executor::CudaExecutor;
 pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
 pub use kv_cache::KVCacheManager;
 pub use scheduler::Scheduler;
