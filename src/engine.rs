@@ -399,7 +399,8 @@ impl InferenceEngine {
     /// # Ok::<(), hetero_infer::EngineError>(())
     /// ```
     pub fn run(&mut self) -> Vec<CompletedRequest> {
-        let mut all_completed = Vec::new();
+        // 先排出循环前已缓冲的终态（如 cancel_request 产生的失败请求）
+        let mut all_completed = self.collect_completed_requests();
 
         while self.scheduler.has_pending_work() {
             match self.step() {
@@ -413,6 +414,14 @@ impl InferenceEngine {
         }
 
         all_completed
+    }
+
+    /// 按 request_id 取消请求（客户端断连时由服务层调用）。
+    ///
+    /// 序列无论处于哪个阶段都会被标记失败并释放 KV 资源；
+    /// 其终态会在下一步经常规完成通道排出。返回是否取消成功。
+    pub fn cancel_request(&mut self, request_id: RequestId) -> bool {
+        self.scheduler.cancel_by_request_id(request_id)
     }
 
     /// 检查是否有待处理的工作
@@ -574,6 +583,39 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_cancel_request_stops_generation_and_surfaces_failure() {
+        let mut engine = InferenceEngine::new(create_test_config()).unwrap();
+        let (request_id, _) = engine
+            .submit_request(
+                "Hello world",
+                GenerationParams {
+                    max_tokens: 50,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+
+        // 推进一步让请求进入 decode
+        engine.step().unwrap();
+        assert!(engine.has_pending_work());
+
+        assert!(engine.cancel_request(request_id));
+
+        // 即使没有其他工作，run 也必须排出取消产生的失败终态
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert!(completed[0]
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("cancelled"));
+        assert!(!engine.has_pending_work());
+
+        assert!(!engine.cancel_request(999));
     }
 
     #[test]

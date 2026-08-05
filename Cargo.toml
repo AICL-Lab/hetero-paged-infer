@@ -14,7 +14,7 @@ env_logger = "0.11"
 clap = { version = "4.6", features = ["derive"] }
 tokenizers = "0.19"
 axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 async-stream = "0.3"
 
 [dev-dependencies]
@@ -22,6 +22,7 @@ hetero-infer = { path = ".", features = ["test-utils"] }
 proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [[bench]]
 name = "engine_benchmark"

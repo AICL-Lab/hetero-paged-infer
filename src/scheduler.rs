@@ -21,8 +21,8 @@ use crate::config::EngineConfig;
 use crate::error::SchedulerError;
 use crate::kv_cache::KVCacheManager;
 use crate::types::{
-    ExecutionOutput, PhysicalBlockRef, Request, RequestState, SchedulerOutput, SeqId, Sequence,
-    TokenId,
+    ExecutionOutput, PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId,
+    Sequence, TokenId,
 };
 
 #[derive(Debug, Clone)]
@@ -158,8 +158,9 @@ impl Scheduler {
                 continue;
             }
 
+            // continue 而非 break：装不下本步的大 prefill 不应阻塞后面的小 prefill
             if total_tokens.saturating_add(prefill_tokens) > self.config.max_total_tokens {
-                break;
+                continue;
             }
 
             if let Some(sequence) = self.prefill_sequences.get(&seq_id) {
@@ -304,6 +305,30 @@ impl Scheduler {
 
     pub fn num_active_sequences(&self) -> usize {
         self.prefill_sequences.len() + self.decode_sequences.len()
+    }
+
+    /// 按 request_id 取消请求：无论它处于 pending、prefill 还是 decode，
+    /// 都将其标记失败并释放 KV 资源。返回是否真的取消到了东西。
+    pub fn cancel_by_request_id(&mut self, request_id: RequestId) -> bool {
+        let seq_id = self
+            .pending_queue
+            .iter()
+            .find(|p| p.request.id == request_id)
+            .map(|p| p.seq_id)
+            .or_else(|| {
+                self.prefill_sequences
+                    .values()
+                    .chain(self.decode_sequences.values())
+                    .find(|seq| seq.request.id == request_id)
+                    .map(|seq| seq.seq_id)
+            });
+        match seq_id {
+            Some(seq_id) => {
+                self.fail_sequence(seq_id, "request cancelled: client disconnected");
+                true
+            }
+            None => false,
+        }
     }
 
     #[cfg(test)]
@@ -459,7 +484,9 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_config, create_test_request};
+    use crate::test_utils::{
+        create_test_config, create_test_request, create_test_request_with_params,
+    };
 
     #[test]
     fn test_add_request() {
@@ -682,6 +709,54 @@ mod tests {
             result,
             Err(SchedulerError::MaxConcurrentSequencesReached(1))
         ));
+    }
+
+    #[test]
+    fn test_cancel_by_request_id_covers_all_stages_and_frees_kv() {
+        let mut scheduler = Scheduler::new(create_test_config());
+
+        // request 1 留在 pending；request 2 推进到 decode
+        let pending_seq = scheduler
+            .add_request(create_test_request_with_params(1, 8, 10))
+            .unwrap();
+        let active_seq = scheduler
+            .add_request(create_test_request_with_params(2, 8, 10))
+            .unwrap();
+
+        let output = scheduler.schedule();
+        assert!(output
+            .prefill_sequences
+            .iter()
+            .any(|s| s.seq_id == active_seq));
+        scheduler.update_sequences(
+            &ExecutionOutput {
+                next_tokens: vec![100],
+                seq_ids: vec![active_seq],
+            },
+            0,
+        );
+        assert!(scheduler.has_decode_sequence(active_seq));
+        assert!(scheduler.get_memory_utilization() > 0.0);
+
+        // 取消 pending 请求
+        assert!(scheduler.cancel_by_request_id(1));
+        assert!(!scheduler.has_pending_request(pending_seq));
+
+        // 取消 decode 请求：KV 必须释放
+        assert!(scheduler.cancel_by_request_id(2));
+        assert!(!scheduler.has_decode_sequence(active_seq));
+        assert_eq!(scheduler.get_memory_utilization(), 0.0);
+
+        // 两个被取消的请求都应经正常完成通道以失败终态排出
+        let completed = scheduler.get_completed();
+        assert_eq!(completed.len(), 2);
+        assert!(completed.iter().all(|r| matches!(
+            &r.state,
+            RequestState::Failed(msg) if msg.contains("cancelled")
+        )));
+
+        // 未知 request_id 返回 false
+        assert!(!scheduler.cancel_by_request_id(999));
     }
 
     #[test]

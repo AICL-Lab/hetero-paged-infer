@@ -56,7 +56,7 @@ mod cuda_backend {
         // library. We validate against null before converting.
         let ptr = unsafe { hetero_cuda_backend_name() };
         if ptr.is_null() {
-            return Err(ExecutionError::CudaError(
+            return Err(ExecutionError::BackendError(
                 "CUDA backend returned a null name pointer".to_string(),
             ));
         }
@@ -64,7 +64,7 @@ mod cuda_backend {
         // SAFETY: `ptr` was checked for null and points to a valid NUL-terminated static string.
         let name = unsafe { CStr::from_ptr(ptr) }
             .to_str()
-            .map_err(|error| ExecutionError::CudaError(error.to_string()))?;
+            .map_err(|error| ExecutionError::BackendError(error.to_string()))?;
         Ok(name.to_string())
     }
 
@@ -105,28 +105,28 @@ mod cuda_backend {
                 tokens: out_tokens,
                 used_device: used_device != 0,
             }),
-            -1 => Err(ExecutionError::CudaError(
+            -1 => Err(ExecutionError::BackendError(
                 "CUDA backend received a null output buffer".to_string(),
             )),
-            -2 => Err(ExecutionError::CudaError(
+            -2 => Err(ExecutionError::BackendError(
                 "CUDA backend received sequence metadata without sequence IDs".to_string(),
             )),
-            -3 => Err(ExecutionError::CudaError(
+            -3 => Err(ExecutionError::BackendError(
                 "CUDA backend received an empty vocabulary".to_string(),
             )),
-            -10 => Err(ExecutionError::CudaError(
+            -10 => Err(ExecutionError::BackendError(
                 "CUDA backend failed to allocate device output memory".to_string(),
             )),
-            -11 => Err(ExecutionError::CudaError(
+            -11 => Err(ExecutionError::BackendError(
                 "CUDA backend kernel launch failed".to_string(),
             )),
-            -12 => Err(ExecutionError::CudaError(
+            -12 => Err(ExecutionError::BackendError(
                 "CUDA backend kernel synchronization failed".to_string(),
             )),
-            -13 => Err(ExecutionError::CudaError(
+            -13 => Err(ExecutionError::BackendError(
                 "CUDA backend failed to copy results from device".to_string(),
             )),
-            other => Err(ExecutionError::CudaError(format!(
+            other => Err(ExecutionError::BackendError(format!(
                 "CUDA backend failed with status {other}"
             ))),
         }
@@ -295,7 +295,7 @@ impl GPUExecutorTrait for MockGPUExecutor {
         // 与 CUDA 后端（C++ 侧返回 -3）保持一致：空词表无法生成 token。
         // 不检查会导致下方 `generate_token` 对 vocab_size 取模时除零 panic。
         if self.vocab_size == 0 {
-            return Err(ExecutionError::CudaError(
+            return Err(ExecutionError::BackendError(
                 "GPU executor received an empty vocabulary".to_string(),
             ));
         }
@@ -335,7 +335,7 @@ mod tests {
 
         // vocab_size == 0 必须返回错误而非除零 panic
         let result = executor.execute(&batch);
-        assert!(matches!(result, Err(ExecutionError::CudaError(_))));
+        assert!(matches!(result, Err(ExecutionError::BackendError(_))));
     }
 
     #[test]

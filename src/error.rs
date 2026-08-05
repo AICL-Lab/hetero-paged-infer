@@ -17,7 +17,7 @@
 //! |----------|----------|
 //! | `MemoryError::OutOfBlocks` | 等待序列完成释放内存 |
 //! | `ExecutionError::GpuTimeout` | 重试最多 2 次 |
-//! | `ExecutionError::CudaError` | 跳过当前序列 |
+//! | `ExecutionError::BackendError` | 失败该批次序列 |
 //! | `ValidationError` | 直接返回错误 |
 //!
 //! # 示例
@@ -155,9 +155,9 @@ pub enum ValidationError {
 /// 表示 GPU 执行过程中发生的错误。
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ExecutionError {
-    /// CUDA 错误：{0}
-    #[error("CUDA 错误: {0}")]
-    CudaError(String),
+    /// 计算后端错误（mock / CUDA 桥接后端）：{0}
+    #[error("计算后端错误: {0}")]
+    BackendError(String),
 
     /// GPU 超时
     #[error("GPU 超时")]

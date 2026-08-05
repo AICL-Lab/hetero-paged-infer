@@ -5,7 +5,11 @@ use hetero_infer::{
     ExecutionBatch, ExecutionError, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
     ServingConfig, SimpleTokenizer,
 };
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tower::ServiceExt;
 
 fn create_test_config() -> EngineConfig {
@@ -518,4 +522,90 @@ async fn test_completions_returns_429_when_overloaded() {
             );
         }
     }
+}
+
+/// 统计被执行的序列数并人为放慢每步，用于证明：
+/// 客户端断开后引擎不再为它继续消耗算力。
+struct CountingExecutor {
+    executed_sequences: Arc<AtomicU64>,
+    step_delay: Duration,
+}
+
+impl GPUExecutorTrait for CountingExecutor {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        std::thread::sleep(self.step_delay);
+        self.executed_sequences
+            .fetch_add(batch.num_sequences() as u64, Ordering::SeqCst);
+        Ok(ExecutionOutput {
+            next_tokens: vec![100; batch.num_sequences()],
+            seq_ids: batch.seq_ids.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_client_disconnect_cancels_generation() {
+    let executed = Arc::new(AtomicU64::new(0));
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::without_special_tokens()),
+        Scheduler::new(config.clone()),
+        Box::new(CountingExecutor {
+            executed_sequences: executed.clone(),
+            step_delay: Duration::from_millis(5),
+        }),
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "disconnect me",
+                        "max_tokens": 500,
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 读到第一个 token 片段后立刻丢弃 body，模拟客户端断连
+    let mut body = response.into_body();
+    let mut saw_chunk = false;
+    while let Some(Ok(frame)) = body.frame().await {
+        if let Ok(data) = frame.into_data() {
+            if data.windows(15).any(|w| w == b"text_completion") {
+                saw_chunk = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_chunk, "stream should produce at least one token chunk");
+    drop(body);
+
+    // 断连后执行计数必须停下来：间隔采样两次，不再增长。
+    // （若无取消机制，5ms/步的引擎会在两次采样间推进上百步。）
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let first_sample = executed.load(Ordering::SeqCst);
+    assert!(
+        first_sample < 500,
+        "request should be cancelled long before max_tokens"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let second_sample = executed.load(Ordering::SeqCst);
+    assert_eq!(
+        first_sample, second_sample,
+        "engine must stop executing a request after its client disconnects"
+    );
 }

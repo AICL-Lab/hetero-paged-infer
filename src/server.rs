@@ -378,31 +378,36 @@ async fn engine_loop(mut engine: InferenceEngine, mut submit_rx: mpsc::Receiver<
 
         match engine.step_events() {
             Ok(events) => {
-                let mut progressed = false;
+                let mut disconnected: Vec<RequestId> = Vec::new();
                 for (request_id, chunk) in events.chunks {
-                    progressed = true;
                     if let Some(tx) = waiters.get(&request_id) {
-                        let _ = tx.send(RequestEvent::Chunk(chunk));
+                        // 发送失败 == 对端已断开：登记取消，释放调度资源
+                        if tx.send(RequestEvent::Chunk(chunk)).is_err() {
+                            disconnected.push(request_id);
+                        }
                     }
                 }
+                for request_id in disconnected {
+                    waiters.remove(&request_id);
+                    engine.cancel_request(request_id);
+                }
                 for completed in events.completed {
-                    progressed = true;
                     if let Some(tx) = waiters.remove(&completed.request_id) {
                         let _ = tx.send(RequestEvent::Done(completed));
                     }
-                }
-                if !progressed {
-                    // 防御：有待处理工作但本步无产出时让出一次，避免无进展忙循环。
-                    tokio::task::yield_now().await;
                 }
             }
             Err(err) => {
                 // 可归属的序列已在 step_events 内被标记失败并经 Done 事件上报；
                 // 此处仅记录无法归属的步骤级错误。
                 log::error!("engine step failed: {err}");
-                tokio::task::yield_now().await;
             }
         }
+
+        // 每步让出一次：生成循环本身没有 await 点，单线程 runtime 上
+        // 会饿死 handler / SSE 流任务（首 token 永远到不了客户端）；
+        // 多线程 runtime 上也避免独占 worker。
+        tokio::task::yield_now().await;
     }
 }
 
@@ -651,6 +656,7 @@ fn stream_response(
     let model = model.to_string();
     Sse::new(stream! {
         let mut failure: Option<String> = None;
+        let mut terminated = false;
         while let Some(event) = events.recv().await {
             match event {
                 RequestEvent::Chunk(chunk) => {
@@ -658,6 +664,7 @@ fn stream_response(
                         .data(kind.chunk_payload(&id, created, &model, &chunk).to_string()));
                 }
                 RequestEvent::Done(completed) => {
+                    terminated = true;
                     if completed.success {
                         let usage = Usage {
                             prompt_tokens,
@@ -672,6 +679,17 @@ fn stream_response(
                     break;
                 }
             }
+        }
+        if !terminated {
+            // 通道关闭但从未收到终态（如引擎循环异常退出）：
+            // 明确报错而不是伪装成正常结束。
+            let payload = serde_json::json!({
+                "error": {
+                    "message": "engine loop ended before request completed",
+                    "type": "internal_error"
+                }
+            });
+            yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
         }
         if let Some(message) = failure {
             let payload = serde_json::json!({
