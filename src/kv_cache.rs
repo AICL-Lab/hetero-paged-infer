@@ -19,7 +19,7 @@
 //! └────────┴────────┴────────┴─────┴──────────┘
 //! ```
 
-use crate::error::MemoryError;
+use crate::error::EngineError;
 use crate::types::{BlockIdx, MemoryStats, PhysicalBlockRef, SeqId};
 use std::collections::{HashMap, VecDeque};
 
@@ -79,21 +79,21 @@ impl BlockPool {
     }
 
     /// Allocate a single block from the pool
-    pub fn allocate(&mut self) -> Result<PhysicalBlockRef, MemoryError> {
+    pub fn allocate(&mut self) -> Result<PhysicalBlockRef, EngineError> {
         if let Some(block_idx) = self.free_list.pop_front() {
             let block = &mut self.blocks[block_idx as usize];
             block.ref_count = 1;
             Ok(PhysicalBlockRef { block_idx })
         } else {
-            Err(MemoryError::OutOfBlocks)
+            Err(EngineError::OutOfBlocks)
         }
     }
 
     /// Free a block back to the pool
-    pub fn free(&mut self, block_ref: PhysicalBlockRef) -> Result<(), MemoryError> {
+    pub fn free(&mut self, block_ref: PhysicalBlockRef) -> Result<(), EngineError> {
         let block_idx = block_ref.block_idx;
         if block_idx >= self.blocks.len() as u32 {
-            return Err(MemoryError::InvalidBlockIndex(block_idx));
+            return Err(EngineError::InvalidBlockIndex(block_idx));
         }
 
         let block = &mut self.blocks[block_idx as usize];
@@ -224,7 +224,7 @@ impl KVCacheManager {
 }
 
 impl KVCacheManager {
-    pub fn allocate_sequence(&mut self, seq_id: SeqId, num_tokens: u32) -> Result<(), MemoryError> {
+    pub fn allocate_sequence(&mut self, seq_id: SeqId, num_tokens: u32) -> Result<(), EngineError> {
         if self.page_tables.contains_key(&seq_id) {
             return Ok(()); // Idempotent
         }
@@ -232,7 +232,7 @@ impl KVCacheManager {
         let num_blocks = self.blocks_for_tokens(num_tokens);
 
         if !self.block_pool.can_allocate(num_blocks) {
-            return Err(MemoryError::OutOfBlocks);
+            return Err(EngineError::OutOfBlocks);
         }
 
         let mut page_table = PageTable::new(seq_id);
@@ -247,9 +247,9 @@ impl KVCacheManager {
         Ok(())
     }
 
-    pub fn allocate_block(&mut self, seq_id: SeqId) -> Result<PhysicalBlockRef, MemoryError> {
+    pub fn allocate_block(&mut self, seq_id: SeqId) -> Result<PhysicalBlockRef, EngineError> {
         if !self.page_tables.contains_key(&seq_id) {
-            return Err(MemoryError::SequenceNotFound(seq_id));
+            return Err(EngineError::SequenceNotFound(seq_id));
         }
 
         let physical_ref = self.block_pool.allocate()?;

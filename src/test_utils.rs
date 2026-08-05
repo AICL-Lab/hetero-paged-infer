@@ -7,7 +7,7 @@
 //! tests and benches), so test helpers never ship in release builds.
 
 use crate::config::EngineConfig;
-use crate::error::ExecutionError;
+use crate::error::EngineError;
 use crate::gpu_executor::GPUExecutorTrait;
 use crate::types::{ExecutionBatch, ExecutionOutput, GenerationParams, Request, RequestId};
 use std::fs;
@@ -83,8 +83,8 @@ pub fn test_params(max_tokens: u32) -> GenerationParams {
 pub struct AlwaysFailExecutor;
 
 impl GPUExecutorTrait for AlwaysFailExecutor {
-    fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-        Err(ExecutionError::KernelLaunchFailed(
+    fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+        Err(EngineError::KernelLaunchFailed(
             "test executor failure".to_string(),
         ))
     }

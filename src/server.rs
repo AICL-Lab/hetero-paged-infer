@@ -13,7 +13,7 @@
 //! - 流式响应随 token 生成逐片段推送（真实的首 token 延迟）。
 
 use crate::config::EngineConfig;
-use crate::error::{EngineError, SchedulerError};
+use crate::error::EngineError;
 use crate::types::{CompletedRequest, GenerationParams, RequestId};
 use crate::InferenceEngine;
 use async_stream::stream;
@@ -201,9 +201,13 @@ impl ApiError {
 impl From<EngineError> for ApiError {
     fn from(err: EngineError) -> Self {
         match err {
-            EngineError::Validation(_) => ApiError::BadRequest(err.to_string()),
-            EngineError::Scheduler(SchedulerError::MemoryPressure)
-            | EngineError::Scheduler(SchedulerError::MaxConcurrentSequencesReached(_)) => {
+            EngineError::EmptyInput
+            | EngineError::InputTooLong(_, _)
+            | EngineError::TotalLengthTooLong(_, _)
+            | EngineError::InvalidMaxTokens(_)
+            | EngineError::InvalidTemperature(_)
+            | EngineError::InvalidTopP(_) => ApiError::BadRequest(err.to_string()),
+            EngineError::MemoryPressure | EngineError::MaxConcurrentSequencesReached(_) => {
                 ApiError::Overloaded(err.to_string())
             }
             _ => ApiError::Internal(err.to_string()),

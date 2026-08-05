@@ -374,7 +374,12 @@ mod tests {
 
     #[test]
     fn test_custom_special_tokens() {
-        let custom_tokens = SpecialTokenIds::new(100, 101, 102, 103);
+        let custom_tokens = SpecialTokenIds {
+            bos: 100,
+            eos: 101,
+            pad: 102,
+            unk: 103,
+        };
         let tokenizer = SimpleTokenizer::with_special_tokens(custom_tokens.clone());
 
         assert_eq!(tokenizer.bos_token_id(), 100);

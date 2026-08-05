@@ -50,7 +50,7 @@
 //! ```
 
 use crate::config::EngineConfig;
-use crate::error::{EngineError, ValidationError};
+use crate::error::EngineError;
 use crate::execution_pipeline::BatchExecutionPipeline;
 use crate::gpu_executor::{create_default_gpu_executor, GPUExecutorTrait};
 use crate::scheduler::Scheduler;
@@ -185,8 +185,8 @@ impl InferenceEngine {
     ///
     /// # 错误
     ///
-    /// - [`EngineError::Validation`] - 参数无效或输入为空
-    /// - [`EngineError::Scheduler`] - 内存压力或达到序列上限
+    /// - [`EngineError::EmptyInput`] / [`EngineError::InputTooLong`] / [`EngineError::TotalLengthTooLong`] - 参数无效或输入为空
+    /// - [`EngineError::MemoryPressure`] / [`EngineError::MaxConcurrentSequencesReached`] - 内存压力或达到序列上限
     ///
     /// # 示例
     ///
@@ -216,7 +216,7 @@ impl InferenceEngine {
 
         // 验证输入
         if text.is_empty() {
-            return Err(ValidationError::EmptyInput.into());
+            return Err(EngineError::EmptyInput);
         }
 
         // 分词
@@ -228,20 +228,15 @@ impl InferenceEngine {
 
         // 检查 prompt 长度
         if input_tokens.len() > self.config.max_model_len as usize {
-            return Err(ValidationError::InputTooLong(
-                input_tokens.len(),
-                self.config.max_model_len,
-            )
-            .into());
+            return Err(EngineError::InputTooLong(input_tokens.len(), self.config.max_model_len));
         }
 
         let total_requested_tokens = input_tokens.len() + params.max_tokens as usize;
         if total_requested_tokens > self.config.max_model_len as usize {
-            return Err(ValidationError::TotalLengthTooLong(
+            return Err(EngineError::TotalLengthTooLong(
                 total_requested_tokens,
                 self.config.max_model_len,
-            )
-            .into());
+            ));
         }
 
         // 创建请求（使用实例级 ID）
@@ -501,7 +496,7 @@ impl InferenceEngine {
 mod tests {
     use super::*;
     use crate::config::{TokenizerConfig, TokenizerKind};
-    use crate::error::ExecutionError;
+    use crate::error::EngineError;
     use crate::test_utils::{create_test_config, write_test_tokenizer_json, AlwaysFailExecutor};
     use crate::tokenizer::SimpleTokenizer;
     use crate::types::{ExecutionBatch, ExecutionOutput};
@@ -512,10 +507,10 @@ mod tests {
     }
 
     impl GPUExecutorTrait for TimeoutThenSuccessExecutor {
-        fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+        fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
             if self.attempts == 0 {
                 self.attempts += 1;
-                Err(ExecutionError::GpuTimeout)
+                Err(EngineError::GpuTimeout)
             } else {
                 Ok(ExecutionOutput {
                     next_tokens: vec![123; batch.seq_ids.len()],
@@ -528,8 +523,8 @@ mod tests {
     struct AlwaysTimeoutExecutor;
 
     impl GPUExecutorTrait for AlwaysTimeoutExecutor {
-        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
-            Err(ExecutionError::GpuTimeout)
+        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+            Err(EngineError::GpuTimeout)
         }
     }
 
@@ -675,12 +670,7 @@ mod tests {
         };
 
         let result = engine.submit_request("Hello", params);
-        assert!(matches!(
-            result,
-            Err(EngineError::Validation(
-                ValidationError::TotalLengthTooLong(_, 8)
-            ))
-        ));
+        assert!(matches!(result, Err(EngineError::TotalLengthTooLong(_, 8))));
     }
 
     #[test]
@@ -710,10 +700,7 @@ mod tests {
         let mut engine = InferenceEngine::new(config).unwrap();
 
         let result = engine.submit_request("Hello", GenerationParams::default());
-        assert!(matches!(
-            result,
-            Err(EngineError::Validation(ValidationError::InputTooLong(_, 3)))
-        ));
+        assert!(matches!(result, Err(EngineError::InputTooLong(_, 3))));
     }
 
     #[test]

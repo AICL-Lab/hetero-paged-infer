@@ -4,7 +4,7 @@
 //! 隐藏 `ExecutionBatch` 的构造细节，为推理引擎提供高层次的执行接口。
 
 use crate::config::EngineConfig;
-use crate::error::{EngineError, ExecutionError, SchedulerError};
+use crate::error::EngineError;
 use crate::gpu_executor::GPUExecutorTrait;
 use crate::types::{ExecutionBatch, ExecutionOutput, SchedulerOutput};
 
@@ -47,8 +47,8 @@ impl BatchExecutionPipeline {
     /// # 返回
     ///
     /// - `Ok(ExecutionOutput)` — 执行成功
-    /// - `Err(EngineError::Scheduler)` — 批次构建失败（调度器状态不一致）
-    /// - `Err(EngineError::Execution)` — 执行失败且重试耗尽
+    /// - `Err(EngineError::InvalidStateTransition(_))` — 批次构建失败（调度器状态不一致）
+    /// - `Err(EngineError::BackendError(_))` / `Err(EngineError::GpuTimeout)` — 执行失败且重试耗尽
     pub fn execute(
         &mut self,
         scheduler_output: &SchedulerOutput,
@@ -63,7 +63,7 @@ impl BatchExecutionPipeline {
         loop {
             match self.gpu_executor.execute(&execution_batch) {
                 Ok(output) => return Ok(output),
-                Err(ExecutionError::GpuTimeout) if retries < self.max_retry_attempts => {
+                Err(EngineError::GpuTimeout) if retries < self.max_retry_attempts => {
                     retries += 1;
                     log::warn!(
                         "重试批次执行 (尝试 {}/{}): GPU 超时",
@@ -71,7 +71,7 @@ impl BatchExecutionPipeline {
                         self.max_retry_attempts
                     );
                 }
-                Err(other_error) => return Err(EngineError::Execution(other_error)),
+                Err(other_error) => return Err(other_error),
             }
         }
     }
@@ -85,7 +85,7 @@ impl BatchExecutionPipeline {
 /// # 错误
 ///
 /// 如果某个 decode 序列缺少输入 token 或无法计算位置（调度器状态不一致），
-/// 返回 [`EngineError::Scheduler`] 而非静默跳过——被跳过的序列既不会被推进
+/// 返回 [`EngineError::InvalidStateTransition`] 而非静默跳过——被跳过的序列既不会被推进
 /// 也不会被标记失败，将导致请求永久停滞。
 pub fn build_execution_batch(
     scheduler_output: &SchedulerOutput,
@@ -119,14 +119,14 @@ pub fn build_execution_batch(
         let seq_id = seq.seq_id;
         let context_len = seq.context_len();
         let input_token = seq.decode_input_token().ok_or_else(|| {
-            EngineError::Scheduler(SchedulerError::InvalidStateTransition(format!(
+            EngineError::InvalidStateTransition(format!(
                 "decode sequence {seq_id} has no input token for batch construction"
-            )))
+            ))
         })?;
         let position = seq.decode_position().ok_or_else(|| {
-            EngineError::Scheduler(SchedulerError::InvalidStateTransition(format!(
+            EngineError::InvalidStateTransition(format!(
                 "decode sequence {seq_id} has zero context length"
-            )))
+            ))
         })?;
 
         // For decode, we process the last token already present in the context.
@@ -234,9 +234,7 @@ mod tests {
         let result = build_execution_batch(&scheduler_output);
         assert!(matches!(
             result,
-            Err(EngineError::Scheduler(
-                SchedulerError::InvalidStateTransition(_)
-            ))
+            Err(EngineError::InvalidStateTransition(_))
         ));
     }
 }

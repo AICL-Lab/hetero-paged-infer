@@ -4,8 +4,7 @@
 
 use hetero_infer::{
     test_utils::{create_test_config, AlwaysFailExecutor},
-    EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SchedulerError,
-    SimpleTokenizer,
+    EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
 };
 
 fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
@@ -360,7 +359,7 @@ fn test_memory_pressure_handling() {
                 // Schedule to allocate memory
                 finished.extend(engine.step().unwrap());
             }
-            Err(EngineError::Scheduler(SchedulerError::MemoryPressure)) => {
+            Err(EngineError::MemoryPressure) => {
                 saw_memory_pressure = true;
                 break;
             }

@@ -37,15 +37,15 @@ impl Default for GenerationParams {
 
 impl GenerationParams {
     /// 验证生成参数
-    pub fn validate(&self) -> Result<(), crate::ValidationError> {
+    pub fn validate(&self) -> Result<(), crate::EngineError> {
         if self.max_tokens == 0 {
-            return Err(crate::ValidationError::InvalidMaxTokens(self.max_tokens));
+            return Err(crate::EngineError::InvalidMaxTokens(self.max_tokens));
         }
         if !(0.0..=2.0).contains(&self.temperature) {
-            return Err(crate::ValidationError::InvalidTemperature(self.temperature));
+            return Err(crate::EngineError::InvalidTemperature(self.temperature));
         }
         if self.top_p <= 0.0 || self.top_p > 1.0 {
-            return Err(crate::ValidationError::InvalidTopP(self.top_p));
+            return Err(crate::EngineError::InvalidTopP(self.top_p));
         }
         Ok(())
     }

@@ -1,29 +1,24 @@
 //! 错误类型定义
 //!
-//! 本模块定义了推理系统的分层错误类型体系：
+//! 本模块定义两类错误：
 //!
-//! ```text
-//! EngineError (顶层)
-//!   ├── ConfigError      (配置错误)
-//!   ├── ValidationError  (验证错误)
-//!   ├── MemoryError      (内存错误)
-//!   ├── ExecutionError   (执行错误)
-//!   └── SchedulerError   (调度错误)
-//! ```
+//! - [`ConfigError`]：配置加载与校验错误（在引擎构造前发生，main 单独处理）
+//! - [`EngineError`]：引擎运行时错误（扁平化，覆盖内存 / 验证 / 执行 / 调度 / 分词）
 //!
 //! # 错误处理策略
 //!
-//! | 错误类型 | 恢复策略 |
+//! | 错误变体 | 恢复策略 |
 //! |----------|----------|
-//! | `MemoryError::OutOfBlocks` | 等待序列完成释放内存 |
-//! | `ExecutionError::GpuTimeout` | 重试最多 2 次 |
-//! | `ExecutionError::BackendError` | 失败该批次序列 |
-//! | `ValidationError` | 直接返回错误 |
+//! | `OutOfBlocks` | 等待序列完成释放内存 |
+//! | `GpuTimeout` | 重试最多 2 次 |
+//! | `BackendError` | 失败该批次序列 |
+//! | `MemoryPressure` | 拒绝新请求，等待内存释放 |
+//! | `Validation*` / `Input*` | 直接返回错误 |
 //!
 //! # 示例
 //!
 //! ```rust
-//! use hetero_infer::{EngineError, ValidationError, GenerationParams};
+//! use hetero_infer::{EngineError, GenerationParams};
 //!
 //! let params = GenerationParams {
 //!     max_tokens: 0,
@@ -33,34 +28,12 @@
 //!
 //! match params.validate() {
 //!     Ok(()) => println!("参数有效"),
-//!     Err(ValidationError::InvalidMaxTokens(0)) => println!("max_tokens 无效"),
+//!     Err(EngineError::InvalidMaxTokens(0)) => println!("max_tokens 无效"),
 //!     Err(e) => println!("其他错误: {}", e),
 //! }
 //! ```
 
 use thiserror::Error;
-
-/// 内存相关错误
-///
-/// 表示 KV Cache 内存管理过程中发生的错误。
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum MemoryError {
-    /// 物理块耗尽：没有可用的空闲块
-    #[error("物理块耗尽：没有可用的空闲块")]
-    OutOfBlocks,
-
-    /// 序列不存在：{0}
-    #[error("序列不存在: {0}")]
-    SequenceNotFound(u64),
-
-    /// 块分配失败：{0}
-    #[error("块分配失败: {0}")]
-    AllocationFailed(String),
-
-    /// 无效的块索引：{0}
-    #[error("无效的块索引: {0}")]
-    InvalidBlockIndex(u32),
-}
 
 /// 配置相关错误
 ///
@@ -120,11 +93,44 @@ pub enum ConfigError {
     InvalidModelName,
 }
 
-/// 请求验证错误
+/// 引擎运行时错误（扁平化，覆盖内存 / 验证 / 执行 / 调度 / 分词）
 ///
-/// 表示请求参数验证过程中发生的错误。
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum ValidationError {
+/// # 示例
+///
+/// ```rust
+/// use hetero_infer::EngineError;
+///
+/// fn handle_error(error: EngineError) {
+///     match error {
+///         EngineError::Config(_) => eprintln!("配置错误: {}", error),
+///         EngineError::OutOfBlocks => eprintln!("内存错误: 物理块耗尽"),
+///         EngineError::GpuTimeout => eprintln!("执行错误: GPU 超时"),
+///         EngineError::MemoryPressure => eprintln!("调度错误: 内存压力"),
+///         EngineError::Tokenization(msg) => eprintln!("分词错误: {}", msg),
+///         _ => eprintln!("其他错误: {}", error),
+///     }
+/// }
+/// ```
+#[derive(Error, Debug)]
+pub enum EngineError {
+    /// 配置错误
+    #[error("配置错误: {0}")]
+    Config(#[from] ConfigError),
+
+    // --- 内存 ---
+    /// 物理块耗尽：没有可用的空闲块
+    #[error("物理块耗尽：没有可用的空闲块")]
+    OutOfBlocks,
+
+    /// 序列不存在：{0}
+    #[error("序列不存在: {0}")]
+    SequenceNotFound(u64),
+
+    /// 无效的块索引：{0}
+    #[error("无效的块索引: {0}")]
+    InvalidBlockIndex(u32),
+
+    // --- 验证 ---
     /// 无效的 max_tokens：必须 > 0，实际值为 {0}
     #[error("无效的 max_tokens: 必须大于 0，实际值为 {0}")]
     InvalidMaxTokens(u32),
@@ -148,14 +154,9 @@ pub enum ValidationError {
     /// 请求总长度超出最大模型长度：{0} > {1}
     #[error("请求总长度超出最大模型长度: {0} > {1}")]
     TotalLengthTooLong(usize, u32),
-}
 
-/// GPU 执行错误
-///
-/// 表示 GPU 执行过程中发生的错误。
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum ExecutionError {
-    /// 计算后端错误（mock / CUDA 桥接后端）：{0}
+    // --- 执行 ---
+    /// 计算后端错误：{0}
     #[error("计算后端错误: {0}")]
     BackendError(String),
 
@@ -170,13 +171,8 @@ pub enum ExecutionError {
     /// Kernel 启动失败：{0}
     #[error("Kernel 启动失败: {0}")]
     KernelLaunchFailed(String),
-}
 
-/// 调度器错误
-///
-/// 表示调度过程中发生的错误。
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum SchedulerError {
+    // --- 调度 ---
     /// 内存压力：无法接受新的 prefill 请求
     #[error("内存压力: 无法接受新的 prefill 请求")]
     MemoryPressure,
@@ -192,51 +188,9 @@ pub enum SchedulerError {
     /// 无效的状态转换：{0}
     #[error("无效的状态转换: {0}")]
     InvalidStateTransition(String),
-}
 
-/// 顶层引擎错误
-///
-/// 包含所有可能的错误类型，作为库的主要错误返回类型。
-///
-/// # 示例
-///
-/// ```rust
-/// use hetero_infer::{EngineError, ValidationError, ConfigError};
-///
-/// fn handle_error(error: EngineError) {
-///     match error {
-///         EngineError::Config(e) => eprintln!("配置错误: {}", e),
-///         EngineError::Validation(e) => eprintln!("验证错误: {}", e),
-///         EngineError::Memory(e) => eprintln!("内存错误: {}", e),
-///         EngineError::Execution(e) => eprintln!("执行错误: {}", e),
-///         EngineError::Scheduler(e) => eprintln!("调度错误: {}", e),
-///         EngineError::Tokenization(msg) => eprintln!("分词错误: {}", msg),
-///     }
-/// }
-/// ```
-#[derive(Error, Debug)]
-pub enum EngineError {
-    /// 配置错误
-    #[error("配置错误: {0}")]
-    Config(#[from] ConfigError),
-
-    /// 验证错误
-    #[error("验证错误: {0}")]
-    Validation(#[from] ValidationError),
-
-    /// 内存错误
-    #[error("内存错误: {0}")]
-    Memory(#[from] MemoryError),
-
-    /// 执行错误
-    #[error("执行错误: {0}")]
-    Execution(#[from] ExecutionError),
-
-    /// 调度错误
-    #[error("调度错误: {0}")]
-    Scheduler(#[from] SchedulerError),
-
-    /// 分词错误
+    // --- 分词 ---
+    /// 分词错误：{0}
     #[error("分词错误: {0}")]
     Tokenization(String),
 }

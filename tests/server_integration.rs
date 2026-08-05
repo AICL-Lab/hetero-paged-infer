@@ -2,7 +2,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use hetero_infer::{
     create_router, create_router_with_engine, test_utils::AlwaysFailExecutor, EngineConfig,
-    ExecutionBatch, ExecutionError, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
+    EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
     ServingConfig, SimpleTokenizer,
 };
 use http_body_util::BodyExt;
@@ -452,7 +452,7 @@ async fn test_completions_maps_execution_failure_to_500() {
 struct SlowExecutor;
 
 impl GPUExecutorTrait for SlowExecutor {
-    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
         std::thread::sleep(std::time::Duration::from_millis(50));
         Ok(ExecutionOutput {
             next_tokens: vec![100; batch.seq_ids.len()],
@@ -532,7 +532,7 @@ struct CountingExecutor {
 }
 
 impl GPUExecutorTrait for CountingExecutor {
-    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, ExecutionError> {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
         std::thread::sleep(self.step_delay);
         self.executed_sequences
             .fetch_add(batch.num_sequences() as u64, Ordering::SeqCst);

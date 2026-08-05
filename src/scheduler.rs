@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::config::EngineConfig;
-use crate::error::SchedulerError;
+use crate::error::EngineError;
 use crate::kv_cache::KVCacheManager;
 use crate::types::{
     ExecutionOutput, PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId,
@@ -76,16 +76,16 @@ impl Scheduler {
 
     // === 公共接口 ===
 
-    pub fn add_request(&mut self, request: Request) -> Result<SeqId, SchedulerError> {
+    pub fn add_request(&mut self, request: Request) -> Result<SeqId, EngineError> {
         self.update_memory_pressure();
 
         if self.under_memory_pressure {
-            return Err(SchedulerError::MemoryPressure);
+            return Err(EngineError::MemoryPressure);
         }
 
         let total_sequences = self.pending_queue.len() + self.num_active_sequences();
         if total_sequences >= self.config.max_num_seqs as usize {
-            return Err(SchedulerError::MaxConcurrentSequencesReached(
+            return Err(EngineError::MaxConcurrentSequencesReached(
                 self.config.max_num_seqs,
             ));
         }
@@ -538,7 +538,7 @@ mod tests {
         assert!(scheduler.add_request(first).is_ok());
         assert!(matches!(
             scheduler.add_request(second),
-            Err(SchedulerError::MaxConcurrentSequencesReached(1))
+            Err(EngineError::MaxConcurrentSequencesReached(1))
         ));
     }
 
@@ -707,7 +707,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(SchedulerError::MaxConcurrentSequencesReached(1))
+            Err(EngineError::MaxConcurrentSequencesReached(1))
         ));
     }
 
@@ -1160,7 +1160,7 @@ mod property_tests {
                 // 利用率达到阈值后，add_request 必须确定性地拒绝（MemoryPressure），
                 // 而不是"可能拒绝也可能接受"。
                 prop_assert!(
-                    matches!(result, Err(SchedulerError::MemoryPressure)),
+                    matches!(result, Err(EngineError::MemoryPressure)),
                     "utilization {} >= threshold 0.5 must reject with MemoryPressure, got {:?}",
                     utilization,
                     result

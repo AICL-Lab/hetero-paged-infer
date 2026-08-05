@@ -37,12 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 2: Create config with custom special tokens
     println!("2. Creating config with custom special tokens:");
-    let special_tokens = SpecialTokenIds::new(
-        1, // BOS token ID
-        2, // EOS token ID
-        0, // PAD token ID
-        3, // UNK token ID
-    );
+    let special_tokens = SpecialTokenIds {
+        bos: 1, // BOS token ID
+        eos: 2, // EOS token ID
+        pad: 0, // PAD token ID
+        unk: 3, // UNK token ID
+    };
 
     let _config_with_tokens = EngineConfig {
         special_tokens: special_tokens.clone(),
