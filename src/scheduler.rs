@@ -21,8 +21,8 @@ use crate::config::EngineConfig;
 use crate::error::SchedulerError;
 use crate::kv_cache::KVCacheManager;
 use crate::types::{
-    ExecutionOutput, LogicalBlock, PhysicalBlockRef, Request, RequestState, SchedulerOutput, SeqId,
-    Sequence, TokenId,
+    ExecutionOutput, PhysicalBlockRef, Request, RequestState, SchedulerOutput, SeqId, Sequence,
+    TokenId,
 };
 
 #[derive(Debug, Clone)]
@@ -295,7 +295,8 @@ impl Scheduler {
         }
     }
 
-    pub fn get_sequence(&self, seq_id: SeqId) -> Option<&Sequence> {
+    #[cfg(test)]
+    fn get_sequence(&self, seq_id: SeqId) -> Option<&Sequence> {
         self.prefill_sequences
             .get(&seq_id)
             .or_else(|| self.decode_sequences.get(&seq_id))
@@ -305,7 +306,8 @@ impl Scheduler {
         self.prefill_sequences.len() + self.decode_sequences.len()
     }
 
-    pub fn is_in_exactly_one_queue(&self, seq_id: SeqId) -> bool {
+    #[cfg(test)]
+    fn is_in_exactly_one_queue(&self, seq_id: SeqId) -> bool {
         let in_pending = self.pending_queue.iter().any(|p| p.seq_id == seq_id);
         let in_prefill = self.prefill_sequences.contains_key(&seq_id);
         let in_decode = self.decode_sequences.contains_key(&seq_id);
@@ -316,23 +318,23 @@ impl Scheduler {
         count == 1
     }
 
-    pub fn has_prefill_sequence(&self, seq_id: SeqId) -> bool {
+    #[cfg(test)]
+    fn has_prefill_sequence(&self, seq_id: SeqId) -> bool {
         self.prefill_sequences.contains_key(&seq_id)
     }
 
-    pub fn has_decode_sequence(&self, seq_id: SeqId) -> bool {
+    #[cfg(test)]
+    fn has_decode_sequence(&self, seq_id: SeqId) -> bool {
         self.decode_sequences.contains_key(&seq_id)
     }
 
-    pub fn has_pending_request(&self, seq_id: SeqId) -> bool {
+    #[cfg(test)]
+    fn has_pending_request(&self, seq_id: SeqId) -> bool {
         self.pending_queue.iter().any(|p| p.seq_id == seq_id)
     }
 
-    pub fn num_prefill_sequences(&self) -> usize {
-        self.prefill_sequences.len()
-    }
-
-    pub fn num_decode_sequences(&self) -> usize {
+    #[cfg(test)]
+    fn num_decode_sequences(&self) -> usize {
         self.decode_sequences.len()
     }
 
@@ -365,8 +367,7 @@ impl Scheduler {
         if let Some(block_table) = self.kv_cache.get_block_table(seq_id) {
             sequence.logical_blocks = block_table
                 .iter()
-                .enumerate()
-                .map(|(i, &block_idx)| LogicalBlock::new(i as u32, PhysicalBlockRef { block_idx }))
+                .map(|&block_idx| PhysicalBlockRef { block_idx })
                 .collect();
         }
 
@@ -391,10 +392,7 @@ impl Scheduler {
                     let Some(sequence) = self.decode_sequences.get_mut(&seq_id) else {
                         return Err(format!("Decode sequence not found: {seq_id}"));
                     };
-                    let logical_idx = sequence.logical_blocks.len() as u32;
-                    sequence
-                        .logical_blocks
-                        .push(LogicalBlock::new(logical_idx, physical_ref));
+                    sequence.logical_blocks.push(physical_ref);
                 }
                 Err(err) => {
                     return Err(format!("Failed to allocate KV block: {}", err));
@@ -407,7 +405,6 @@ impl Scheduler {
     fn transition_prefill_to_decode(&mut self, seq_id: SeqId) {
         if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Decode;
-            sequence.num_computed_tokens = sequence.request.input_tokens.len() as u32;
             self.decode_sequences.insert(seq_id, sequence);
         }
     }
@@ -559,7 +556,6 @@ mod tests {
 
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
-            logits: None,
             seq_ids: vec![seq_id],
         };
 
@@ -581,7 +577,6 @@ mod tests {
 
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
-            logits: None,
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
@@ -608,7 +603,6 @@ mod tests {
 
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
-            logits: None,
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
@@ -616,7 +610,6 @@ mod tests {
         scheduler.schedule();
         let exec_output = ExecutionOutput {
             next_tokens: vec![101],
-            logits: None,
             seq_ids: vec![seq_id],
         };
         scheduler.update_sequences(&exec_output, 0);
@@ -644,7 +637,6 @@ mod tests {
         scheduler.update_sequences(
             &ExecutionOutput {
                 next_tokens: vec![100],
-                logits: None,
                 seq_ids: vec![decode_seq_id],
             },
             0,
@@ -732,7 +724,6 @@ mod tests {
         scheduler.update_sequences(
             &ExecutionOutput {
                 next_tokens: Vec::new(),
-                logits: None,
                 seq_ids: vec![seq_id],
             },
             2,
@@ -801,7 +792,6 @@ mod property_tests {
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens: vec![100; seq_ids.len()],
-                        logits: None,
                         seq_ids,
                     };
                     scheduler.update_sequences(&exec_output, 0);
@@ -857,7 +847,6 @@ mod property_tests {
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
-                        logits: None,
                         seq_ids,
                     };
                     scheduler.update_sequences(&exec_output, 0);
@@ -913,7 +902,6 @@ mod property_tests {
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
-                        logits: None,
                         seq_ids,
                     };
                     scheduler.update_sequences(&exec_output, 0);
@@ -949,7 +937,6 @@ mod property_tests {
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens,
-                        logits: None,
                         seq_ids,
                     };
                     scheduler.update_sequences(&exec_output, 0);
@@ -992,7 +979,6 @@ mod property_tests {
             let next_tokens: Vec<u32> = prefill_seq_ids.iter().map(|_| 100).collect();
             let exec_output = ExecutionOutput {
                 next_tokens,
-                logits: None,
                 seq_ids: prefill_seq_ids.clone(),
             };
 
@@ -1029,7 +1015,6 @@ mod property_tests {
 
             let exec_output = ExecutionOutput {
                 next_tokens: vec![100],
-                logits: None,
                 seq_ids: vec![seq_id],
             };
             scheduler.update_sequences(&exec_output, 0);
@@ -1048,7 +1033,6 @@ mod property_tests {
 
                 let exec_output = ExecutionOutput {
                     next_tokens: vec![token],
-                    logits: None,
                     seq_ids: vec![seq_id],
                 };
                 scheduler.update_sequences(&exec_output, eos_token);

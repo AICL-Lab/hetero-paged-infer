@@ -54,9 +54,6 @@ pub struct ExecutionOutput {
     /// 各序列的下一个 token
     pub next_tokens: Vec<TokenId>,
 
-    /// Logits（可选，用于采样）
-    pub logits: Option<Vec<f32>>,
-
     /// 对应的序列 ID
     pub seq_ids: Vec<SeqId>,
 }

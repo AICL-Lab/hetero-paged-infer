@@ -141,7 +141,7 @@ fn validate_execution_batch(
         return Ok(());
     }
 
-    if batch.num_sequences() > usize_from_u32(config.max_batch_size) {
+    if batch.num_sequences() > config.max_batch_size as usize {
         return Err(ExecutionError::KernelLaunchFailed(format!(
             "Batch size {} exceeds max {}",
             batch.num_sequences(),
@@ -149,7 +149,7 @@ fn validate_execution_batch(
         )));
     }
 
-    if batch.total_tokens() > usize_from_u32(config.max_total_tokens) {
+    if batch.total_tokens() > config.max_total_tokens as usize {
         return Err(ExecutionError::KernelLaunchFailed(format!(
             "Total tokens {} exceeds max {}",
             batch.total_tokens(),
@@ -158,10 +158,6 @@ fn validate_execution_batch(
     }
 
     Ok(())
-}
-
-const fn usize_from_u32(value: u32) -> usize {
-    value as usize
 }
 
 /// GPU Executor trait defining the interface
@@ -253,7 +249,6 @@ impl GPUExecutorTrait for CudaExecutor {
 
         Ok(ExecutionOutput {
             next_tokens: generated.tokens,
-            logits: None,
             seq_ids: batch.seq_ids.clone(),
         })
     }
@@ -313,7 +308,6 @@ impl GPUExecutorTrait for MockGPUExecutor {
 
         Ok(ExecutionOutput {
             next_tokens,
-            logits: None,
             seq_ids: batch.seq_ids.clone(),
         })
     }

@@ -322,7 +322,6 @@ struct PreparedGenerationRequest {
 ///
 /// 必须在 tokio 运行时内调用（后台引擎循环经由 `tokio::spawn` 启动）。
 pub fn create_router(config: EngineConfig) -> Result<Router, EngineError> {
-    config.validate()?;
     let engine = InferenceEngine::new(config.clone())?;
     create_router_with_engine(config, engine)
 }

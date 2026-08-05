@@ -452,7 +452,6 @@ impl GPUExecutorTrait for SlowExecutor {
         std::thread::sleep(std::time::Duration::from_millis(50));
         Ok(ExecutionOutput {
             next_tokens: vec![100; batch.seq_ids.len()],
-            logits: None,
             seq_ids: batch.seq_ids.clone(),
         })
     }

@@ -1,6 +1,6 @@
 //! 调度器类型
 
-use super::memory::LogicalBlock;
+use super::memory::PhysicalBlockRef;
 use super::request::Request;
 use super::{BlockIdx, SeqId, TokenId};
 
@@ -15,11 +15,8 @@ pub struct Sequence {
     /// 关联的请求
     pub request: Request,
 
-    /// KV Cache 的逻辑块
-    pub logical_blocks: Vec<LogicalBlock>,
-
-    /// 已计算的 token 数（已缓存在 KV Cache 中）
-    pub num_computed_tokens: u32,
+    /// KV Cache 块（按逻辑顺序排列的物理块引用）
+    pub logical_blocks: Vec<PhysicalBlockRef>,
 
     /// 已生成的 token 数
     pub num_generated_tokens: u32,
@@ -32,17 +29,13 @@ impl Sequence {
             seq_id,
             request,
             logical_blocks: Vec::new(),
-            num_computed_tokens: 0,
             num_generated_tokens: 0,
         }
     }
 
     /// 获取块表（物理块索引列表）用于 GPU 执行
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
-        self.logical_blocks
-            .iter()
-            .map(|lb| lb.physical_block.block_idx)
-            .collect()
+        self.logical_blocks.iter().map(|b| b.block_idx).collect()
     }
 
     /// 计算上下文长度（输入 + 已生成）

@@ -165,7 +165,6 @@ mod tests {
             seq_id: 7,
             request,
             logical_blocks: Vec::new(),
-            num_computed_tokens: 3,
             num_generated_tokens: 2,
         };
 
@@ -196,7 +195,6 @@ mod tests {
             seq_id: 9,
             request,
             logical_blocks: Vec::new(),
-            num_computed_tokens: 3,
             num_generated_tokens: 0,
         };
 
@@ -224,7 +222,6 @@ mod tests {
             seq_id: 13,
             request,
             logical_blocks: Vec::new(),
-            num_computed_tokens: 0,
             num_generated_tokens: 0,
         };
 

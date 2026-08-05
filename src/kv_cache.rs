@@ -20,7 +20,7 @@
 //! ```
 
 use crate::error::MemoryError;
-use crate::types::{BlockIdx, LogicalBlock, MemoryStats, PhysicalBlockRef, SeqId};
+use crate::types::{BlockIdx, MemoryStats, PhysicalBlockRef, SeqId};
 use std::collections::{HashMap, VecDeque};
 
 /// A physical block representing a contiguous GPU memory region
@@ -138,13 +138,13 @@ impl BlockPool {
     }
 }
 
-/// Page table for a single sequence mapping logical to physical blocks
+/// Page table for a single sequence: logical block order -> physical blocks
 #[derive(Debug, Clone)]
 pub struct PageTable {
     /// Sequence ID this page table belongs to
     pub seq_id: SeqId,
-    /// Logical blocks with their physical mappings
-    pub logical_blocks: Vec<LogicalBlock>,
+    /// Physical blocks in logical order
+    pub logical_blocks: Vec<PhysicalBlockRef>,
 }
 
 impl PageTable {
@@ -155,19 +155,14 @@ impl PageTable {
         }
     }
 
-    /// Add a new logical block with physical mapping
+    /// Append the next physical block to the sequence's mapping
     pub fn add_block(&mut self, physical_ref: PhysicalBlockRef) {
-        let logical_idx = self.logical_blocks.len() as u32;
-        self.logical_blocks
-            .push(LogicalBlock::new(logical_idx, physical_ref));
+        self.logical_blocks.push(physical_ref);
     }
 
     /// Get the block table as a vector of physical block indices
     pub fn get_block_table(&self) -> Vec<BlockIdx> {
-        self.logical_blocks
-            .iter()
-            .map(|lb| lb.physical_block.block_idx)
-            .collect()
+        self.logical_blocks.iter().map(|b| b.block_idx).collect()
     }
 
     /// Number of allocated blocks
@@ -219,11 +214,6 @@ impl KVCacheManager {
         blocks_for_tokens(num_tokens, self.block_pool.block_size())
     }
 
-    /// Check if sequence exists
-    pub fn has_sequence(&self, seq_id: SeqId) -> bool {
-        self.page_tables.contains_key(&seq_id)
-    }
-
     /// Get number of blocks allocated for a sequence
     pub fn get_sequence_blocks(&self, seq_id: SeqId) -> u32 {
         self.page_tables
@@ -273,8 +263,7 @@ impl KVCacheManager {
 
     pub fn free_sequence(&mut self, seq_id: SeqId) {
         if let Some(page_table) = self.page_tables.remove(&seq_id) {
-            for logical_block in &page_table.logical_blocks {
-                let physical_ref = logical_block.physical_block;
+            for physical_ref in page_table.logical_blocks {
                 if let Err(e) = self.block_pool.free(physical_ref) {
                     log::debug!(
                         "Failed to free block {} for sequence {}: {}",

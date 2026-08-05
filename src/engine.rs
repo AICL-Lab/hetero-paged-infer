@@ -419,10 +419,6 @@ impl InferenceEngine {
                     log::error!("推理步骤失败: {e}");
                 }
             }
-
-            if !self.scheduler.has_pending_work() {
-                all_completed.extend(self.collect_completed_requests());
-            }
         }
 
         all_completed
@@ -523,7 +519,6 @@ mod tests {
             } else {
                 Ok(ExecutionOutput {
                     next_tokens: vec![123; batch.seq_ids.len()],
-                    logits: None,
                     seq_ids: batch.seq_ids.clone(),
                 })
             }

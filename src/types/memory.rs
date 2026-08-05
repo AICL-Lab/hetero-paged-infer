@@ -11,29 +11,6 @@ pub struct PhysicalBlockRef {
     pub block_idx: BlockIdx,
 }
 
-/// 逻辑块
-///
-/// 表示映射到物理块的逻辑块。逻辑块在创建时即完成物理映射，
-/// 不存在"已分配但未映射"的状态。
-#[derive(Debug, Clone)]
-pub struct LogicalBlock {
-    /// 序列内的逻辑块索引
-    pub block_idx: u32,
-
-    /// 映射的物理块
-    pub physical_block: PhysicalBlockRef,
-}
-
-impl LogicalBlock {
-    /// 创建已映射的逻辑块
-    pub fn new(block_idx: u32, physical: PhysicalBlockRef) -> Self {
-        Self {
-            block_idx,
-            physical_block: physical,
-        }
-    }
-}
-
 /// KV Cache 内存统计
 ///
 /// 提供内存使用情况的快照。

@@ -135,7 +135,6 @@ pub use scheduler::Scheduler;
 pub use server::{create_router, create_router_with_engine};
 pub use tokenizer::{build_tokenizer, HuggingFaceTokenizer, SimpleTokenizer, TokenizerTrait};
 pub use types::{
-    BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, LogicalBlock,
-    MemoryStats, PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId,
-    Sequence, TokenId,
+    BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, MemoryStats,
+    PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId, Sequence, TokenId,
 };

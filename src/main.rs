@@ -106,8 +106,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    config.validate()?;
-
     info!("Starting Heterogeneous Inference System");
     info!("Configuration: {:?}", config);
 
