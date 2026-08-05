@@ -18,7 +18,7 @@ This page documents the stable entry points that are useful today. It intentiona
 use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
-let request_id = engine.submit_request(
+let (request_id, _prompt_tokens) = engine.submit_request(
     "Hello, world!",
     GenerationParams {
         max_tokens: 32,

@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         top_p: 0.95,
     };
 
-    let request_id = engine.submit_request("Hello, world!", params)?;
+    let (request_id, _prompt_tokens) = engine.submit_request("Hello, world!", params)?;
     println!("Submitted request: {}", request_id);
 
     let results = engine.run();

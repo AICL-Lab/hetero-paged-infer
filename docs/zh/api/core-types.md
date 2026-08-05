@@ -33,11 +33,12 @@ impl InferenceEngine {
         gpu_executor: Box<dyn GPUExecutorTrait>,
     ) -> Result<Self, EngineError>;
 
+    // 提交请求；返回 (request_id, prompt token 数)
     pub fn submit_request(
         &mut self,
         text: &str,
         params: GenerationParams,
-    ) -> Result<RequestId, EngineError>;
+    ) -> Result<(RequestId, usize), EngineError>;
 
     // 执行一步推理，返回本步完成的请求
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError>;
@@ -61,7 +62,7 @@ impl InferenceEngine {
 use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
-let request_id = engine.submit_request(
+let (request_id, _prompt_tokens) = engine.submit_request(
     "你好，世界！",
     GenerationParams {
         max_tokens: 32,
@@ -226,8 +227,7 @@ println!(
 pub struct Sequence {
     pub seq_id: SeqId,
     pub request: Request,
-    pub logical_blocks: Vec<LogicalBlock>,
-    pub num_computed_tokens: u32,
+    pub logical_blocks: Vec<PhysicalBlockRef>, // 按逻辑顺序排列的 KV 块
     pub num_generated_tokens: u32,
 }
 
@@ -255,23 +255,17 @@ pub struct ExecutionBatch {
 
 pub struct ExecutionOutput {
     pub next_tokens: Vec<TokenId>,
-    pub logits: Option<Vec<f32>>,
     pub seq_ids: Vec<SeqId>,
 }
 ```
 
-`logits` 当前恒为 `None`：mock 与 CUDA 后端都直接产出占位 token，不输出 logits。
+后端当前直接产出占位 token，不输出 logits。
 
 ## 内存类型
 
 ```rust
 pub struct PhysicalBlockRef {
     pub block_idx: BlockIdx,
-}
-
-pub struct LogicalBlock {
-    pub block_idx: u32, // 序列内逻辑索引
-    pub physical_block: PhysicalBlockRef, // 创建时即完成物理映射
 }
 
 pub struct MemoryStats {

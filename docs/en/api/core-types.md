@@ -33,11 +33,12 @@ impl InferenceEngine {
         gpu_executor: Box<dyn GPUExecutorTrait>,
     ) -> Result<Self, EngineError>;
 
+    // Submit a request; returns (request_id, prompt_token_count)
     pub fn submit_request(
         &mut self,
         text: &str,
         params: GenerationParams,
-    ) -> Result<RequestId, EngineError>;
+    ) -> Result<(RequestId, usize), EngineError>;
 
     // Execute one inference step, returning requests completed in this step
     pub fn step(&mut self) -> Result<Vec<CompletedRequest>, EngineError>;
@@ -47,6 +48,9 @@ impl InferenceEngine {
 
     // Run the inference loop until all requests reach a terminal state
     pub fn run(&mut self) -> Vec<CompletedRequest>;
+
+    // Cancel a request by id (pending/prefill/decode); frees its KV blocks
+    pub fn cancel_request(&mut self, request_id: RequestId) -> bool;
 
     pub fn has_pending_work(&self) -> bool;
     pub fn memory_utilization(&self) -> f32;
@@ -61,7 +65,7 @@ impl InferenceEngine {
 use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
-let request_id = engine.submit_request(
+let (request_id, _prompt_tokens) = engine.submit_request(
     "Hello, world!",
     GenerationParams {
         max_tokens: 32,
@@ -226,8 +230,7 @@ Scheduler-layer internal types. `Sequence` is an active request with KV Cache bl
 pub struct Sequence {
     pub seq_id: SeqId,
     pub request: Request,
-    pub logical_blocks: Vec<LogicalBlock>,
-    pub num_computed_tokens: u32,
+    pub logical_blocks: Vec<PhysicalBlockRef>, // KV blocks in logical order
     pub num_generated_tokens: u32,
 }
 
@@ -255,23 +258,17 @@ pub struct ExecutionBatch {
 
 pub struct ExecutionOutput {
     pub next_tokens: Vec<TokenId>,
-    pub logits: Option<Vec<f32>>,
     pub seq_ids: Vec<SeqId>,
 }
 ```
 
-`logits` is currently always `None`: both the mock and CUDA backends produce placeholder tokens directly and do not output logits.
+Backends currently produce placeholder tokens directly and do not output logits.
 
 ## Memory types
 
 ```rust
 pub struct PhysicalBlockRef {
     pub block_idx: BlockIdx,
-}
-
-pub struct LogicalBlock {
-    pub block_idx: u32, // Logical index within the sequence
-    pub physical_block: PhysicalBlockRef, // Physically mapped at creation time
 }
 
 pub struct MemoryStats {

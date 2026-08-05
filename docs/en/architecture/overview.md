@@ -143,11 +143,6 @@ pub struct PhysicalBlock {
     pub block_idx: BlockIdx,  // physical block index
     pub ref_count: u32,       // reference count; free when zero
 }
-
-pub struct LogicalBlock {
-    pub block_idx: u32,                    // logical block index within the sequence
-    pub physical_block: PhysicalBlockRef,  // mapped physical block
-}
 ```
 
 Physical blocks currently hold no GPU memory pointer; `ref_count` is used only for allocation and reclamation. Copy-on-write style block sharing is a future direction — the reference count is the scaffolding for it.

@@ -10,10 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path, a no-nvcc host-compatible fallback build for CI, and feature-gated CUDA executor tests.
-- Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `InferenceEngine::count_prompt_tokens()`, and `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests).
+- Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests), and `submit_request()` returning `(request_id, prompt_tokens)` from a single tokenization pass.
 - Server: true token-level SSE streaming, 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
 - Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones; CI now runs the test suite with `--all-features` and a `cargo bench -- --test` smoke run.
 - `test-utils` cargo feature: test helpers are now compiled only under `cfg(test)` or this feature, keeping them out of release builds.
+- `InferenceEngine::cancel_request()` / `Scheduler::cancel_by_request_id()`: cancel in-flight requests (any stage) and free their KV blocks.
+- `--host` / `--port` CLI overrides for serve mode (work with or without `--config`).
+- Integration test proving the engine stops executing a request after its client disconnects.
 
 ### Removed
 
@@ -26,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused direct Rust dependencies `tracing` and `tracing-subscriber`.
 - Dead code: CUDA Graph trait methods (never invoked by the engine), `Request::created_at`, `Scheduler::get_sequence_mut`, `PageTable::get_physical`, `RequestState::is_active`/`is_terminal`, the never-occurring unmapped `LogicalBlock` state, and the misleading copy-on-write comment on `PhysicalBlock::ref_count`.
 - Fake after-the-fact "streaming" (chunking finished text into 32-char slices), replaced by true token-level streaming.
+- Dead fields `Sequence::num_computed_tokens` and `ExecutionOutput::logits` (never read).
+- `LogicalBlock` wrapper type: `PageTable` / `Sequence` now hold `Vec<PhysicalBlockRef>` directly.
+- Unused `KVCacheManager::has_sequence` and `Scheduler::num_prefill_sequences`.
+- `InferenceEngine::count_prompt_tokens` (folded into `submit_request`'s return value, eliminating per-request double tokenization).
+- Redundant `config.validate()` calls in `main` / `create_router` (constructors already validate).
+- `usize_from_u32` helper (inlined).
 
 ### Changed
 
@@ -38,12 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - FFI `num_sequences` is now `u64`, matching the C++ `unsigned long long` ABI on all targets (previously `usize`, which would mismatch on 32-bit platforms).
 - Benchmarks rebuilt with `iter_batched` so they no longer panic or degrade into measuring idle/error paths; filler benches removed.
 - Crate metadata, CLI about text, README, and docs now describe the project as a paged-memory + continuous-batching scaffold with a mock compute backend; unsupported claims ("CPU-GPU co-execution", fabricated throughput charts, fictional preemption API) were removed.
+- The engine loop now yields once per step; previously it had no await point during active generation.
+- Client disconnect now cancels the in-flight request instead of generating to `max_tokens` for nobody; the SSE stream reports an error event rather than a bare `[DONE]` when the event channel closes without a terminal event.
+- `InferenceEngine::run()` drains completions buffered before the loop (e.g. cancelled requests).
+- A too-large prefill no longer head-of-line-blocks smaller prefills (`continue` instead of `break`).
+- `step_events` attributes generated tokens via an O(1) map instead of a per-token linear scan.
+- `ExecutionError::CudaError` renamed to `ExecutionError::BackendError` (the mock backend is not CUDA).
+- CLI config built from `EngineConfig::default()` + overrides instead of duplicated default literals.
+- Docs and examples updated for the new `submit_request` signature, removed fields, and `LogicalBlock` removal.
 
 ### Fixed
 
 - Benchmark suite crashed during warmup (`bench_request_submission` exhausted `max_num_seqs`); the whole suite is now runnable and smoke-tested in CI.
 - Mock executor divide-by-zero panic on an empty vocabulary (now an error, consistent with the CUDA backend).
 - Double-free and zero `block_size` misuse are now caught by debug assertions with clear messages.
+- Engine loop had no await point during active generation, starving handlers / SSE streams on single-threaded runtimes (first token never reached the client until the batch finished) and pinning a worker on multi-threaded runtimes; now yields each step.
 
 ## [0.1.0] - 2026-04-16
 

@@ -18,7 +18,7 @@
 use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
-let request_id = engine.submit_request(
+let (request_id, _prompt_tokens) = engine.submit_request(
     "你好，世界！",
     GenerationParams {
         max_tokens: 32,

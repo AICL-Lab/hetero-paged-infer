@@ -76,7 +76,7 @@
 //! ### GPU 执行器
 //!
 //! - [`MockGPUExecutor`] - Mock GPU 执行器（测试用）
-//! - [`CudaExecutor`] - nvcc 编译的 CUDA 后端桥接执行器（启用 `cuda` feature）
+//! - CudaExecutor - nvcc 编译的 CUDA 后端桥接执行器（启用 `cuda` feature；门控类型，文档链接仅在启用该 feature 时可解析）
 //! - [`GPUExecutorTrait`] - GPU 执行器 trait 接口
 //! - [`build_execution_batch`] - 构建执行批次
 //!

@@ -143,11 +143,6 @@ pub struct PhysicalBlock {
     pub block_idx: BlockIdx,  // 物理块索引
     pub ref_count: u32,       // 引用计数，归零即空闲
 }
-
-pub struct LogicalBlock {
-    pub block_idx: u32,                    // 序列内逻辑块索引
-    pub physical_block: PhysicalBlockRef,  // 映射的物理块
-}
 ```
 
 物理块当前不持有 GPU 内存指针；`ref_count` 仅用于分配与回收。Copy-on-Write 风格的块复用是未来方向，引用计数为此留出了脚手架。
