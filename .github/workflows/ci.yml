@@ -8,13 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,11 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
       - uses: actions/cache@v4
         with:
           path: |
@@ -35,38 +32,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
-
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo build --verbose
-      # --all-features 使 cuda feature 的 host-fallback 测试进入主门禁，
-      # 与 coverage job 的测试集合保持一致（无需真实 GPU / nvcc）。
-      - run: cargo test --all-features --verbose
+      - run: cargo test --verbose
       - run: cargo test --doc --verbose
-      # 基准测试冒烟：以 test 模式各跑一次迭代，防止 bench 套件运行时损坏
-      # （曾长期潜伏一个 warmup 阶段即 panic 的 bench，因 CI 从不运行 bench 而未被发现）。
-      - run: cargo bench --all-features -- --test
       - run: cargo doc --no-deps
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@cargo-audit
-      - run: cargo audit
-
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-      - uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}

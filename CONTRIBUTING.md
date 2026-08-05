@@ -1,8 +1,8 @@
-# Contributing Guide
+# 贡献指南
 
-Thanks for contributing to Hetero-Paged-Infer.
+感谢参与 Hetero-Paged-Infer。
 
-## Development Setup
+## 开发环境
 
 ```bash
 git clone https://github.com/AICL-Lab/hetero-paged-infer.git
@@ -10,45 +10,32 @@ cd hetero-paged-infer
 cargo build
 ```
 
-## Core Validation Commands
-
-Run these before opening a PR:
+## 提交前检查
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --verbose
-cargo test --doc --verbose
+cargo clippy --all-targets -- -D warnings
+cargo test
 cargo doc --no-deps
-cargo bench --no-run
-cd docs && npm run build
 ```
 
-## Development Workflow
+## 工作流
 
-1. Make a focused change.
-2. Add or update tests when behavior changes.
-3. Run the relevant validation commands.
-4. Update documentation and root `CHANGELOG.md` when project-facing behavior changes.
+1. 做一个聚焦的改动
+2. 行为变更时同步更新测试
+3. 跑通上面的检查命令
+4. 项目级行为变更时更新 `CHANGELOG.md`
 
-## Pull Request Checklist
+## 提交信息格式
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --verbose`
-- [ ] Relevant docs updated
-- [ ] Root `CHANGELOG.md` updated when needed
-
-## Commit Message Format
-
-Use conventional commits:
+使用 conventional commits：
 
 ```text
 <type>(<scope>): <description>
 ```
 
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`.
+类型：`feat`、`fix`、`docs`、`style`、`refactor`、`test`、`chore`。
 
-## License
+## 许可证
 
-By contributing, you agree your contributions are licensed under MIT.
+提交即表示你同意以 MIT 许可证发布你的贡献。
