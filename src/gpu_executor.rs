@@ -18,6 +18,7 @@
 //! ```
 
 use crate::config::EngineConfig;
+use crate::cpu_executor::CpuReferenceExecutor;
 use crate::error::EngineError;
 use crate::types::{ExecutionBatch, ExecutionOutput, TokenId};
 
@@ -58,7 +59,7 @@ pub fn create_default_gpu_executor(
     config: EngineConfig,
     vocab_size: u32,
 ) -> Result<Box<dyn GPUExecutorTrait>, EngineError> {
-    Ok(Box::new(MockGPUExecutor::new(config, vocab_size)))
+    Ok(Box::new(CpuReferenceExecutor::new(config, vocab_size)))
 }
 
 /// Mock GPU Executor for testing without actual GPU

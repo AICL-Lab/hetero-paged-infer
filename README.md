@@ -7,9 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
-**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎脚手架（计算后端为 mock）**
+**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎脚手架（CPU 参考执行器）**
 
-> ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。计算后端为 Mock GPU 执行器（确定性占位 token）。真实模型计算、采样与生产级 CUDA kernel 均为后续工作。
+> ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）。生产级 CUDA kernel 为后续工作。
 
 **[文档](#文档) | [更新日志](CHANGELOG.md)**
 
@@ -19,7 +19,7 @@
 
 ## 项目概述
 
-Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。当前计算后端为 mock（确定性占位 token），真实模型计算、采样与生产级 kernel 均为后续工作。
+Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出），生产级 CUDA kernel 为后续工作。
 
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
@@ -45,7 +45,7 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，�
 │        │               │                         │                    │
 ├────────┼───────────────┼─────────────────────────────────────────────┤
 │        │        ┌──────▼──────┐                                       │
-│        │        │ GPU Executor│  (Mock)                        │
+│        │        │ CPUExecutor │  (参考)                        │
 │        │        │ GPU 执行器  │                                       │
 │        │        └──────┬──────┘                                       │
 │        │        ┌──────▼──────┐                                       │
@@ -181,7 +181,7 @@ for result in results {
 
 ## 性能边界
 
-当前计算后端为 mock，因此仓库不宣称真实 token 吞吐、GPU 利用率或相对加速。现阶段 benchmark 只用于观察调度、KV 分页与服务控制面的相对开销；接入真实模型后才能建立硬件性能基线。
+当前计算后端为 CPU 参考执行器（随机权重小模型），因此仓库不宣称真实 token 吞吐或 GPU 利用率。现阶段 benchmark 只用于观察调度、KV 分页与服务控制面的相对开销；接入真实 CUDA kernel 后才能建立硬件性能基线。
 
 ### 为什么选择 PagedAttention？
 
@@ -227,6 +227,7 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] 内存压力感知
 - [x] 属性测试
 - [x] OpenAI 兼容 HTTP 服务
+- [x] CPU 参考执行器（paged KV cache + transformer 前向）
 - [x] HuggingFace Tokenizer 集成
 - [ ] 真实 CUDA Kernel
 - [ ] 异步 CPU/GPU 重叠

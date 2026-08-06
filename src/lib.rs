@@ -99,6 +99,7 @@
 //! - [`ConfigError`] - 配置错误
 
 pub mod config;
+pub mod cpu_executor;
 pub mod engine;
 pub mod error;
 pub mod execution_pipeline;
@@ -117,6 +118,7 @@ pub mod test_utils;
 
 // 选择性导出，避免命名空间污染（如 error::Result 遮蔽 std::Result）
 pub use config::{EngineConfig, ServingConfig, SpecialTokenIds, TokenizerConfig, TokenizerKind};
+pub use cpu_executor::CpuReferenceExecutor;
 pub use engine::{EngineMetrics, InferenceEngine, StepEvents};
 pub use error::{ConfigError, EngineError};
 pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
