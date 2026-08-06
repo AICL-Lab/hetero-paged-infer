@@ -46,7 +46,7 @@ struct ServerMetrics {
 impl ServerMetrics {
     fn render(&self) -> String {
         format!(
-            "# TYPE hetero_requests_total counter\nhetero_requests_total {}\n# TYPE hetero_errors_total counter\nhetero_errors_total {}\n# TYPE hetero_inflight_requests gauge\nhetero_inflight_requests {}\n# TYPE hetero_streaming_requests_total counter\nhetero_streaming_requests_total {}\n",
+            "# TYPE paged_requests_total counter\npaged_requests_total {}\n# TYPE paged_errors_total counter\npaged_errors_total {}\n# TYPE paged_inflight_requests gauge\npaged_inflight_requests {}\n# TYPE paged_streaming_requests_total counter\npaged_streaming_requests_total {}\n",
             self.requests_total.load(Ordering::Relaxed),
             self.errors_total.load(Ordering::Relaxed),
             self.inflight_requests.load(Ordering::Relaxed),

@@ -1,6 +1,6 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
-use hetero_infer::{
+use paged_infer::{
     create_router, create_router_with_engine, test_utils::AlwaysFailExecutor, EngineConfig,
     EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
     ServingConfig, SimpleTokenizer,
@@ -88,8 +88,8 @@ async fn test_metrics_endpoint_exposes_prometheus_counters() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(body.to_vec()).unwrap();
-    assert!(body.contains("hetero_requests_total"));
-    assert!(body.contains("hetero_inflight_requests"));
+    assert!(body.contains("paged_requests_total"));
+    assert!(body.contains("paged_inflight_requests"));
 }
 
 #[tokio::test]

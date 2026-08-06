@@ -18,7 +18,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use hetero_infer::{EngineError, GenerationParams};
+//! use paged_infer::{EngineError, GenerationParams};
 //!
 //! let params = GenerationParams {
 //!     max_tokens: 0,
@@ -98,7 +98,7 @@ pub enum ConfigError {
 /// # 示例
 ///
 /// ```rust
-/// use hetero_infer::EngineError;
+/// use paged_infer::EngineError;
 ///
 /// fn handle_error(error: EngineError) {
 ///     match error {

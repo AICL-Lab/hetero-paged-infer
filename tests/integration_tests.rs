@@ -2,7 +2,7 @@
 //!
 //! These tests verify end-to-end functionality across all components.
 
-use hetero_infer::{
+use paged_infer::{
     test_utils::{create_test_config, AlwaysFailExecutor},
     EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
 };

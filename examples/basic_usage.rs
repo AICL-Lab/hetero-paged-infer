@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example basic_usage
 
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logger

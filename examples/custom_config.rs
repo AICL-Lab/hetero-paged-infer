@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example custom_config
 
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine, SpecialTokenIds};
+use paged_infer::{EngineConfig, GenerationParams, InferenceEngine, SpecialTokenIds};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 3: Save and load config from file
     println!("\n3. Saving and loading config from file:");
-    let config_path = Path::new("/tmp/hetero_infer_config.json");
+    let config_path = Path::new("/tmp/paged_infer_config.json");
 
     // Save config
     custom_config.to_file(config_path)?;

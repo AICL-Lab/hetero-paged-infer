@@ -1,12 +1,12 @@
 # 贡献指南
 
-感谢参与 Hetero-Paged-Infer。
+感谢参与 Paged-Infer。
 
 ## 开发环境
 
 ```bash
-git clone https://github.com/AICL-Lab/hetero-paged-infer.git
-cd hetero-paged-infer
+git clone https://github.com/AICL-Lab/paged-infer.git
+cd paged-infer
 cargo build
 ```
 

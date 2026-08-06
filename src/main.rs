@@ -1,12 +1,12 @@
 //! Heterogeneous Inference System - Main Entry Point
 
 use clap::Parser;
-use hetero_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
+use paged_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
 use log::info;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "hetero-infer")]
+#[command(name = "paged-infer")]
 #[command(
     about = "Paged-memory, continuously-batched inference engine scaffold with a mock compute backend"
 )]
@@ -198,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("No input provided. Use --input to specify text to process.");
         println!();
         println!("Example:");
-        println!("  hetero-infer --input \"Hello, world!\" --max-tokens 50");
+        println!("  paged-infer --input \"Hello, world!\" --max-tokens 50");
     }
 
     Ok(())

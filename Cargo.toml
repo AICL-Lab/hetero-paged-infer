@@ -1,5 +1,5 @@
 [package]
-name = "hetero-infer"
+name = "paged-infer"
 version = "0.1.0"
 edition = "2021"
 description = "Paged-memory, continuously-batched inference engine scaffold with a CPU reference compute backend"
@@ -18,7 +18,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 async-stream = "0.3"
 
 [dev-dependencies]
-hetero-infer = { path = ".", features = ["test-utils"] }
+paged-infer = { path = ".", features = ["test-utils"] }
 proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 tower = { version = "0.5", features = ["util"] }
@@ -35,9 +35,9 @@ default = []
 test-utils = []
 
 [[bin]]
-name = "hetero-infer"
+name = "paged-infer"
 path = "src/main.rs"
 
 [lib]
-name = "hetero_infer"
+name = "paged_infer"
 path = "src/lib.rs"

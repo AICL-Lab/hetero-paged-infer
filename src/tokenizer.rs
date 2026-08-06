@@ -17,7 +17,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use hetero_infer::{SimpleTokenizer, TokenizerTrait};
+//! use paged_infer::{SimpleTokenizer, TokenizerTrait};
 //!
 //! let tokenizer = SimpleTokenizer::new();
 //!
@@ -433,7 +433,7 @@ mod property_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        /// **Feature: heterogeneous-inference-system, Property 15: Tokenizer Round-Trip**
+        /// **Feature: paged-inference-system, Property 15: Tokenizer Round-Trip**
         /// *For any* valid text input, decoding the encoded tokens shall produce text
         /// equivalent to the original input (accounting for normalization).
         /// **Validates: Requirements 8.4**

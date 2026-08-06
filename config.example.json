@@ -20,6 +20,6 @@
   "serving": {
     "host": "127.0.0.1",
     "port": 3000,
-    "model_name": "hetero-infer"
+    "model_name": "paged-infer"
   }
 }

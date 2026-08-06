@@ -5,7 +5,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use hetero_infer::EngineConfig;
+//! use paged_infer::EngineConfig;
 //!
 //! let config = EngineConfig {
 //!     block_size: 16,
@@ -13,7 +13,7 @@
 //!     ..Default::default()
 //! };
 //! config.validate()?;
-//! # Ok::<(), hetero_infer::ConfigError>(())
+//! # Ok::<(), paged_infer::ConfigError>(())
 //! ```
 
 use crate::error::ConfigError;
@@ -79,7 +79,7 @@ impl Default for ServingConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 3000,
-            model_name: "hetero-infer".to_string(),
+            model_name: "paged-infer".to_string(),
         }
     }
 }
@@ -91,7 +91,7 @@ impl Default for ServingConfig {
 /// # 示例
 ///
 /// ```rust
-/// use hetero_infer::EngineConfig;
+/// use paged_infer::EngineConfig;
 ///
 /// let config = EngineConfig {
 ///     block_size: 16,
@@ -149,7 +149,7 @@ impl EngineConfig {
     /// # 示例
     ///
     /// ```rust
-    /// use hetero_infer::EngineConfig;
+    /// use paged_infer::EngineConfig;
     ///
     /// let config = EngineConfig::default();
     /// assert!(config.validate().is_ok());
@@ -198,11 +198,11 @@ impl EngineConfig {
     /// # 示例
     ///
     /// ```rust,no_run
-    /// use hetero_infer::EngineConfig;
+    /// use paged_infer::EngineConfig;
     /// use std::path::Path;
     ///
     /// let config = EngineConfig::from_file(Path::new("config.json"))?;
-    /// # Ok::<(), hetero_infer::ConfigError>(())
+    /// # Ok::<(), paged_infer::ConfigError>(())
     /// ```
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let content =
@@ -218,11 +218,11 @@ impl EngineConfig {
     /// # 示例
     ///
     /// ```rust,no_run
-    /// use hetero_infer::EngineConfig;
+    /// use paged_infer::EngineConfig;
     /// use std::path::Path;
     ///
     /// EngineConfig::default().to_file(Path::new("config.json"))?;
-    /// # Ok::<(), hetero_infer::ConfigError>(())
+    /// # Ok::<(), paged_infer::ConfigError>(())
     /// ```
     pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = serde_json::to_string_pretty(self)
@@ -234,7 +234,7 @@ impl EngineConfig {
     /// `ceil(num_tokens / block_size)`
     ///
     /// ```rust
-    /// use hetero_infer::EngineConfig;
+    /// use paged_infer::EngineConfig;
     /// let config = EngineConfig { block_size: 16, ..Default::default() };
     /// assert_eq!(config.blocks_for_tokens(0), 0);
     /// assert_eq!(config.blocks_for_tokens(17), 2);
@@ -246,7 +246,7 @@ impl EngineConfig {
     /// `num_blocks * block_size`
     ///
     /// ```rust
-    /// use hetero_infer::EngineConfig;
+    /// use paged_infer::EngineConfig;
     /// let config = EngineConfig { block_size: 16, ..Default::default() };
     /// assert_eq!(config.tokens_in_blocks(2), 32);
     /// ```
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(config.tokenizer.path, None);
         assert_eq!(config.serving.host, "127.0.0.1");
         assert_eq!(config.serving.port, 3000);
-        assert_eq!(config.serving.model_name, "hetero-infer");
+        assert_eq!(config.serving.model_name, "paged-infer");
     }
 
     #[test]

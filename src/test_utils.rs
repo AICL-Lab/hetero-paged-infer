@@ -120,7 +120,7 @@ pub fn write_test_tokenizer_json() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("hetero-test-tokenizer-{unique}.json"));
+    let path = std::env::temp_dir().join(format!("paged-test-tokenizer-{unique}.json"));
     fs::write(&path, TEST_TOKENIZER_JSON).unwrap();
     path
 }

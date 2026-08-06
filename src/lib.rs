@@ -31,7 +31,7 @@
 //! ## 快速开始
 //!
 //! ```rust
-//! use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+//! use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 //!
 //! // 创建引擎
 //! let config = EngineConfig::default();
@@ -51,7 +51,7 @@
 //! for result in completed {
 //!     println!("输出: {}", result.output_text);
 //! }
-//! # Ok::<(), hetero_infer::EngineError>(())
+//! # Ok::<(), paged_infer::EngineError>(())
 //! ```
 //!
 //! ## 核心组件

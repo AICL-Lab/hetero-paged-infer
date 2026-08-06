@@ -1,8 +1,8 @@
-# Hetero-Paged-Infer
+# Paged-Infer
 
 <div align="center">
 
-[![CI](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/hetero-paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
@@ -19,7 +19,7 @@
 
 ## 项目概述
 
-Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出），生产级 CUDA kernel 为后续工作。
+Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出），生产级 CUDA kernel 为后续工作。
 
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
@@ -65,8 +65,8 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/AICL-Lab/hetero-paged-infer.git
-cd hetero-paged-infer
+git clone https://github.com/AICL-Lab/paged-infer.git
+cd paged-infer
 
 # 以 release 模式构建
 cargo build --release
@@ -79,17 +79,17 @@ cargo test
 
 ```bash
 # 基本用法
-./target/release/hetero-infer --input "你好，世界！" --max-tokens 50
+./target/release/paged-infer --input "你好，世界！" --max-tokens 50
 
 # 使用自定义参数
-./target/release/hetero-infer \
+./target/release/paged-infer \
   --input "解释量子计算" \
   --max-tokens 100 \
   --temperature 0.8 \
   --top-p 0.95
 
 # 启动 OpenAI 兼容 HTTP 服务
-./target/release/hetero-infer --serve
+./target/release/paged-infer --serve
 ```
 
 ### OpenAI 兼容服务
@@ -106,18 +106,18 @@ curl http://127.0.0.1:3000/metrics
 # Completions 接口
 curl http://127.0.0.1:3000/v1/completions \
   -H "content-type: application/json" \
-  -d '{"model":"hetero-infer","prompt":"你好","max_tokens":8}'
+  -d '{"model":"paged-infer","prompt":"你好","max_tokens":8}'
 
 # Chat Completions 接口
 curl http://127.0.0.1:3000/v1/chat/completions \
   -H "content-type: application/json" \
-  -d '{"model":"hetero-infer","messages":[{"role":"user","content":"说你好"}],"max_tokens":8}'
+  -d '{"model":"paged-infer","messages":[{"role":"user","content":"说你好"}],"max_tokens":8}'
 ```
 
 ### 库用法
 
 ```rust
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 // 使用默认配置创建引擎
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
@@ -169,7 +169,7 @@ for result in results {
 }
 ```
 
-加载：`./hetero-infer --config config.json`
+加载：`./paged-infer --config config.json`
 
 ## 文档
 

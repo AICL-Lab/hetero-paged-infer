@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example batch_processing
 
-use hetero_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
