@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- 仓库由 `hetero-paged-infer` 更名为 `paged-infer`：原名中的 "hetero"（异构）与当前纯 CPU 参考后端的实际状态不符。crate 更名为 `paged-infer`/`paged_infer`，指标名同步更名为 `paged_*`。旧仓库地址自动重定向。
+
 ### Added
 
-- A real `cuda` feature implementation with `build.rs`, an nvcc-compiled backend library, Rust FFI wiring, a minimal CUDA kernel path, a no-nvcc host-compatible fallback build for CI, and feature-gated CUDA executor tests.
 - Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests), and `submit_request()` returning `(request_id, prompt_tokens)` from a single tokenization pass.
 - Server: true token-level SSE streaming, 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
 - Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones; CI now runs the test suite with `--all-features` and a `cargo bench -- --test` smoke run.
@@ -44,7 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_execution_batch` fails fast on an inconsistent decode sequence instead of silently skipping it (which would have left the request stuck forever).
 - Usage reporting uses the real tokenizer: `prompt_tokens` / `completion_tokens` are exact counts, not whitespace estimates.
 - Overflow-safe token arithmetic in the scheduler (`saturating_add`) and an always-safe `Sequence::context_len`.
-- FFI `num_sequences` is now `u64`, matching the C++ `unsigned long long` ABI on all targets (previously `usize`, which would mismatch on 32-bit platforms).
 - Benchmarks rebuilt with `iter_batched` so they no longer panic or degrade into measuring idle/error paths; filler benches removed.
 - Crate metadata, CLI about text, README, and docs now describe the project as a paged-memory + continuous-batching scaffold with a mock compute backend; unsupported claims ("CPU-GPU co-execution", fabricated throughput charts, fictional preemption API) were removed.
 - The engine loop now yields once per step; previously it had no await point during active generation.
@@ -82,4 +84,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
-[0.1.0]: https://github.com/AICL-Lab/hetero-paged-infer/releases/tag/v0.1.0
+[0.1.0]: https://github.com/AICL-Lab/paged-infer/releases/tag/v0.1.0
