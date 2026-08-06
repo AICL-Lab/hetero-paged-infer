@@ -228,7 +228,10 @@ impl InferenceEngine {
 
         // 检查 prompt 长度
         if input_tokens.len() > self.config.max_model_len as usize {
-            return Err(EngineError::InputTooLong(input_tokens.len(), self.config.max_model_len));
+            return Err(EngineError::InputTooLong(
+                input_tokens.len(),
+                self.config.max_model_len,
+            ));
         }
 
         let total_requested_tokens = input_tokens.len() + params.max_tokens as usize;

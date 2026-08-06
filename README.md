@@ -28,7 +28,9 @@ Hetero-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，�
 | **内存压力感知** | 可配置的 OOM 防护 | ✅ |
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
-| **全面测试** | 135 个测试 | ✅ |
+| **自动化验证** | unit、integration、server integration 与 property tests | ✅ |
+
+在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-kernel-academy/LEARNING_PATH.md`](https://github.com/AICL-Lab/cuda-kernel-academy/blob/master/LEARNING_PATH.md)。
 
 ## 系统架构
 
@@ -69,7 +71,7 @@ cd hetero-paged-infer
 # 以 release 模式构建
 cargo build --release
 
-# 运行测试套件（135 个测试）
+# 运行测试套件
 cargo test
 ```
 
@@ -177,15 +179,9 @@ for result in results {
 | **贡献指南** | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **更新日志** | [CHANGELOG.md](CHANGELOG.md) |
 
-## 性能对比
+## 性能边界
 
-| 方法 | 内存浪费 | 吞吐率 | 说明 |
-|------|:--------:|:------:|------|
-| 静态分配 | 先验模式：~40-60% | 文献背景：基线 | 为每个请求预分配最大上下文 |
-| 动态分配 | 先验模式：~20-30% | 文献背景：+20% | 按请求调整但仍有碎片 |
-| **PagedAttention** | **文献背景：<5%** | **文献背景：+50%** | 基于块的共享与写时复制 |
-
-> 说明：当前性能数字仍然主要来自 mock 路径或架构层面的估算，尚未接入真实 CUDA kernel。
+当前计算后端为 mock，因此仓库不宣称真实 token 吞吐、GPU 利用率或相对加速。现阶段 benchmark 只用于观察调度、KV 分页与服务控制面的相对开销；接入真实模型后才能建立硬件性能基线。
 
 ### 为什么选择 PagedAttention？
 
@@ -210,11 +206,10 @@ cargo test -- --test-threads=1
 
 | 类型 | 覆盖范围 | 说明 |
 |------|:--------:|------|
-| 单元测试 | 纳入 121+ | 核心功能测试 |
-| 属性测试 | 纳入 121+ | 使用 proptest 验证不变量 |
-| 集成测试 | 纳入 121+ | 端到端工作流测试 |
-| 文档测试 | 纳入 121+ | 文档示例 |
-| **整体** | **121+ 个测试** | 覆盖仓库中的自动化验证 |
+| 单元测试 | 核心模块 | 分页、调度、执行和配置 |
+| 属性测试 | 状态不变量 | 资源守恒、队列唯一性和容量上限 |
+| 集成测试 | 端到端工作流 | engine 与请求生命周期 |
+| Server 集成 | HTTP/SSE | API、取消、健康检查与指标 |
 
 ## 贡献指南
 
