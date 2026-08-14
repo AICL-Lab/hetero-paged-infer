@@ -170,6 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             temperature: args.temperature,
             top_p: args.top_p,
             stop: Vec::new(), // CLI 暂不暴露 stop 参数
+            logprobs: None,
         };
 
         println!("Input: {}", input_text);

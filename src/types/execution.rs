@@ -46,6 +46,17 @@ impl ExecutionBatch {
     }
 }
 
+/// 单个 token 位置的 logprob 信息（OpenAI `logprobs` 语义）。
+#[derive(Debug, Clone)]
+pub struct TokenLogprobs {
+    /// 该位置生成的 token
+    pub token: TokenId,
+    /// 该 token 的对数概率
+    pub logprob: f32,
+    /// 前 k 个候选（含选中 token）的 (token_id, logprob)，按概率降序
+    pub top_logprobs: Vec<(TokenId, f32)>,
+}
+
 /// GPU 执行输出
 ///
 /// 包含 GPU 执行的结果。
@@ -56,4 +67,8 @@ pub struct ExecutionOutput {
 
     /// 对应的序列 ID
     pub seq_ids: Vec<SeqId>,
+
+    /// 各序列本步生成 token 的 logprob 信息（与 `seq_ids` 对齐）。
+    /// 后端未提供时为 `None`；整个字段为空表示未启用/未计算。
+    pub logprobs: Vec<Option<TokenLogprobs>>,
 }

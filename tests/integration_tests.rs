@@ -207,6 +207,7 @@ fn test_invalid_request_handling() {
         temperature: -0.5,
         top_p: 0.9,
         stop: Vec::new(),
+        logprobs: None,
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid temperature should be rejected");
@@ -217,6 +218,7 @@ fn test_invalid_request_handling() {
         temperature: 0.0,
         top_p: 1.0,
         stop: Vec::new(),
+        logprobs: None,
     };
     let result = engine.submit_request("Hello", greedy_params);
     assert!(result.is_ok(), "Greedy temperature 0.0 should be accepted");
@@ -227,6 +229,7 @@ fn test_invalid_request_handling() {
         temperature: 1.0,
         top_p: 1.0,
         stop: Vec::new(),
+        logprobs: None,
     };
     let result = engine.submit_request("Hello", sampled_params);
     assert!(
@@ -239,6 +242,7 @@ fn test_invalid_request_handling() {
         temperature: 0.0,
         top_p: 0.9,
         stop: Vec::new(),
+        logprobs: None,
     };
     let result = engine.submit_request("Hello", top_p_params);
     assert!(
@@ -252,6 +256,7 @@ fn test_invalid_request_handling() {
         temperature: 1.0,
         top_p: 1.5,
         stop: Vec::new(),
+        logprobs: None,
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid top_p should be rejected");

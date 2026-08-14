@@ -120,6 +120,7 @@ impl GPUExecutorTrait for SequenceExecutor {
         Ok(ExecutionOutput {
             next_tokens,
             seq_ids: batch.seq_ids.clone(),
+            logprobs: Vec::new(),
         })
     }
 }
@@ -137,6 +138,7 @@ impl GPUExecutorTrait for ConstantTokenExecutor {
         Ok(ExecutionOutput {
             next_tokens: vec![self.token; batch.seq_ids.len()],
             seq_ids: batch.seq_ids.clone(),
+            logprobs: Vec::new(),
         })
     }
 }

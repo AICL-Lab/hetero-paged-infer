@@ -56,9 +56,12 @@ use crate::scheduler::Scheduler;
 use crate::tokenizer::{build_tokenizer, IncrementalDecoder, TokenizerTrait};
 use crate::types::{
     CompletedRequest, FinishReason, GenerationParams, Request, RequestId, RequestState, SeqId,
-    TokenId,
+    TokenId, TokenLogprobs,
 };
 use std::collections::HashMap;
+
+/// 本步为单个请求生成的文本片段：`(request_id, 解码文本, 该 token 的 logprob)`。
+pub type StepChunk = (RequestId, String, Option<TokenLogprobs>);
 
 /// 文本中第一个 stop 序列出现的字符偏移（取最早命中者）。
 fn find_stop_sequence(text: &str, stops: &[String]) -> Option<usize> {
@@ -369,13 +372,21 @@ impl InferenceEngine {
 
         // 用每请求增量解码器把新 token 解码为文本片段。
         // 解码失败时让请求诚实失败（tokenizer 错误），而不是静默丢失文本。
-        let mut chunks: Vec<(RequestId, String)> = Vec::new();
+        let mut chunks: Vec<StepChunk> = Vec::new();
         for (request_id, token) in generated {
             let Some(decoder) = self.decoders.get_mut(&request_id) else {
                 continue;
             };
+            // 该 token 的 logprob（update_sequences 已把 logprobs 累积到请求）
+            let token_logprobs = self
+                .scheduler
+                .get_request_by_id(request_id)
+                .filter(|r| r.params.logprobs.is_some())
+                .and_then(|r| r.logprobs.last().cloned());
             match decoder.push(token) {
-                Ok(Some(text)) if !text.is_empty() => chunks.push((request_id, text)),
+                Ok(Some(text)) if !text.is_empty() => {
+                    chunks.push((request_id, text, token_logprobs))
+                }
                 Ok(_) => {}
                 Err(msg) => {
                     self.scheduler
@@ -422,13 +433,13 @@ impl InferenceEngine {
     ///
     /// 对成功完成的请求调用 `finish()` 冲刷末尾文本，作为本步附加片段返回
     /// （保证在 Done 事件之前送达）；失败/取消的请求直接丢弃解码器状态。
-    fn collect_completed_requests(&mut self) -> (Vec<CompletedRequest>, Vec<(RequestId, String)>) {
+    fn collect_completed_requests(&mut self) -> (Vec<CompletedRequest>, Vec<StepChunk>) {
         let completed_requests = self.scheduler.get_completed();
         if completed_requests.is_empty() {
             return (Vec::new(), Vec::new());
         }
 
-        let mut tail_chunks: Vec<(RequestId, String)> = Vec::new();
+        let mut tail_chunks: Vec<StepChunk> = Vec::new();
         let results = completed_requests
             .into_iter()
             .map(|req| {
@@ -457,12 +468,19 @@ impl InferenceEngine {
                     (_, Some(msg)) => Some(format!("tokenizer decode failed: {msg}")),
                     _ => None,
                 };
+                // logprobs：请求启用且后端实际提供了时才返回
+                let logprobs = if req.params.logprobs.is_some() && !req.logprobs.is_empty() {
+                    Some(req.logprobs.clone())
+                } else {
+                    None
+                };
 
                 if success {
                     if let Some(mut decoder) = decoder {
                         match decoder.finish() {
                             Ok(Some(tail)) if !tail.is_empty() => {
-                                tail_chunks.push((req.id, tail));
+                                // finish() 冲刷的末尾文本不对应单个新 token，logprobs 置空
+                                tail_chunks.push((req.id, tail, None));
                             }
                             Ok(_) => {}
                             Err(msg) => {
@@ -487,6 +505,7 @@ impl InferenceEngine {
                     success,
                     error,
                     finish_reason,
+                    logprobs,
                 }
             })
             .collect();
@@ -573,8 +592,8 @@ impl InferenceEngine {
 pub struct StepEvents {
     /// 本步到达终态（成功或失败）的请求
     pub completed: Vec<CompletedRequest>,
-    /// 本步为各请求新生成的文本片段：`(request_id, 解码后的片段)`
-    pub chunks: Vec<(RequestId, String)>,
+    /// 本步为各请求新生成的文本片段（见 [`StepChunk`]）
+    pub chunks: Vec<StepChunk>,
 }
 
 /// 引擎指标
@@ -649,6 +668,7 @@ mod tests {
                 Ok(ExecutionOutput {
                     next_tokens: vec![123; batch.seq_ids.len()],
                     seq_ids: batch.seq_ids.clone(),
+                    logprobs: Vec::new(),
                 })
             }
         }
@@ -772,6 +792,7 @@ mod tests {
             temperature: 1.0,
             top_p: 1.0,
             stop: Vec::new(),
+            logprobs: None,
         };
         let result = engine.submit_request("Hello", sampled);
         assert!(
@@ -785,6 +806,7 @@ mod tests {
             temperature: 0.0,
             top_p: 0.9,
             stop: Vec::new(),
+            logprobs: None,
         };
         let result = engine.submit_request("Hello", top_p);
         assert!(
@@ -798,6 +820,7 @@ mod tests {
             temperature: 0.0,
             top_p: 1.0,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(engine.submit_request("Hello", greedy).is_ok());
     }
@@ -1045,7 +1068,7 @@ mod tests {
         let mut final_text = None;
         while engine.has_pending_work() {
             let events = engine.step_events().unwrap();
-            for (rid, chunk) in &events.chunks {
+            for (rid, chunk, _logprobs) in &events.chunks {
                 assert_eq!(*rid, request_id);
                 streamed.push_str(chunk);
             }
@@ -1202,7 +1225,7 @@ mod tests {
         let mut final_text = None;
         while engine.has_pending_work() {
             let events = engine.step_events().unwrap();
-            for (rid, chunk) in &events.chunks {
+            for (rid, chunk, _logprobs) in &events.chunks {
                 assert_eq!(*rid, request_id);
                 streamed.push_str(chunk);
             }
@@ -1310,6 +1333,7 @@ mod tests {
                 GenerationParams {
                     max_tokens: 10,
                     stop: vec!["AB".to_string()],
+                    logprobs: None,
                     ..GenerationParams::default()
                 },
             )
@@ -1343,6 +1367,7 @@ mod tests {
                 GenerationParams {
                     max_tokens: 3,
                     stop: vec!["Z".to_string()], // 永不出现
+                    logprobs: None,
                     ..GenerationParams::default()
                 },
             )

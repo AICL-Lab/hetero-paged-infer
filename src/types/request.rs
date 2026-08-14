@@ -37,6 +37,12 @@ pub struct GenerationParams {
     /// 输出文本中不包含该序列，且 `finish_reason` 为 `"stop"`。
     /// 空列表表示不启用停止序列。
     pub stop: Vec<String>,
+
+    /// logprobs 输出（OpenAI `logprobs`）
+    ///
+    /// `Some(k)`：为每个生成 token 返回其对数概率及前 k 个候选
+    /// （`k <= 5`，OpenAI 上限）；`None` 表示不返回 logprobs。
+    pub logprobs: Option<usize>,
 }
 
 impl Default for GenerationParams {
@@ -47,6 +53,7 @@ impl Default for GenerationParams {
             temperature: 0.0,
             top_p: 1.0,
             stop: Vec::new(),
+            logprobs: None,
         }
     }
 }
@@ -65,6 +72,9 @@ impl GenerationParams {
         }
         if self.stop.len() > 4 {
             return Err(crate::EngineError::TooManyStopSequences(self.stop.len()));
+        }
+        if self.logprobs.is_some_and(|k| k > 5) {
+            return Err(crate::EngineError::InvalidLogprobs(self.logprobs.unwrap()));
         }
         Ok(())
     }
@@ -95,6 +105,9 @@ pub struct Request {
     /// 是否因命中 stop 序列而提前停止（用于 finish_reason 判定）
     pub stop_sequence_hit: bool,
 
+    /// 生成过程中每个 token 的 logprob 信息（启用 logprobs 时累积）
+    pub logprobs: Vec<crate::types::TokenLogprobs>,
+
     /// 当前状态
     pub state: RequestState,
 }
@@ -108,6 +121,7 @@ impl Request {
             output_tokens: Vec::new(),
             params,
             stop_sequence_hit: false,
+            logprobs: Vec::new(),
             state: RequestState::Pending,
         }
     }
@@ -177,6 +191,9 @@ pub struct CompletedRequest {
 
     /// 生成结束原因（成功时为 Some，失败/取消时为 None）
     pub finish_reason: Option<FinishReason>,
+
+    /// 每个生成 token 的 logprob 信息（请求启用且后端提供时）；否则为 None
+    pub logprobs: Option<Vec<crate::types::TokenLogprobs>>,
 }
 
 #[cfg(test)]
@@ -190,6 +207,7 @@ mod tests {
             temperature: 1.0,
             top_p: 0.9,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(valid.validate().is_ok());
         assert!(valid.validate().is_ok());
@@ -199,6 +217,7 @@ mod tests {
             temperature: 1.0,
             top_p: 0.9,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(invalid_max_tokens.validate().is_err());
         assert!(invalid_max_tokens.validate().is_err());
@@ -208,6 +227,7 @@ mod tests {
             temperature: 2.1,
             top_p: 0.9,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(invalid_temp.validate().is_err());
 
@@ -217,6 +237,7 @@ mod tests {
             temperature: 0.0,
             top_p: 0.9,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(greedy.validate().is_ok());
 
@@ -225,6 +246,7 @@ mod tests {
             temperature: 1.0,
             top_p: 1.5,
             stop: Vec::new(),
+            logprobs: None,
         };
         assert!(invalid_top_p.validate().is_err());
     }
@@ -239,6 +261,7 @@ mod tests {
                 temperature: 1.0,
                 top_p: 1.0,
                 stop: Vec::new(),
+                logprobs: None,
             },
         );
 
@@ -282,6 +305,7 @@ mod property_tests {
                 temperature,
                 top_p,
                 stop: Vec::new(),
+                logprobs: None,
             };
 
             let validation_result = params.validate();
@@ -308,6 +332,7 @@ mod property_tests {
                 temperature: 2.0,
                 top_p: 0.5,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_temp_boundary.validate().is_ok());
 
@@ -316,6 +341,7 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 1.0,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_top_p_boundary.validate().is_ok());
 
@@ -324,6 +350,7 @@ mod property_tests {
                 temperature: 2.001,
                 top_p: 0.5,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_temp_over.validate().is_err());
 
@@ -332,6 +359,7 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 1.001,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_top_p_over.validate().is_err());
 
@@ -341,6 +369,7 @@ mod property_tests {
                 temperature: 0.0,
                 top_p: 0.5,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_greedy_temp.validate().is_ok());
 
@@ -349,6 +378,7 @@ mod property_tests {
                 temperature: -0.1,
                 top_p: 0.5,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_negative_temp.validate().is_err());
 
@@ -357,6 +387,7 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 0.0,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_zero_top_p.validate().is_err());
 
@@ -365,6 +396,7 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 0.5,
                 stop: Vec::new(),
+                logprobs: None,
             };
             prop_assert!(params_zero_max_tokens.validate().is_err());
         }

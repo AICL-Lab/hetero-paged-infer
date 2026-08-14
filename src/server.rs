@@ -14,7 +14,8 @@
 
 use crate::config::EngineConfig;
 use crate::error::EngineError;
-use crate::types::{CompletedRequest, FinishReason, GenerationParams, RequestId};
+use crate::tokenizer::{build_tokenizer, TokenizerTrait};
+use crate::types::{CompletedRequest, FinishReason, GenerationParams, RequestId, TokenLogprobs};
 use crate::InferenceEngine;
 use async_stream::stream;
 use axum::extract::rejection::JsonRejection;
@@ -98,18 +99,19 @@ struct Admission {
 
 /// 引擎循环推送给等待 handler 的每请求事件。
 enum RequestEvent {
-    /// 新生成的文本片段（每生成一个 token 推送一次）。
-    Chunk(String),
+    /// 新生成的文本片段（每生成一个 token 推送一次）及该 token 的 logprob。
+    Chunk(String, Option<TokenLogprobs>),
     /// 请求到达终态（成功或失败）。
     Done(CompletedRequest),
 }
 
-#[derive(Clone)]
 struct AppState {
     config: EngineConfig,
     submit_tx: mpsc::Sender<Submission>,
     metrics: Arc<ServerMetrics>,
     response_counter: Arc<AtomicU64>,
+    /// 用于把 token id 解码为文本（logprobs 的 tokens 字段等）。
+    tokenizer: Arc<dyn TokenizerTrait>,
 }
 
 impl AppState {
@@ -176,6 +178,7 @@ fn generation_result(
                 .unwrap_or(FinishReason::Stop)
                 .as_str()
                 .to_string(),
+            logprobs: completed.logprobs,
         })
     } else {
         Err(ApiError::internal(
@@ -256,6 +259,8 @@ struct GenerationResult {
     completion_tokens: usize,
     /// 生成结束原因（stop / length）
     finish_reason: String,
+    /// 每个生成 token 的 logprob（请求启用时）
+    logprobs: Option<Vec<TokenLogprobs>>,
 }
 
 /// `stop` 停止序列：单个字符串或字符串数组（OpenAI 兼容形态）。
@@ -284,6 +289,29 @@ impl StopSequence {
     }
 }
 
+/// OpenAI `logprobs` 参数：bool 或 int（新版允许 int 指定 top 候选数）。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum LogprobsParam {
+    Bool(bool),
+    Count(u64),
+}
+
+/// 解析 `logprobs` 为引擎参数：`None` 表示不返回；
+/// `Some(k)` 表示返回每个 token 的 logprob 及前 k 个候选（`1..=5`）。
+fn logprobs_param(p: Option<LogprobsParam>) -> Result<Option<usize>, ApiError> {
+    match p {
+        None => Ok(None),
+        Some(LogprobsParam::Bool(false)) => Ok(None),
+        Some(LogprobsParam::Bool(true)) => Ok(Some(1)),
+        Some(LogprobsParam::Count(0)) => Ok(None),
+        Some(LogprobsParam::Count(k)) if k <= 5 => Ok(Some(k as usize)),
+        Some(LogprobsParam::Count(k)) => Err(ApiError::BadRequest(format!(
+            "logprobs must be between 0 and 5, got {k}"
+        ))),
+    }
+}
+
 /// CPU 后端未实现的 OpenAI 兼容参数（PINF-104）。
 ///
 /// 与 PINF-101 的原则一致：不支持的参数在准入阶段显式拒绝（400），
@@ -295,7 +323,6 @@ impl StopSequence {
 #[serde(default)]
 struct UnsupportedParams {
     seed: Option<i64>,
-    logprobs: Option<serde_json::Value>,
     echo: Option<bool>,
     suffix: Option<String>,
     frequency_penalty: Option<f32>,
@@ -308,11 +335,6 @@ struct UnsupportedParams {
     response_format: Option<serde_json::Value>,
     function_call: Option<serde_json::Value>,
     functions: Option<serde_json::Value>,
-}
-
-/// `logprobs` 是否处于"关闭"状态（`false` 或 `0`）。
-fn logprobs_is_off(v: &serde_json::Value) -> bool {
-    matches!(v, serde_json::Value::Bool(false)) || matches!(v.as_u64(), Some(0))
 }
 
 /// 值是否为空数组（等价于"未提供"）。
@@ -332,9 +354,6 @@ fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
 
     if p.seed.is_some() {
         return unsupported("seed");
-    }
-    if p.logprobs.as_ref().is_some_and(|v| !logprobs_is_off(v)) {
-        return unsupported("logprobs");
     }
     if p.echo == Some(true) {
         return unsupported("echo");
@@ -382,6 +401,7 @@ struct CompletionRequest {
     stream: Option<bool>,
     stop: Option<StopSequence>,
     n: Option<u32>,
+    logprobs: Option<LogprobsParam>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -396,6 +416,7 @@ struct ChatCompletionRequest {
     stream: Option<bool>,
     stop: Option<StopSequence>,
     n: Option<u32>,
+    logprobs: Option<LogprobsParam>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -421,6 +442,8 @@ struct CompletionChoice {
     text: String,
     index: u32,
     finish_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<LogprobsOutput>,
 }
 
 #[derive(Serialize)]
@@ -438,6 +461,86 @@ struct ChatCompletionChoice {
     index: u32,
     message: ChatMessage,
     finish_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<LogprobsOutput>,
+}
+
+/// OpenAI `logprobs` 响应块（每个 choice 一个）。
+#[derive(Serialize)]
+struct LogprobsOutput {
+    /// 每个生成 token 的文本表示
+    tokens: Vec<String>,
+    /// 每个生成 token 的对数概率
+    token_logprobs: Vec<f32>,
+    /// 每位置前 k 个候选（token 文本 → logprob）
+    top_logprobs: Vec<serde_json::Map<String, serde_json::Value>>,
+    /// 每 token 在输出文本中的起始字符偏移
+    text_offset: Vec<usize>,
+}
+
+/// 从引擎返回的 logprob 信息构造 OpenAI logprobs 响应块。
+///
+/// `k` 为请求指定的 top 候选数；token 文本用服务层持有的 tokenizer 解码，
+/// 特殊 token（解码为空）以 `<token_id=N>` 占位。
+fn logprobs_output(
+    logprobs: &[TokenLogprobs],
+    tokenizer: &dyn TokenizerTrait,
+    k: usize,
+) -> LogprobsOutput {
+    let mut tokens = Vec::with_capacity(logprobs.len());
+    let mut token_logprobs = Vec::with_capacity(logprobs.len());
+    let mut top_logprobs = Vec::with_capacity(logprobs.len());
+    let mut text_offset = Vec::with_capacity(logprobs.len());
+    let mut offset = 0usize;
+
+    for lp in logprobs {
+        let token_text = tokenizer.try_decode(&[lp.token]).unwrap_or_default();
+        let token_len = token_text.chars().count();
+        let token_label = if token_text.is_empty() {
+            format!("<token_id={}>", lp.token)
+        } else {
+            token_text
+        };
+        tokens.push(token_label);
+        token_logprobs.push(lp.logprob);
+        text_offset.push(offset);
+        offset += token_len;
+
+        let top = lp
+            .top_logprobs
+            .iter()
+            .take(k)
+            .map(|(id, logprob)| {
+                let text = tokenizer.try_decode(&[*id]).unwrap_or_default();
+                let label = if text.is_empty() {
+                    format!("<token_id={id}>")
+                } else {
+                    text
+                };
+                (label, serde_json::json!(logprob))
+            })
+            .collect();
+        top_logprobs.push(top);
+    }
+
+    LogprobsOutput {
+        tokens,
+        token_logprobs,
+        top_logprobs,
+        text_offset,
+    }
+}
+
+/// 为单个生成结果构造 logprobs 响应块（请求未启用时为 None）。
+fn choice_logprobs(
+    state: &Arc<AppState>,
+    result: &GenerationResult,
+    k: usize,
+) -> Option<LogprobsOutput> {
+    result
+        .logprobs
+        .as_ref()
+        .map(|lps| logprobs_output(lps, state.tokenizer.as_ref(), k))
 }
 
 #[derive(Serialize)]
@@ -472,6 +575,7 @@ pub fn create_router_with_engine(
     engine: InferenceEngine,
 ) -> Result<Router, EngineError> {
     config.validate()?;
+    let tokenizer: Arc<dyn TokenizerTrait> = Arc::from(build_tokenizer(&config)?);
     let (submit_tx, submit_rx) = mpsc::channel(SUBMISSION_QUEUE_CAPACITY);
     tokio::spawn(engine_loop(engine, submit_rx));
 
@@ -480,6 +584,7 @@ pub fn create_router_with_engine(
         submit_tx,
         metrics: Arc::new(ServerMetrics::default()),
         response_counter: Arc::new(AtomicU64::new(1)),
+        tokenizer,
     });
 
     Ok(Router::new()
@@ -517,10 +622,10 @@ async fn engine_loop(mut engine: InferenceEngine, mut submit_rx: mpsc::Receiver<
         match engine.step_events() {
             Ok(events) => {
                 let mut disconnected: Vec<RequestId> = Vec::new();
-                for (request_id, chunk) in events.chunks {
+                for (request_id, chunk, logprobs) in events.chunks {
                     if let Some(tx) = waiters.get(&request_id) {
                         // 发送失败 == 对端已断开：登记取消，释放调度资源
-                        if tx.send(RequestEvent::Chunk(chunk)).is_err() {
+                        if tx.send(RequestEvent::Chunk(chunk, logprobs)).is_err() {
                             disconnected.push(request_id);
                         }
                     }
@@ -677,6 +782,7 @@ async fn respond_generation(
             .metrics
             .streaming_requests_total
             .fetch_add(1, Ordering::Relaxed);
+        let k = prepared.params.logprobs.unwrap_or(1);
         if prepared.n == 1 {
             stream_response(
                 state,
@@ -685,6 +791,7 @@ async fn respond_generation(
                 &prepared.model,
                 prompt_tokens,
                 streams.pop().expect("n == 1 has exactly one stream"),
+                k,
             )
         } else {
             stream_response_multi(
@@ -694,12 +801,15 @@ async fn respond_generation(
                 &prepared.model,
                 prompt_tokens,
                 streams,
+                k,
             )
         }
     } else if prepared.n == 1 {
+        let k = prepared.params.logprobs.unwrap_or(1);
         match state.generate(&prepared.prompt, prepared.params).await {
             Ok(generated) => match kind {
                 StreamKind::Completion => {
+                    let logprobs = choice_logprobs(state, &generated, k);
                     let response_usage = usage(&generated);
                     Json(CompletionResponse {
                         id: state.next_id(id_prefix),
@@ -710,12 +820,14 @@ async fn respond_generation(
                             text: generated.text,
                             index: 0,
                             finish_reason: generated.finish_reason,
+                            logprobs,
                         }],
                         usage: response_usage,
                     })
                     .into_response()
                 }
                 StreamKind::Chat => {
+                    let logprobs = choice_logprobs(state, &generated, k);
                     let response_usage = usage(&generated);
                     Json(ChatCompletionResponse {
                         id: state.next_id(id_prefix),
@@ -729,6 +841,7 @@ async fn respond_generation(
                                 content: generated.text,
                             },
                             finish_reason: generated.finish_reason,
+                            logprobs,
                         }],
                         usage: response_usage,
                     })
@@ -743,51 +856,61 @@ async fn respond_generation(
     } else {
         // 非流式 n>1：并行生成 n 个候选，响应含 n 个 choices
         match generate_many(state, &prepared).await {
-            Ok(generated) => match kind {
-                StreamKind::Completion => {
-                    let response_usage = usage_multi(&generated);
-                    Json(CompletionResponse {
-                        id: state.next_id(id_prefix),
-                        object: "text_completion",
-                        created: unix_timestamp(),
-                        model: prepared.model,
-                        choices: generated
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, g)| CompletionChoice {
-                                text: g.text,
-                                index: i as u32,
-                                finish_reason: g.finish_reason,
-                            })
-                            .collect(),
-                        usage: response_usage,
-                    })
-                    .into_response()
+            Ok(generated) => {
+                match kind {
+                    StreamKind::Completion => {
+                        let response_usage = usage_multi(&generated);
+                        let k = prepared.params.logprobs.unwrap_or(1);
+                        Json(CompletionResponse {
+                            id: state.next_id(id_prefix),
+                            object: "text_completion",
+                            created: unix_timestamp(),
+                            model: prepared.model,
+                            choices: generated
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, g)| CompletionChoice {
+                                    text: g.text,
+                                    index: i as u32,
+                                    finish_reason: g.finish_reason,
+                                    logprobs: g.logprobs.as_ref().map(|lps| {
+                                        logprobs_output(lps, state.tokenizer.as_ref(), k)
+                                    }),
+                                })
+                                .collect(),
+                            usage: response_usage,
+                        })
+                        .into_response()
+                    }
+                    StreamKind::Chat => {
+                        let response_usage = usage_multi(&generated);
+                        let k = prepared.params.logprobs.unwrap_or(1);
+                        Json(ChatCompletionResponse {
+                            id: state.next_id(id_prefix),
+                            object: "chat.completion",
+                            created: unix_timestamp(),
+                            model: prepared.model,
+                            choices: generated
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, g)| ChatCompletionChoice {
+                                    index: i as u32,
+                                    message: ChatMessage {
+                                        role: "assistant".to_string(),
+                                        content: g.text,
+                                    },
+                                    finish_reason: g.finish_reason,
+                                    logprobs: g.logprobs.as_ref().map(|lps| {
+                                        logprobs_output(lps, state.tokenizer.as_ref(), k)
+                                    }),
+                                })
+                                .collect(),
+                            usage: response_usage,
+                        })
+                        .into_response()
+                    }
                 }
-                StreamKind::Chat => {
-                    let response_usage = usage_multi(&generated);
-                    Json(ChatCompletionResponse {
-                        id: state.next_id(id_prefix),
-                        object: "chat.completion",
-                        created: unix_timestamp(),
-                        model: prepared.model,
-                        choices: generated
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, g)| ChatCompletionChoice {
-                                index: i as u32,
-                                message: ChatMessage {
-                                    role: "assistant".to_string(),
-                                    content: g.text,
-                                },
-                                finish_reason: g.finish_reason,
-                            })
-                            .collect(),
-                        usage: response_usage,
-                    })
-                    .into_response()
-                }
-            },
+            }
             Err(err) => {
                 state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
                 err.into_response()
@@ -799,6 +922,13 @@ async fn respond_generation(
 /// OpenAI `n` 候选数的上限（架构练习默认 16，避免无界资源占用）。
 const MAX_CANDIDATES: usize = 16;
 
+/// SSE payload 的公共元数据（避免逐方法重复的 id/created/model 参数）。
+struct SseMeta<'a> {
+    id: &'a str,
+    created: u64,
+    model: &'a str,
+}
+
 /// 流式响应的两种载荷形状。
 #[derive(Clone, Copy)]
 enum StreamKind {
@@ -808,38 +938,57 @@ enum StreamKind {
 
 impl StreamKind {
     /// 单 choice 的中间 chunk（`n == 1` 特例）。
-    fn chunk_payload(&self, id: &str, created: u64, model: &str, chunk: &str) -> serde_json::Value {
-        self.multi_chunk_payload(id, created, model, 1, 0, chunk)
+    fn chunk_payload(
+        &self,
+        meta: &SseMeta,
+        chunk: &str,
+        logprobs: Option<&LogprobsOutput>,
+    ) -> serde_json::Value {
+        self.multi_chunk_payload(meta, 1, 0, chunk, logprobs)
     }
 
     /// `n` 候选的中间 chunk：n 个 choice，仅事件来源 `index` 携带增量。
     fn multi_chunk_payload(
         &self,
-        id: &str,
-        created: u64,
-        model: &str,
+        meta: &SseMeta,
         n: usize,
         index: usize,
         chunk: &str,
+        logprobs: Option<&LogprobsOutput>,
     ) -> serde_json::Value {
         let object = match self {
             StreamKind::Completion => "text_completion",
             StreamKind::Chat => "chat.completion.chunk",
         };
+        let id = meta.id;
+        let created = meta.created;
+        let model = meta.model;
+        let logprobs_value = logprobs
+            .map(serde_json::to_value)
+            .transpose()
+            .unwrap_or(None);
         let choices: Vec<serde_json::Value> = (0..n)
-            .map(|i| match self {
-                StreamKind::Completion if i == index => serde_json::json!({
-                    "text": chunk, "index": i, "finish_reason": serde_json::Value::Null
-                }),
-                StreamKind::Completion => serde_json::json!({
-                    "text": "", "index": i, "finish_reason": serde_json::Value::Null
-                }),
-                StreamKind::Chat if i == index => serde_json::json!({
-                    "index": i, "delta": {"content": chunk}, "finish_reason": serde_json::Value::Null
-                }),
-                StreamKind::Chat => serde_json::json!({
-                    "index": i, "delta": {}, "finish_reason": serde_json::Value::Null
-                }),
+            .map(|i| {
+                let mut choice = match self {
+                    StreamKind::Completion if i == index => serde_json::json!({
+                        "text": chunk, "index": i, "finish_reason": serde_json::Value::Null
+                    }),
+                    StreamKind::Completion => serde_json::json!({
+                        "text": "", "index": i, "finish_reason": serde_json::Value::Null
+                    }),
+                    StreamKind::Chat if i == index => serde_json::json!({
+                        "index": i, "delta": {"content": chunk}, "finish_reason": serde_json::Value::Null
+                    }),
+                    StreamKind::Chat => serde_json::json!({
+                        "index": i, "delta": {}, "finish_reason": serde_json::Value::Null
+                    }),
+                };
+                if i == index {
+                    if let Some(lp) = &logprobs_value {
+                        choice["logprobs"] = lp.clone();
+                    }
+                }
+                choice
             })
             .collect();
         serde_json::json!({
@@ -913,18 +1062,28 @@ fn stream_response(
     model: &str,
     prompt_tokens: usize,
     mut events: mpsc::UnboundedReceiver<RequestEvent>,
+    k: usize,
 ) -> Response {
     let id = state.next_id(id_prefix);
     let created = unix_timestamp();
     let model = model.to_string();
+    let tokenizer = state.tokenizer.clone();
     Sse::new(stream! {
         let mut failure: Option<String> = None;
         let mut terminated = false;
         while let Some(event) = events.recv().await {
             match event {
-                RequestEvent::Chunk(chunk) => {
+                RequestEvent::Chunk(chunk, logprobs) => {
+                    let lp_out = logprobs
+                        .as_ref()
+                        .map(|lp| logprobs_output(std::slice::from_ref(lp), tokenizer.as_ref(), k));
+                    let meta = SseMeta {
+                        id: &id,
+                        created,
+                        model: &model,
+                    };
                     yield Ok::<Event, Infallible>(Event::default()
-                        .data(kind.chunk_payload(&id, created, &model, &chunk).to_string()));
+                        .data(kind.chunk_payload(&meta, &chunk, lp_out.as_ref()).to_string()));
                 }
                 RequestEvent::Done(completed) => {
                     terminated = true;
@@ -983,11 +1142,13 @@ fn stream_response_multi(
     model: &str,
     prompt_tokens: usize,
     streams: Vec<mpsc::UnboundedReceiver<RequestEvent>>,
+    k: usize,
 ) -> Response {
     let id = state.next_id(id_prefix);
     let created = unix_timestamp();
     let model = model.to_string();
     let n = streams.len();
+    let tokenizer = state.tokenizer.clone();
     Sse::new(stream! {
         // fan-in：每个候选一个转发任务，事件带候选 index 进入统一通道
         let (tx, mut rx) = mpsc::unbounded_channel::<(usize, RequestEvent)>();
@@ -1012,8 +1173,17 @@ fn stream_response_multi(
 
         while let Some((i, event)) = rx.recv().await {
             match event {
-                RequestEvent::Chunk(chunk) => {
-                    let payload = kind.multi_chunk_payload(&id, created, &model, n, i, &chunk);
+                RequestEvent::Chunk(chunk, logprobs) => {
+                    let lp_out = logprobs
+                        .as_ref()
+                        .map(|lp| logprobs_output(std::slice::from_ref(lp), tokenizer.as_ref(), k));
+                    let meta = SseMeta {
+                        id: &id,
+                        created,
+                        model: &model,
+                    };
+                    let payload =
+                        kind.multi_chunk_payload(&meta, n, i, &chunk, lp_out.as_ref());
                     yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
                 }
                 RequestEvent::Done(completed) => {
@@ -1086,6 +1256,7 @@ fn prepare_completion_request(
             request.temperature,
             request.top_p,
             stop_sequences(request.stop),
+            logprobs_param(request.logprobs)?,
         )?,
         stream: request.stream.unwrap_or(false),
         n: candidate_count(request.n)?,
@@ -1128,6 +1299,7 @@ fn prepare_chat_request(
             request.temperature,
             request.top_p,
             stop_sequences(request.stop),
+            logprobs_param(request.logprobs)?,
         )?,
         stream: request.stream.unwrap_or(false),
         n: candidate_count(request.n)?,
@@ -1159,6 +1331,7 @@ fn generation_params(
     temperature: Option<f32>,
     top_p: Option<f32>,
     stop: Vec<String>,
+    logprobs: Option<usize>,
 ) -> Result<GenerationParams, ApiError> {
     // 缺省值即 greedy（后端当前唯一支持的生成模式）；显式传入其他
     // 采样参数的请求会在 submit 阶段以 400 拒绝，而非静默降级。
@@ -1167,6 +1340,7 @@ fn generation_params(
         temperature: temperature.unwrap_or(0.0),
         top_p: top_p.unwrap_or(1.0),
         stop,
+        logprobs,
     };
     params
         .validate()

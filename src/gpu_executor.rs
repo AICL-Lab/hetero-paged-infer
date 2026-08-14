@@ -139,6 +139,7 @@ impl GPUExecutorTrait for MockGPUExecutor {
         Ok(ExecutionOutput {
             next_tokens,
             seq_ids: batch.seq_ids.clone(),
+            logprobs: Vec::new(),
         })
     }
 }

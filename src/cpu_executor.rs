@@ -16,7 +16,7 @@
 use crate::config::EngineConfig;
 use crate::error::EngineError;
 use crate::gpu_executor::GPUExecutorTrait;
-use crate::types::{BlockIdx, ExecutionBatch, ExecutionOutput, TokenId};
+use crate::types::{BlockIdx, ExecutionBatch, ExecutionOutput, TokenId, TokenLogprobs};
 use std::collections::HashMap;
 
 // --- 模型超参数（固定小型配置） ---
@@ -30,6 +30,9 @@ const RMS_EPS: f32 = 1e-5;
 const ROPE_THETA: f32 = 10000.0;
 
 const KV_DIM: usize = NUM_KV_HEADS * HEAD_DIM;
+
+/// 每个 token 位置返回的 top logprob 候选数（OpenAI top_logprobs 上限为 5）。
+const TOP_LOGPROBS_K: usize = 5;
 
 // --- 简单 PRNG（Xorshift32，固定种子保证确定性） ---
 struct Rng(u32);
@@ -187,13 +190,13 @@ impl CpuReferenceExecutor {
         self.config.block_size as usize
     }
 
-    /// 对单个序列执行前向传播，返回下一个 token
+    /// 对单个序列执行前向传播，返回下一个 token 及其 logprob 信息
     fn forward_seq(
         &mut self,
         tokens: &[TokenId],
         positions: &[u32],
         block_table: &[BlockIdx],
-    ) -> Result<TokenId, EngineError> {
+    ) -> Result<(TokenId, TokenLogprobs), EngineError> {
         let bs = self.block_size();
         let mut hidden = vec![0.0f32; HIDDEN_DIM];
 
@@ -263,15 +266,29 @@ impl CpuReferenceExecutor {
             HIDDEN_DIM,
         );
 
-        // Greedy 采样 (argmax)
-        let next_token = logits
+        // Greedy 采样 (argmax) + top-k logprobs。
+        // softmax 使用 max-logit 数值稳定；logprob 即 ln(softmax)。
+        let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exp_sum: f32 = logits.iter().map(|l| (l - max_logit).exp()).sum();
+        let mut ranked: Vec<(usize, f32)> = logits
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx as TokenId)
-            .unwrap_or(0);
+            .map(|(i, &l)| (i, ((l - max_logit).exp() / exp_sum).ln()))
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let top = &ranked[..TOP_LOGPROBS_K.min(ranked.len())];
+        let (token_idx, logprob) = top[0];
+        let top_logprobs: Vec<(TokenId, f32)> =
+            top.iter().map(|&(i, lp)| (i as TokenId, lp)).collect();
 
-        Ok(next_token)
+        Ok((
+            token_idx as TokenId,
+            TokenLogprobs {
+                token: token_idx as TokenId,
+                logprob,
+                top_logprobs,
+            },
+        ))
     }
 
     /// 多头注意力：通过 block_table 读取 paged KV cache，计算 causal attention
@@ -367,6 +384,7 @@ impl GPUExecutorTrait for CpuReferenceExecutor {
         }
 
         let mut next_tokens = Vec::with_capacity(batch.num_sequences());
+        let mut logprobs = Vec::with_capacity(batch.num_sequences());
         let mut token_offset = 0;
 
         for (seq_idx, _) in batch.seq_ids.iter().enumerate() {
@@ -376,13 +394,15 @@ impl GPUExecutorTrait for CpuReferenceExecutor {
             let block_table = &batch.block_tables[seq_idx];
             token_offset += seq_len;
 
-            let next_token = self.forward_seq(tokens, positions, block_table)?;
+            let (next_token, token_logprobs) = self.forward_seq(tokens, positions, block_table)?;
             next_tokens.push(next_token);
+            logprobs.push(Some(token_logprobs));
         }
 
         Ok(ExecutionOutput {
             next_tokens,
             seq_ids: batch.seq_ids.clone(),
+            logprobs,
         })
     }
 }

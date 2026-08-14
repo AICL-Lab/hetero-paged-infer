@@ -255,6 +255,12 @@ impl Scheduler {
 
             if let Some(sequence) = self.decode_sequences.get_mut(&seq_id) {
                 sequence.request.output_tokens.push(next_token);
+                // 累积 logprobs（仅请求启用时；后端未提供则跳过）
+                if sequence.request.params.logprobs.is_some() {
+                    if let Some(Some(lp)) = outputs.logprobs.get(i) {
+                        sequence.request.logprobs.push(lp.clone());
+                    }
+                }
                 sequence.num_generated_tokens += 1;
 
                 if sequence.request.total_tokens() >= max_model_len
@@ -282,7 +288,10 @@ impl Scheduler {
         std::mem::take(&mut self.completed_requests)
     }
 
-    /// 按 request_id 只读查询请求（pending / prefill / decode）。
+    /// 按 request_id 只读查询请求（pending / prefill / decode / 已完成的缓冲）。
+    ///
+    /// 完成但尚未被 `get_completed` 取走的请求也可查到：本步 push 循环
+    /// 需要在请求完成（序列已移出）后仍能读取其最后一个 token 的 logprobs。
     pub fn get_request_by_id(&self, request_id: RequestId) -> Option<&Request> {
         self.pending_queue
             .iter()
@@ -295,6 +304,7 @@ impl Scheduler {
                     .find(|seq| seq.request.id == request_id)
                     .map(|seq| &seq.request)
             })
+            .or_else(|| self.completed_requests.iter().find(|r| r.id == request_id))
     }
 
     /// 因命中 stop 序列而终止请求（PINF-105）：
@@ -316,6 +326,7 @@ impl Scheduler {
                     .or_else(|| self.decode_sequences.get_mut(&seq_id))
                 {
                     seq.request.output_tokens.truncate(keep_tokens);
+                    seq.request.logprobs.truncate(keep_tokens);
                     seq.request.stop_sequence_hit = true;
                 }
                 self.complete_sequence(seq_id);
@@ -641,6 +652,7 @@ mod tests {
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
             seq_ids: vec![seq_id],
+            logprobs: Vec::new(),
         };
 
         scheduler.update_sequences(&exec_output, 0);
@@ -662,6 +674,7 @@ mod tests {
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
             seq_ids: vec![seq_id],
+            logprobs: Vec::new(),
         };
         scheduler.update_sequences(&exec_output, 0);
 
@@ -688,6 +701,7 @@ mod tests {
         let exec_output = ExecutionOutput {
             next_tokens: vec![100],
             seq_ids: vec![seq_id],
+            logprobs: Vec::new(),
         };
         scheduler.update_sequences(&exec_output, 0);
 
@@ -695,6 +709,7 @@ mod tests {
         let exec_output = ExecutionOutput {
             next_tokens: vec![101],
             seq_ids: vec![seq_id],
+            logprobs: Vec::new(),
         };
         scheduler.update_sequences(&exec_output, 0);
 
@@ -722,6 +737,7 @@ mod tests {
             &ExecutionOutput {
                 next_tokens: vec![100],
                 seq_ids: vec![decode_seq_id],
+                logprobs: Vec::new(),
             },
             0,
         );
@@ -789,6 +805,7 @@ mod tests {
             &ExecutionOutput {
                 next_tokens: vec![100],
                 seq_ids: vec![active_seq],
+                logprobs: Vec::new(),
             },
             0,
         );
@@ -857,6 +874,7 @@ mod tests {
             &ExecutionOutput {
                 next_tokens: Vec::new(),
                 seq_ids: vec![seq_id],
+                logprobs: Vec::new(),
             },
             2,
         );
@@ -924,6 +942,7 @@ mod property_tests {
                 if !seq_ids.is_empty() {
                     let exec_output = ExecutionOutput {
                         next_tokens: vec![100; seq_ids.len()],
+                        logprobs: Vec::new(),
                         seq_ids,
                     };
                     scheduler.update_sequences(&exec_output, 0);
@@ -980,6 +999,7 @@ mod property_tests {
                     let exec_output = ExecutionOutput {
                         next_tokens,
                         seq_ids,
+                        logprobs: Vec::new(),
                     };
                     scheduler.update_sequences(&exec_output, 0);
                 }
@@ -1035,6 +1055,7 @@ mod property_tests {
                     let exec_output = ExecutionOutput {
                         next_tokens,
                         seq_ids,
+                        logprobs: Vec::new(),
                     };
                     scheduler.update_sequences(&exec_output, 0);
                 }
@@ -1070,6 +1091,7 @@ mod property_tests {
                     let exec_output = ExecutionOutput {
                         next_tokens,
                         seq_ids,
+                        logprobs: Vec::new(),
                     };
                     scheduler.update_sequences(&exec_output, 0);
                 }
@@ -1112,6 +1134,7 @@ mod property_tests {
             let exec_output = ExecutionOutput {
                 next_tokens,
                 seq_ids: prefill_seq_ids.clone(),
+                logprobs: Vec::new(),
             };
 
             scheduler.update_sequences(&exec_output, 0);
@@ -1148,6 +1171,7 @@ mod property_tests {
             let exec_output = ExecutionOutput {
                 next_tokens: vec![100],
                 seq_ids: vec![seq_id],
+                logprobs: Vec::new(),
             };
             scheduler.update_sequences(&exec_output, 0);
 
@@ -1166,6 +1190,7 @@ mod property_tests {
                 let exec_output = ExecutionOutput {
                     next_tokens: vec![token],
                     seq_ids: vec![seq_id],
+                    logprobs: Vec::new(),
                 };
                 scheduler.update_sequences(&exec_output, eos_token);
                 generated += 1;

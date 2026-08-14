@@ -154,6 +154,10 @@ pub enum EngineError {
     #[error("停止序列数量超出限制: {0}（最多 4 个）")]
     TooManyStopSequences(usize),
 
+    /// top logprobs 数量超出限制：{0}（OpenAI 允许最多 5 个）
+    #[error("top logprobs 数量超出限制: {0}（最多 5 个）")]
+    InvalidLogprobs(usize),
+
     /// 输入文本为空
     #[error("输入文本为空")]
     EmptyInput,

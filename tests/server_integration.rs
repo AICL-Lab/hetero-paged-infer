@@ -584,6 +584,7 @@ impl GPUExecutorTrait for SlowExecutor {
         Ok(ExecutionOutput {
             next_tokens: vec![100; batch.seq_ids.len()],
             seq_ids: batch.seq_ids.clone(),
+            logprobs: Vec::new(),
         })
     }
 }
@@ -666,6 +667,7 @@ impl GPUExecutorTrait for CountingExecutor {
         Ok(ExecutionOutput {
             next_tokens: vec![100; batch.num_sequences()],
             seq_ids: batch.seq_ids.clone(),
+            logprobs: Vec::new(),
         })
     }
 }
@@ -881,14 +883,10 @@ async fn test_completions_rejects_unsupported_params() {
     let app = create_router(create_test_config()).unwrap();
 
     let cases = [
-        // stop（PINF-105）与 n（PINF-106）已支持，不再在此拒绝
+        // stop（PINF-105）、n（PINF-106）、logprobs（PINF-107）已支持，不再在此拒绝
         (
             "seed",
             json!({"model":"test-model","prompt":"hi","max_tokens":2,"seed":42}),
-        ),
-        (
-            "logprobs",
-            json!({"model":"test-model","prompt":"hi","max_tokens":2,"logprobs":true}),
         ),
         (
             "echo",
@@ -1446,4 +1444,197 @@ async fn test_completions_rejects_invalid_n() {
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["type"], "invalid_request_error");
     }
+}
+
+#[tokio::test]
+async fn test_completions_returns_logprobs() {
+    // PINF-107：logprobs=true 时每个 choice 携带 logprobs 块
+    // （tokens / token_logprobs / top_logprobs / text_offset）。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 3,
+                        "logprobs": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    let lp = &json["choices"][0]["logprobs"];
+    assert_eq!(lp["tokens"].as_array().unwrap().len(), 3);
+    assert_eq!(lp["token_logprobs"].as_array().unwrap().len(), 3);
+    assert_eq!(lp["top_logprobs"].as_array().unwrap().len(), 3);
+    assert_eq!(lp["text_offset"].as_array().unwrap().len(), 3);
+    // 每个 token_logprob 应为有限数值
+    for v in lp["token_logprobs"].as_array().unwrap() {
+        assert!(v.as_f64().unwrap().is_finite());
+    }
+    // top_logprobs 每项是 {token文本: logprob} 的 map，且包含选中 token
+    let first_top = lp["top_logprobs"][0].as_object().unwrap();
+    assert!(!first_top.is_empty());
+    assert_eq!(lp["text_offset"][0], 0);
+}
+
+#[tokio::test]
+async fn test_completions_omits_logprobs_by_default() {
+    // PINF-107：未请求 logprobs 时响应不携带该字段（而非空对象）。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"model":"test-model","prompt":"hi","max_tokens":2}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["choices"][0].get("logprobs").is_none(),
+        "logprobs must be omitted when not requested"
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_carries_logprobs() {
+    // PINF-107：流式每个携带内容的 chunk 同时携带该 token 的 logprobs。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 2,
+                        "logprobs": true,
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    let mut saw_content_logprobs = false;
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
+        let payload: Value = serde_json::from_str(data).unwrap();
+        let choice = &payload["choices"][0];
+        if choice["finish_reason"].is_null() && !choice["text"].as_str().unwrap().is_empty() {
+            // 携带内容的 chunk 必须带 logprobs（单 token 块）
+            let lp = &choice["logprobs"];
+            assert_eq!(lp["tokens"].as_array().unwrap().len(), 1);
+            assert_eq!(lp["token_logprobs"].as_array().unwrap().len(), 1);
+            saw_content_logprobs = true;
+        }
+    }
+    assert!(
+        saw_content_logprobs,
+        "at least one content chunk must carry logprobs"
+    );
+}
+
+#[tokio::test]
+async fn test_chat_completions_returns_logprobs() {
+    // PINF-107：chat/completions 同样支持 logprobs。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 2,
+                        "logprobs": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let lp = &json["choices"][0]["logprobs"];
+    assert_eq!(lp["tokens"].as_array().unwrap().len(), 2);
+    assert_eq!(lp["top_logprobs"].as_array().unwrap().len(), 2);
+    // logprobs=2：top_logprobs 每项含至多 2 个候选
+    assert!(lp["top_logprobs"][0].as_object().unwrap().len() <= 2);
+}
+
+#[tokio::test]
+async fn test_completions_rejects_logprobs_above_limit() {
+    // PINF-107：logprobs > 5（OpenAI 上限）在准入阶段返回 400。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 2,
+                        "logprobs": 6
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["type"], "invalid_request_error");
 }
