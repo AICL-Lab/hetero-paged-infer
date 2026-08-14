@@ -158,7 +158,7 @@ pub struct CpuReferenceExecutor {
     config: EngineConfig,
     vocab_size: u32,
     model: CpuModel,
-    kv_cache: HashMap<BlockIdx, KvBlock>,
+    kv_cache: HashMap<(usize, BlockIdx), KvBlock>,
 }
 
 impl std::fmt::Debug for CpuReferenceExecutor {
@@ -206,7 +206,7 @@ impl CpuReferenceExecutor {
                 &self.model.token_embedding[embed_idx * HIDDEN_DIM..(embed_idx + 1) * HIDDEN_DIM],
             );
 
-            for layer in &self.model.layers {
+            for (layer_idx, layer) in self.model.layers.iter().enumerate() {
                 // --- Attention block ---
                 let normed = rmsnorm(&hidden, &layer.rms_att, RMS_EPS);
                 let mut q = matmul_vec(&layer.wq, &normed, HIDDEN_DIM, HIDDEN_DIM);
@@ -216,19 +216,22 @@ impl CpuReferenceExecutor {
                 apply_rope(&mut q, pos, NUM_HEADS, HEAD_DIM);
                 apply_rope(&mut k, pos, NUM_KV_HEADS, HEAD_DIM);
 
-                // 写入 K/V 到 paged cache
+                // 写入 K/V 到 paged cache (layer-aware key)
                 let block_idx = block_table[pos / bs];
                 let offset = pos % bs;
                 let start = offset * KV_DIM;
-                let block = self.kv_cache.entry(block_idx).or_insert_with(|| KvBlock {
-                    k: vec![0.0; bs * KV_DIM],
-                    v: vec![0.0; bs * KV_DIM],
-                });
+                let block = self
+                    .kv_cache
+                    .entry((layer_idx, block_idx))
+                    .or_insert_with(|| KvBlock {
+                        k: vec![0.0; bs * KV_DIM],
+                        v: vec![0.0; bs * KV_DIM],
+                    });
                 block.k[start..start + KV_DIM].copy_from_slice(&k);
                 block.v[start..start + KV_DIM].copy_from_slice(&v);
 
                 // Attention: 读取位置 0..=pos 的 K/V
-                let attn_out = self.attention(&q, block_table, pos)?;
+                let attn_out = self.attention(&q, block_table, pos, layer_idx)?;
 
                 // Output 投影 + 残差
                 let proj = matmul_vec(&layer.wo, &attn_out, HIDDEN_DIM, HIDDEN_DIM);
@@ -277,6 +280,7 @@ impl CpuReferenceExecutor {
         q: &[f32],
         block_table: &[BlockIdx],
         pos: usize,
+        layer_idx: usize,
     ) -> Result<Vec<f32>, EngineError> {
         let bs = self.block_size();
         let scale = 1.0 / (HEAD_DIM as f32).sqrt();
@@ -293,8 +297,10 @@ impl CpuReferenceExecutor {
                 let block_idx = block_table[i / bs];
                 let offset = i % bs;
                 let k_start = offset * KV_DIM + kv_h * HEAD_DIM;
-                let block = self.kv_cache.get(&block_idx).ok_or_else(|| {
-                    EngineError::BackendError(format!("KV cache miss for block {block_idx}"))
+                let block = self.kv_cache.get(&(layer_idx, block_idx)).ok_or_else(|| {
+                    EngineError::BackendError(format!(
+                        "KV cache miss for layer {layer_idx}, block {block_idx}"
+                    ))
                 })?;
                 let k_h = &block.k[k_start..k_start + HEAD_DIM];
                 let score = q_h.iter().zip(k_h).map(|(a, b)| a * b).sum::<f32>() * scale;
@@ -316,8 +322,10 @@ impl CpuReferenceExecutor {
                 let block_idx = block_table[i / bs];
                 let offset = i % bs;
                 let v_start = offset * KV_DIM + kv_h * HEAD_DIM;
-                let block = self.kv_cache.get(&block_idx).ok_or_else(|| {
-                    EngineError::BackendError(format!("KV cache miss for block {block_idx}"))
+                let block = self.kv_cache.get(&(layer_idx, block_idx)).ok_or_else(|| {
+                    EngineError::BackendError(format!(
+                        "KV cache miss for layer {layer_idx}, block {block_idx}"
+                    ))
                 })?;
                 let v_h = &block.v[v_start..v_start + HEAD_DIM];
                 for d in 0..HEAD_DIM {
@@ -498,5 +506,118 @@ mod tests {
         let output = result.unwrap();
         assert_eq!(output.next_tokens.len(), 2);
         assert!(output.next_tokens.iter().all(|&t| t < 128));
+    }
+}
+
+#[cfg(test)]
+mod layer_isolation_tests {
+    use super::*;
+    use crate::test_utils::create_test_config;
+
+    /// PINF-001 regression test: Two layers writing to the same physical block
+    /// at the same position must not overwrite each other.
+    ///
+    /// With the old HashMap<BlockIdx, KvBlock> key, layer 1 would overwrite
+    /// layer 0's K/V at the same position. This test verifies that the
+    /// layer-aware key prevents cross-layer contamination.
+    #[test]
+    fn test_layer_kv_isolation() {
+        let config = create_test_config();
+        let mut executor = CpuReferenceExecutor::new(config, 128);
+
+        // Run a prefill with 3 tokens - this exercises both layers
+        let batch = ExecutionBatch {
+            input_tokens: vec![10, 20, 30],
+            positions: vec![0, 1, 2],
+            seq_lens: vec![3],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![true],
+            seq_ids: vec![1],
+            context_lens: vec![3],
+        };
+
+        let result = executor.execute(&batch);
+        assert!(result.is_ok(), "prefill should succeed");
+
+        // After prefill, both layers should have independent K/V data in block 0.
+        // With the old single-key HashMap, only the last layer's data would remain.
+        // Verify that layer 0's cache is distinct from layer 1's cache.
+        let layer0 = executor.kv_cache.get(&(0, 0));
+        let layer1 = executor.kv_cache.get(&(1, 0));
+
+        assert!(layer0.is_some(), "layer 0 cache should exist");
+        assert!(layer1.is_some(), "layer 1 cache should exist");
+
+        let l0 = layer0.unwrap();
+        let l1 = layer1.unwrap();
+
+        // K/V data for layer 0 and layer 1 should differ (different random weights)
+        let k_differs: bool =
+            l0.k.iter()
+                .zip(l1.k.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-10);
+        let v_differs: bool =
+            l0.v.iter()
+                .zip(l1.v.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-10);
+        assert!(k_differs, "layer 0 and layer 1 K data must differ");
+        assert!(v_differs, "layer 0 and layer 1 V data must differ");
+    }
+
+    /// PINF-001: Multi-layer incremental decode should produce the same result
+    /// as a full recompute when given the same input tokens.
+    ///
+    /// Full prefill [5,10,15,20] should produce the same next token as
+    /// prefill [5,10,15] + decode [20] at position 3.
+    #[test]
+    fn test_multilayer_incremental_vs_full_recompute() {
+        let config = create_test_config();
+
+        // Full prefill: process all 4 tokens at once
+        let mut exec_full = CpuReferenceExecutor::new(config.clone(), 128);
+        let batch_full = ExecutionBatch {
+            input_tokens: vec![5, 10, 15, 20],
+            positions: vec![0, 1, 2, 3],
+            seq_lens: vec![4],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![true],
+            seq_ids: vec![1],
+            context_lens: vec![4],
+        };
+        let out_full = exec_full.execute(&batch_full).unwrap();
+
+        // Incremental: prefill 3 tokens, then decode with token 20 at position 3
+        let mut exec_incr = CpuReferenceExecutor::new(config, 128);
+        let batch_prefill = ExecutionBatch {
+            input_tokens: vec![5, 10, 15],
+            positions: vec![0, 1, 2],
+            seq_lens: vec![3],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![true],
+            seq_ids: vec![1],
+            context_lens: vec![3],
+        };
+        exec_incr.execute(&batch_prefill).unwrap();
+
+        // Decode with the SAME 4th token (20) at position 3
+        let batch_decode = ExecutionBatch {
+            input_tokens: vec![20],
+            positions: vec![3],
+            seq_lens: vec![1],
+            block_tables: vec![vec![0]],
+            is_prefill: vec![false],
+            seq_ids: vec![1],
+            context_lens: vec![4],
+        };
+        let out_decode = exec_incr.execute(&batch_decode).unwrap();
+
+        // Both paths compute the same model on the same 4 tokens, so the
+        // next token prediction should be identical. This verifies that
+        // the layer-aware cache correctly preserves per-layer K/V across
+        // prefill + decode.
+        assert_eq!(
+            out_decode.next_tokens[0], out_full.next_tokens[0],
+            "incremental decode should match full recompute for same tokens"
+        );
     }
 }
