@@ -873,3 +873,169 @@ async fn test_streaming_reports_stop_finish_reason_on_eos() {
         "EOS-terminated stream must end with a stop chunk, got: {final_reason:?}"
     );
 }
+
+#[tokio::test]
+async fn test_completions_rejects_unsupported_params() {
+    // PINF-104：CPU 后端未实现的参数在准入阶段返回 400 + invalid_request_error，
+    // 消息带参数名——而不是被 serde 静默忽略。
+    let app = create_router(create_test_config()).unwrap();
+
+    let cases = [
+        (
+            "stop",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"stop":"\n"}),
+        ),
+        (
+            "n",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":2}),
+        ),
+        (
+            "seed",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"seed":42}),
+        ),
+        (
+            "logprobs",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"logprobs":true}),
+        ),
+        (
+            "echo",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"echo":true}),
+        ),
+        (
+            "suffix",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"suffix":"!"}),
+        ),
+        (
+            "frequency_penalty",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"frequency_penalty":0.5}),
+        ),
+        (
+            "presence_penalty",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"presence_penalty":0.5}),
+        ),
+        (
+            "best_of",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"best_of":2}),
+        ),
+        (
+            "stream_options",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"stream_options":{"include_usage":true}}),
+        ),
+        (
+            "tools",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"tools":[{"type":"function"}]}),
+        ),
+        (
+            "tool_choice",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"tool_choice":"auto"}),
+        ),
+        (
+            "response_format",
+            json!({"model":"test-model","prompt":"hi","max_tokens":2,"response_format":{"type":"json_object"}}),
+        ),
+    ];
+
+    for (param, body) in cases {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "param {param} must be rejected: {body}"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["type"], "invalid_request_error");
+        assert!(
+            json["error"]["message"].as_str().unwrap().contains(param),
+            "message must name param {param}: {}",
+            json["error"]["message"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_chat_completions_rejects_unsupported_params() {
+    // PINF-104：chat/completions 同样在准入阶段拒绝未支持参数。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 2,
+                        "tools": [{"type": "function", "function": {"name": "f"}}],
+                        "response_format": {"type": "json_object"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert!(json["error"]["message"].as_str().unwrap().contains("tools"));
+}
+
+#[tokio::test]
+async fn test_completions_accepts_unsupported_params_at_defaults() {
+    // PINF-104：未支持参数取默认值时（frequency_penalty=0、n=1、stop=null/[]、
+    // echo=false、logprobs=false/0、best_of=1）语义无害，仍应放行；
+    // 完全未知的字段（如 user）也应忽略而非拒绝。
+    let app = create_router(create_test_config()).unwrap();
+
+    let cases = [
+        json!({"model":"test-model","prompt":"hi","max_tokens":2}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"frequency_penalty":0.0}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"presence_penalty":0.0}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":1}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"echo":false}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"logprobs":false}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"logprobs":0}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"stop":[]}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"best_of":1}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"user":"client-42"}),
+    ];
+
+    for body in cases {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "default values must pass: {body}"
+        );
+    }
+}

@@ -256,6 +256,120 @@ struct GenerationResult {
     finish_reason: String,
 }
 
+/// `stop` 停止序列：单个字符串或字符串数组（OpenAI 兼容形态）。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StopSequence {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl StopSequence {
+    /// 是否等价于"不停止"（null / 空字符串 / 空数组）。
+    fn is_empty(&self) -> bool {
+        match self {
+            StopSequence::Single(s) => s.is_empty(),
+            StopSequence::Multiple(v) => v.is_empty(),
+        }
+    }
+}
+
+/// CPU 后端未实现的 OpenAI 兼容参数（PINF-104）。
+///
+/// 与 PINF-101 的原则一致：不支持的参数在准入阶段显式拒绝（400），
+/// 而不是被 serde 静默忽略。仅"非默认值"被拒绝——默认值（例如
+/// `frequency_penalty=0`、`n=1`、`stop=null`/`[]`、`echo=false`）语义上
+/// 无害，直接放行。其余完全未知的字段（如 `user`）仍被忽略，不影响
+/// 生成语义。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct UnsupportedParams {
+    stop: Option<StopSequence>,
+    n: Option<u32>,
+    seed: Option<i64>,
+    logprobs: Option<serde_json::Value>,
+    echo: Option<bool>,
+    suffix: Option<String>,
+    frequency_penalty: Option<f32>,
+    presence_penalty: Option<f32>,
+    best_of: Option<u32>,
+    stream_options: Option<serde_json::Value>,
+    // chat/completions 特有
+    tools: Option<serde_json::Value>,
+    tool_choice: Option<serde_json::Value>,
+    response_format: Option<serde_json::Value>,
+    function_call: Option<serde_json::Value>,
+    functions: Option<serde_json::Value>,
+}
+
+/// `logprobs` 是否处于"关闭"状态（`false` 或 `0`）。
+fn logprobs_is_off(v: &serde_json::Value) -> bool {
+    matches!(v, serde_json::Value::Bool(false)) || matches!(v.as_u64(), Some(0))
+}
+
+/// 值是否为空数组（等价于"未提供"）。
+fn is_empty_array(v: &serde_json::Value) -> bool {
+    matches!(v, serde_json::Value::Array(a) if a.is_empty())
+}
+
+/// 拒绝未支持参数的非默认值（PINF-104）。
+///
+/// 返回 400 + `invalid_request_error`，消息带参数名以便客户端定位。
+fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
+    let unsupported = |name: &str| {
+        Err(ApiError::BadRequest(format!(
+            "parameter '{name}' is not supported by the CPU reference backend"
+        )))
+    };
+
+    if p.stop.as_ref().is_some_and(|s| !s.is_empty()) {
+        return unsupported("stop");
+    }
+    if p.n.is_some_and(|n| n != 1) {
+        return unsupported("n");
+    }
+    if p.seed.is_some() {
+        return unsupported("seed");
+    }
+    if p.logprobs.as_ref().is_some_and(|v| !logprobs_is_off(v)) {
+        return unsupported("logprobs");
+    }
+    if p.echo == Some(true) {
+        return unsupported("echo");
+    }
+    if p.suffix.as_ref().is_some_and(|s| !s.is_empty()) {
+        return unsupported("suffix");
+    }
+    if p.frequency_penalty.is_some_and(|v| v != 0.0) {
+        return unsupported("frequency_penalty");
+    }
+    if p.presence_penalty.is_some_and(|v| v != 0.0) {
+        return unsupported("presence_penalty");
+    }
+    if p.best_of.is_some_and(|v| v != 1) {
+        return unsupported("best_of");
+    }
+    if p.stream_options.is_some() {
+        return unsupported("stream_options");
+    }
+    if p.tools.as_ref().is_some_and(|v| !is_empty_array(v)) {
+        return unsupported("tools");
+    }
+    if p.tool_choice.is_some() {
+        return unsupported("tool_choice");
+    }
+    if p.response_format.is_some() {
+        return unsupported("response_format");
+    }
+    if p.function_call.is_some() {
+        return unsupported("function_call");
+    }
+    if p.functions.as_ref().is_some_and(|v| !is_empty_array(v)) {
+        return unsupported("functions");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 struct CompletionRequest {
     model: Option<String>,
@@ -264,6 +378,8 @@ struct CompletionRequest {
     temperature: Option<f32>,
     top_p: Option<f32>,
     stream: Option<bool>,
+    #[serde(flatten)]
+    unsupported: UnsupportedParams,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +390,8 @@ struct ChatCompletionRequest {
     temperature: Option<f32>,
     top_p: Option<f32>,
     stream: Option<bool>,
+    #[serde(flatten)]
+    unsupported: UnsupportedParams,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -725,6 +843,7 @@ fn prepare_completion_request(
     state: &AppState,
     request: CompletionRequest,
 ) -> Result<PreparedGenerationRequest, ApiError> {
+    reject_unsupported_params(&request.unsupported)?;
     let prompt = validate_prompt(request.prompt)?;
     Ok(PreparedGenerationRequest {
         model: resolve_model(state, request.model)?,
@@ -738,6 +857,7 @@ fn prepare_chat_request(
     state: &AppState,
     request: ChatCompletionRequest,
 ) -> Result<PreparedGenerationRequest, ApiError> {
+    reject_unsupported_params(&request.unsupported)?;
     if request.messages.is_empty() {
         return Err(ApiError::BadRequest(
             "messages must not be empty".to_string(),
