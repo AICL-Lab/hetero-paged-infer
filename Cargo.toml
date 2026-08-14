@@ -28,6 +28,10 @@ http-body-util = "0.1"
 name = "engine_benchmark"
 harness = false
 
+[[bench]]
+name = "concurrency_benchmark"
+harness = false
+
 [features]
 default = []
 # 暴露 src/test_utils.rs 中的测试辅助代码，供集成测试与 bench 使用。

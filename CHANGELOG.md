@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 并发压测框架（ROADMAP 选项 A 第三项）：
+  - `tests/concurrency_stress.rs`：并发突发尾延迟分布、高并发资源守恒、
+    失败隔离与失败后资源归还、内存压力优雅处理（4 个场景断言）
+  - `benches/concurrency_benchmark.rs`：并发突发吞吐基线
+    （n8/16/32/64 全部排空耗时，Mock 后端）
 - Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests), and `submit_request()` returning `(request_id, prompt_tokens)` from a single tokenization pass.
 - Server: true token-level SSE streaming, 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
 - Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones; CI now runs the test suite with `--all-features` and a `cargo bench -- --test` smoke run.

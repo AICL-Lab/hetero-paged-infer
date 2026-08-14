@@ -26,7 +26,9 @@
 **选项 A：与 tiny-llm 对接（推荐，形成 mini-vLLM 故事）**
 - [ ] 定义 EngineBackend trait，把 tiny-llm 作为真实执行后端接入
 - [ ] 真实模型的端到端 serving：分页 KV + 连续批处理 + 真实 token 生成
-- [ ] 并发压测：资源守恒、尾延迟、失败传播
+- [x] 并发压测：资源守恒、尾延迟、失败传播
+      （Mock/CPU 后端先行，真实 tiny-llm 后端接入后直接切换 executor 复用场景：
+      `tests/concurrency_stress.rs` 断言 + `benches/concurrency_benchmark.rs` 性能基线）
 
 **选项 B：转向主流框架贡献（对求职更高效）**
 - [ ] 把本仓库的调度练习转化为对 vLLM / SGLang 的理解与 PR
