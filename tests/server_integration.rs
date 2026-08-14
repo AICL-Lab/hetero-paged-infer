@@ -881,11 +881,7 @@ async fn test_completions_rejects_unsupported_params() {
     let app = create_router(create_test_config()).unwrap();
 
     let cases = [
-        // stop 已由 PINF-105 支持，不再在此拒绝（见 test_completions_honors_stop_sequences）
-        (
-            "n",
-            json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":2}),
-        ),
+        // stop（PINF-105）与 n（PINF-106）已支持，不再在此拒绝
         (
             "seed",
             json!({"model":"test-model","prompt":"hi","max_tokens":2,"seed":42}),
@@ -1250,4 +1246,204 @@ async fn test_chat_completions_honors_stop_sequences() {
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["choices"][0]["message"]["content"], "A");
     assert_eq!(json["choices"][0]["finish_reason"], "stop");
+}
+
+#[tokio::test]
+async fn test_completions_returns_n_candidates() {
+    // PINF-106：非流式 n>1 返回 n 个 choices；usage.completion_tokens 为各
+    // 候选之和（prompt 只计一次）。greedy 后端所有候选内容相同。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(ConstantTokenExecutor { token: 37 }), // 'A'
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 3,
+                        "n": 3
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    let choices = json["choices"].as_array().unwrap();
+    assert_eq!(choices.len(), 3, "n=3 must yield 3 choices");
+    for (i, choice) in choices.iter().enumerate() {
+        assert_eq!(choice["index"], i as u64);
+        assert_eq!(choice["text"], "AAA");
+        assert_eq!(choice["finish_reason"], "length");
+    }
+    assert_eq!(
+        json["usage"]["completion_tokens"], 9,
+        "completion_tokens must sum across candidates (3 x 3 tokens)"
+    );
+    assert_usage_consistent(&json);
+}
+
+#[tokio::test]
+async fn test_streaming_merges_n_candidates() {
+    // PINF-106：流式 n=2 fan-in 为单一 SSE；中间 chunk 含 2 个 choice，
+    // 终止 chunk 带 2 个 finish_reason 与聚合 usage。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(ConstantTokenExecutor { token: 37 }), // 'A'
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 2,
+                        "n": 2,
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    let mut per_index = vec![String::new(); 2];
+    let mut final_reasons: Vec<String> = Vec::new();
+    let mut saw_usage = false;
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
+        let payload: Value = serde_json::from_str(data).unwrap();
+        let choices = payload["choices"].as_array().unwrap();
+        assert_eq!(choices.len(), 2, "each chunk must carry n=2 choices");
+        for choice in choices {
+            let index = choice["index"].as_u64().unwrap() as usize;
+            if choice["finish_reason"].is_null() {
+                per_index[index].push_str(choice["text"].as_str().unwrap());
+            } else {
+                final_reasons.push(choice["finish_reason"].as_str().unwrap().to_string());
+            }
+        }
+        if !payload["usage"].is_null() {
+            saw_usage = true;
+        }
+    }
+
+    assert_eq!(per_index, vec!["AA".to_string(), "AA".to_string()]);
+    assert_eq!(
+        final_reasons,
+        vec!["length".to_string(), "length".to_string()]
+    );
+    assert!(saw_usage, "final chunk must carry aggregated usage");
+}
+
+#[tokio::test]
+async fn test_chat_completions_returns_n_candidates() {
+    // PINF-106：chat/completions 同样支持 n。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(ConstantTokenExecutor { token: 37 }), // 'A'
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 2,
+                        "n": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let choices = json["choices"].as_array().unwrap();
+    assert_eq!(choices.len(), 2);
+    assert_eq!(choices[0]["message"]["content"], "AA");
+    assert_eq!(choices[1]["message"]["content"], "AA");
+}
+
+#[tokio::test]
+async fn test_completions_rejects_invalid_n() {
+    // PINF-106：n=0 与超上限（16）在准入阶段返回 400。
+    let app = create_router(create_test_config()).unwrap();
+
+    for body in [
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":0}),
+        json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":17}),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "invalid n must be rejected: {body}"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["type"], "invalid_request_error");
+    }
 }

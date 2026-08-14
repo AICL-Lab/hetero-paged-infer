@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 
 /// 提交队列容量；队列满时 handler 异步等待（背压），不会丢失请求。
 const SUBMISSION_QUEUE_CAPACITY: usize = 1024;
@@ -293,7 +294,6 @@ impl StopSequence {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct UnsupportedParams {
-    n: Option<u32>,
     seed: Option<i64>,
     logprobs: Option<serde_json::Value>,
     echo: Option<bool>,
@@ -330,9 +330,6 @@ fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
         )))
     };
 
-    if p.n.is_some_and(|n| n != 1) {
-        return unsupported("n");
-    }
     if p.seed.is_some() {
         return unsupported("seed");
     }
@@ -384,6 +381,7 @@ struct CompletionRequest {
     top_p: Option<f32>,
     stream: Option<bool>,
     stop: Option<StopSequence>,
+    n: Option<u32>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -397,6 +395,7 @@ struct ChatCompletionRequest {
     top_p: Option<f32>,
     stream: Option<bool>,
     stop: Option<StopSequence>,
+    n: Option<u32>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -453,6 +452,8 @@ struct PreparedGenerationRequest {
     prompt: String,
     params: GenerationParams,
     stream: bool,
+    /// 候选数（OpenAI `n`）：同一 prompt 生成 n 个独立候选。
+    n: usize,
 }
 
 /// 根据配置创建 router（构造默认引擎并启动引擎循环）
@@ -652,27 +653,50 @@ async fn respond_generation(
     prepared: PreparedGenerationRequest,
 ) -> Response {
     if prepared.stream {
-        match state.submit(&prepared.prompt, prepared.params).await {
-            Ok((admission, events)) => {
-                state
-                    .metrics
-                    .streaming_requests_total
-                    .fetch_add(1, Ordering::Relaxed);
-                stream_response(
-                    state,
-                    kind,
-                    id_prefix,
-                    &prepared.model,
-                    admission.prompt_tokens,
-                    events,
-                )
-            }
-            Err(err) => {
-                state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
-                err.into_response()
+        // 流式：为每个候选提交并 fan-in 为单一 SSE 流
+        let mut streams = Vec::with_capacity(prepared.n);
+        let mut prompt_tokens = 0;
+        for _ in 0..prepared.n {
+            match state
+                .submit(&prepared.prompt, prepared.params.clone())
+                .await
+            {
+                Ok((admission, events)) => {
+                    if streams.is_empty() {
+                        prompt_tokens = admission.prompt_tokens;
+                    }
+                    streams.push(events);
+                }
+                Err(err) => {
+                    state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
+                    return err.into_response();
+                }
             }
         }
-    } else {
+        state
+            .metrics
+            .streaming_requests_total
+            .fetch_add(1, Ordering::Relaxed);
+        if prepared.n == 1 {
+            stream_response(
+                state,
+                kind,
+                id_prefix,
+                &prepared.model,
+                prompt_tokens,
+                streams.pop().expect("n == 1 has exactly one stream"),
+            )
+        } else {
+            stream_response_multi(
+                state,
+                kind,
+                id_prefix,
+                &prepared.model,
+                prompt_tokens,
+                streams,
+            )
+        }
+    } else if prepared.n == 1 {
         match state.generate(&prepared.prompt, prepared.params).await {
             Ok(generated) => match kind {
                 StreamKind::Completion => {
@@ -716,8 +740,64 @@ async fn respond_generation(
                 err.into_response()
             }
         }
+    } else {
+        // 非流式 n>1：并行生成 n 个候选，响应含 n 个 choices
+        match generate_many(state, &prepared).await {
+            Ok(generated) => match kind {
+                StreamKind::Completion => {
+                    let response_usage = usage_multi(&generated);
+                    Json(CompletionResponse {
+                        id: state.next_id(id_prefix),
+                        object: "text_completion",
+                        created: unix_timestamp(),
+                        model: prepared.model,
+                        choices: generated
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, g)| CompletionChoice {
+                                text: g.text,
+                                index: i as u32,
+                                finish_reason: g.finish_reason,
+                            })
+                            .collect(),
+                        usage: response_usage,
+                    })
+                    .into_response()
+                }
+                StreamKind::Chat => {
+                    let response_usage = usage_multi(&generated);
+                    Json(ChatCompletionResponse {
+                        id: state.next_id(id_prefix),
+                        object: "chat.completion",
+                        created: unix_timestamp(),
+                        model: prepared.model,
+                        choices: generated
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, g)| ChatCompletionChoice {
+                                index: i as u32,
+                                message: ChatMessage {
+                                    role: "assistant".to_string(),
+                                    content: g.text,
+                                },
+                                finish_reason: g.finish_reason,
+                            })
+                            .collect(),
+                        usage: response_usage,
+                    })
+                    .into_response()
+                }
+            },
+            Err(err) => {
+                state.metrics.errors_total.fetch_add(1, Ordering::Relaxed);
+                err.into_response()
+            }
+        }
     }
 }
+
+/// OpenAI `n` 候选数的上限（架构练习默认 16，避免无界资源占用）。
+const MAX_CANDIDATES: usize = 16;
 
 /// 流式响应的两种载荷形状。
 #[derive(Clone, Copy)]
@@ -727,25 +807,51 @@ enum StreamKind {
 }
 
 impl StreamKind {
+    /// 单 choice 的中间 chunk（`n == 1` 特例）。
     fn chunk_payload(&self, id: &str, created: u64, model: &str, chunk: &str) -> serde_json::Value {
-        match self {
-            StreamKind::Completion => serde_json::json!({
-                "id": id,
-                "object": "text_completion",
-                "created": created,
-                "model": model,
-                "choices": [{"text": chunk, "index": 0, "finish_reason": serde_json::Value::Null}],
-            }),
-            StreamKind::Chat => serde_json::json!({
-                "id": id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": serde_json::Value::Null}],
-            }),
-        }
+        self.multi_chunk_payload(id, created, model, 1, 0, chunk)
     }
 
+    /// `n` 候选的中间 chunk：n 个 choice，仅事件来源 `index` 携带增量。
+    fn multi_chunk_payload(
+        &self,
+        id: &str,
+        created: u64,
+        model: &str,
+        n: usize,
+        index: usize,
+        chunk: &str,
+    ) -> serde_json::Value {
+        let object = match self {
+            StreamKind::Completion => "text_completion",
+            StreamKind::Chat => "chat.completion.chunk",
+        };
+        let choices: Vec<serde_json::Value> = (0..n)
+            .map(|i| match self {
+                StreamKind::Completion if i == index => serde_json::json!({
+                    "text": chunk, "index": i, "finish_reason": serde_json::Value::Null
+                }),
+                StreamKind::Completion => serde_json::json!({
+                    "text": "", "index": i, "finish_reason": serde_json::Value::Null
+                }),
+                StreamKind::Chat if i == index => serde_json::json!({
+                    "index": i, "delta": {"content": chunk}, "finish_reason": serde_json::Value::Null
+                }),
+                StreamKind::Chat => serde_json::json!({
+                    "index": i, "delta": {}, "finish_reason": serde_json::Value::Null
+                }),
+            })
+            .collect();
+        serde_json::json!({
+            "id": id,
+            "object": object,
+            "created": created,
+            "model": model,
+            "choices": choices,
+        })
+    }
+
+    /// 单 choice 的终止 chunk（`n == 1` 特例）。
     fn final_payload(
         &self,
         id: &str,
@@ -754,22 +860,41 @@ impl StreamKind {
         usage: &Usage,
         finish_reason: &str,
     ) -> serde_json::Value {
-        let mut payload = match self {
-            StreamKind::Completion => serde_json::json!({
-                "id": id,
-                "object": "text_completion",
-                "created": created,
-                "model": model,
-                "choices": [{"text": "", "index": 0, "finish_reason": finish_reason}],
-            }),
-            StreamKind::Chat => serde_json::json!({
-                "id": id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
-            }),
+        self.multi_final_payload(id, created, model, &[finish_reason], usage)
+    }
+
+    /// `n` 候选的终止 chunk：n 个 finish_reason + 聚合 usage。
+    fn multi_final_payload(
+        &self,
+        id: &str,
+        created: u64,
+        model: &str,
+        finish_reasons: &[&str],
+        usage: &Usage,
+    ) -> serde_json::Value {
+        let object = match self {
+            StreamKind::Completion => "text_completion",
+            StreamKind::Chat => "chat.completion.chunk",
         };
+        let choices: Vec<serde_json::Value> = finish_reasons
+            .iter()
+            .enumerate()
+            .map(|(i, finish_reason)| match self {
+                StreamKind::Completion => serde_json::json!({
+                    "text": "", "index": i, "finish_reason": finish_reason
+                }),
+                StreamKind::Chat => serde_json::json!({
+                    "index": i, "delta": {}, "finish_reason": finish_reason
+                }),
+            })
+            .collect();
+        let mut payload = serde_json::json!({
+            "id": id,
+            "object": object,
+            "created": created,
+            "model": model,
+            "choices": choices,
+        });
         payload["usage"] = serde_json::json!({
             "prompt_tokens": usage.prompt_tokens,
             "completion_tokens": usage.completion_tokens,
@@ -846,6 +971,107 @@ fn stream_response(
     .into_response()
 }
 
+/// 流式 n>1：把 n 个候选事件流 fan-in 为单一 SSE 流（PINF-106）。
+///
+/// 每个事件发出一个含 n 个 choice 的 chunk（仅事件来源 index 携带增量，
+/// 其余为空占位）；全部候选到达终态后发出终止 chunk（n 个 finish_reason
+/// + 聚合 usage）。任一候选失败 → error chunk 整体失败。
+fn stream_response_multi(
+    state: &Arc<AppState>,
+    kind: StreamKind,
+    id_prefix: &str,
+    model: &str,
+    prompt_tokens: usize,
+    streams: Vec<mpsc::UnboundedReceiver<RequestEvent>>,
+) -> Response {
+    let id = state.next_id(id_prefix);
+    let created = unix_timestamp();
+    let model = model.to_string();
+    let n = streams.len();
+    Sse::new(stream! {
+        // fan-in：每个候选一个转发任务，事件带候选 index 进入统一通道
+        let (tx, mut rx) = mpsc::unbounded_channel::<(usize, RequestEvent)>();
+        let mut tasks = JoinSet::new();
+        for (i, mut events) in streams.into_iter().enumerate() {
+            let tx = tx.clone();
+            tasks.spawn(async move {
+                while let Some(event) = events.recv().await {
+                    if tx.send((i, event)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        let mut failure: Option<String> = None;
+        let mut terminated = false;
+        let mut remaining = n;
+        let mut finish_reasons: Vec<Option<String>> = vec![None; n];
+        let mut completion_tokens: Vec<usize> = vec![0; n];
+
+        while let Some((i, event)) = rx.recv().await {
+            match event {
+                RequestEvent::Chunk(chunk) => {
+                    let payload = kind.multi_chunk_payload(&id, created, &model, n, i, &chunk);
+                    yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
+                }
+                RequestEvent::Done(completed) => {
+                    remaining -= 1;
+                    if completed.success {
+                        finish_reasons[i] = Some(
+                            completed
+                                .finish_reason
+                                .unwrap_or(FinishReason::Stop)
+                                .as_str()
+                                .to_string(),
+                        );
+                        completion_tokens[i] = completed.output_tokens.len();
+                    } else {
+                        failure = completed.error;
+                        break;
+                    }
+                    if remaining == 0 {
+                        terminated = true;
+                        let completion_total: usize = completion_tokens.iter().sum();
+                        let usage = Usage {
+                            prompt_tokens,
+                            completion_tokens: completion_total,
+                            total_tokens: prompt_tokens + completion_total,
+                        };
+                        let reasons: Vec<&str> = finish_reasons
+                            .iter()
+                            .map(|r| r.as_deref().unwrap_or("stop"))
+                            .collect();
+                        let payload = kind.multi_final_payload(&id, created, &model, &reasons, &usage);
+                        yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+        if !terminated && failure.is_none() {
+            // 通道关闭但未收到全部终态：明确报错而非伪装成正常结束
+            let payload = serde_json::json!({
+                "error": {
+                    "message": "engine loop ended before all candidates completed",
+                    "type": "internal_error"
+                }
+            });
+            yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
+        }
+        if let Some(message) = failure {
+            let payload = serde_json::json!({
+                "error": { "message": message, "type": "internal_error" }
+            });
+            yield Ok::<Event, Infallible>(Event::default().data(payload.to_string()));
+        }
+        yield Ok::<Event, Infallible>(Event::default().data("[DONE]"));
+    })
+    .keep_alive(KeepAlive::default())
+    .into_response()
+}
+
 fn prepare_completion_request(
     state: &AppState,
     request: CompletionRequest,
@@ -862,6 +1088,7 @@ fn prepare_completion_request(
             stop_sequences(request.stop),
         )?,
         stream: request.stream.unwrap_or(false),
+        n: candidate_count(request.n)?,
     })
 }
 
@@ -903,6 +1130,7 @@ fn prepare_chat_request(
             stop_sequences(request.stop),
         )?,
         stream: request.stream.unwrap_or(false),
+        n: candidate_count(request.n)?,
     })
 }
 
@@ -952,6 +1180,58 @@ fn validate_prompt(prompt: String) -> Result<String, ApiError> {
     } else {
         Ok(prompt)
     }
+}
+
+/// n 候选数解析与校验（OpenAI `n`，默认 1，上限 [`MAX_CANDIDATES`]）。
+fn candidate_count(n: Option<u32>) -> Result<usize, ApiError> {
+    let n = n.unwrap_or(1) as usize;
+    if n == 0 {
+        return Err(ApiError::BadRequest("n must be at least 1".to_string()));
+    }
+    if n > MAX_CANDIDATES {
+        return Err(ApiError::BadRequest(format!(
+            "n must be at most {MAX_CANDIDATES}"
+        )));
+    }
+    Ok(n)
+}
+
+/// n 个候选的聚合 usage：prompt 只计一次，completion 为各候选之和。
+fn usage_multi(results: &[GenerationResult]) -> Usage {
+    let prompt = results.first().map(|r| r.prompt_tokens).unwrap_or(0);
+    let completion = results.iter().map(|r| r.completion_tokens).sum();
+    Usage {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        total_tokens: prompt + completion,
+    }
+}
+
+/// 非流式 n：并行生成 n 个候选；任一候选失败即整体失败。
+async fn generate_many(
+    state: &Arc<AppState>,
+    prepared: &PreparedGenerationRequest,
+) -> Result<Vec<GenerationResult>, ApiError> {
+    let mut set = JoinSet::new();
+    for _ in 0..prepared.n {
+        let state = state.clone();
+        let prompt = prepared.prompt.clone();
+        let params = prepared.params.clone();
+        set.spawn(async move { state.generate(&prompt, params).await });
+    }
+    let mut generated = Vec::with_capacity(prepared.n);
+    while let Some(result) = set.join_next().await {
+        match result {
+            Ok(Ok(g)) => generated.push(g),
+            Ok(Err(err)) => return Err(err),
+            Err(join_err) => {
+                return Err(ApiError::internal(format!(
+                    "candidate task failed: {join_err}"
+                )));
+            }
+        }
+    }
+    Ok(generated)
 }
 
 fn usage(result: &GenerationResult) -> Usage {
