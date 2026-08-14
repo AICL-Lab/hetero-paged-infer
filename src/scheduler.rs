@@ -1249,5 +1249,93 @@ mod property_tests {
                 );
             }
         }
+
+        /// **穷举场景：请求在任意阶段被取消/失败后资源必须全部归还**
+        ///
+        /// 交替执行「随机取消/失败某个请求」与「推进一步」，覆盖 pending /
+        /// prefill / decode 各阶段的终止路径；最终所有请求必须到达终态
+        /// （无悬挂、无遗留 pending），KV 块全部归还，内存利用率回到基线。
+        #[test]
+        fn prop_resources_reclaimed_after_cancel_and_failure(
+            num_requests in 1usize..8,
+            tokens_per_request in 1usize..16,
+            max_tokens in 1u32..6,
+            ops in prop::collection::vec(0u8..3, 0..40),
+            targets in prop::collection::vec(0usize..8, 0..40),
+        ) {
+            let config = create_test_config_with_limits(16, 4096, 500);
+            let mut scheduler = Scheduler::new(config);
+
+            for i in 0..num_requests {
+                scheduler
+                    .add_request(create_test_request_with_params(
+                        i as u64,
+                        tokens_per_request,
+                        max_tokens,
+                    ))
+                    .unwrap();
+            }
+
+            // 交替执行「取消/失败某个请求」与「推进一步」，直到没有待处理工作。
+            let mut step = 0usize;
+            let mut completed_count = 0usize;
+            while scheduler.has_pending_work() {
+                if let Some(&op) = ops.get(step) {
+                    let target = if targets.is_empty() {
+                        0
+                    } else {
+                        (targets[step % targets.len()] % num_requests) as u64
+                    };
+                    match op {
+                        0 => {} // 仅推进
+                        1 => {
+                            let _ = scheduler.cancel_by_request_id(target);
+                        }
+                        _ => {
+                            scheduler.fail_by_request_id(target, "property-test failure");
+                        }
+                    }
+                }
+
+                let output = scheduler.schedule();
+                if !output.is_empty() {
+                    let seq_ids = output.seq_ids();
+                    let exec_output = ExecutionOutput {
+                        next_tokens: vec![100; seq_ids.len()],
+                        seq_ids,
+                        logprobs: Vec::new(),
+                    };
+                    scheduler.update_sequences(&exec_output, 0);
+                }
+                // 排出本步到达终态的请求（取消/失败/正常完成）并累计
+                completed_count += scheduler.get_completed().len();
+                step += 1;
+                prop_assert!(step < 200, "generation must terminate");
+            }
+
+            // 不变式：所有请求到达终态，且资源全部归还
+            prop_assert_eq!(
+                completed_count,
+                num_requests,
+                "every request (completed, cancelled or failed) must reach a terminal state"
+            );
+            prop_assert_eq!(
+                scheduler.num_active_sequences(),
+                0,
+                "no sequence may remain active"
+            );
+            let stats = scheduler.kv_cache.get_memory_stats();
+            prop_assert_eq!(stats.used_blocks, 0, "all KV blocks must be reclaimed");
+            prop_assert_eq!(
+                stats.used_blocks + stats.free_blocks,
+                stats.total_blocks,
+                "block count invariant must hold"
+            );
+            prop_assert_eq!(
+                scheduler.get_memory_utilization(),
+                0.0,
+                "memory utilization must return to baseline"
+            );
+        }
     }
 }
