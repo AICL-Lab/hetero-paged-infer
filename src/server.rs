@@ -212,6 +212,7 @@ impl From<EngineError> for ApiError {
             | EngineError::InvalidMaxTokens(_)
             | EngineError::InvalidTemperature(_)
             | EngineError::InvalidTopP(_)
+            | EngineError::TooManyStopSequences(_)
             | EngineError::UnsupportedGenerationMode(_) => ApiError::BadRequest(err.to_string()),
             EngineError::MemoryPressure | EngineError::MaxConcurrentSequencesReached(_) => {
                 ApiError::Overloaded(err.to_string())
@@ -272,6 +273,14 @@ impl StopSequence {
             StopSequence::Multiple(v) => v.is_empty(),
         }
     }
+
+    /// 展开为字符串列表（PINF-105：stop 已支持，交给引擎生成端检测）。
+    fn to_vec(&self) -> Vec<String> {
+        match self {
+            StopSequence::Single(s) => vec![s.clone()],
+            StopSequence::Multiple(v) => v.clone(),
+        }
+    }
 }
 
 /// CPU 后端未实现的 OpenAI 兼容参数（PINF-104）。
@@ -284,7 +293,6 @@ impl StopSequence {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct UnsupportedParams {
-    stop: Option<StopSequence>,
     n: Option<u32>,
     seed: Option<i64>,
     logprobs: Option<serde_json::Value>,
@@ -322,9 +330,6 @@ fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
         )))
     };
 
-    if p.stop.as_ref().is_some_and(|s| !s.is_empty()) {
-        return unsupported("stop");
-    }
     if p.n.is_some_and(|n| n != 1) {
         return unsupported("n");
     }
@@ -378,6 +383,7 @@ struct CompletionRequest {
     temperature: Option<f32>,
     top_p: Option<f32>,
     stream: Option<bool>,
+    stop: Option<StopSequence>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -390,6 +396,7 @@ struct ChatCompletionRequest {
     temperature: Option<f32>,
     top_p: Option<f32>,
     stream: Option<bool>,
+    stop: Option<StopSequence>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -848,7 +855,12 @@ fn prepare_completion_request(
     Ok(PreparedGenerationRequest {
         model: resolve_model(state, request.model)?,
         prompt,
-        params: generation_params(request.max_tokens, request.temperature, request.top_p)?,
+        params: generation_params(
+            request.max_tokens,
+            request.temperature,
+            request.top_p,
+            stop_sequences(request.stop),
+        )?,
         stream: request.stream.unwrap_or(false),
     })
 }
@@ -884,9 +896,24 @@ fn prepare_chat_request(
     Ok(PreparedGenerationRequest {
         model: resolve_model(state, request.model)?,
         prompt,
-        params: generation_params(request.max_tokens, request.temperature, request.top_p)?,
+        params: generation_params(
+            request.max_tokens,
+            request.temperature,
+            request.top_p,
+            stop_sequences(request.stop),
+        )?,
         stream: request.stream.unwrap_or(false),
     })
+}
+
+/// 将请求的 `stop` 字段展开为引擎使用的停止序列列表。
+/// 空序列（null / 空字符串 / 空数组）等价于未提供。
+fn stop_sequences(stop: Option<StopSequence>) -> Vec<String> {
+    match stop {
+        Some(s) if s.is_empty() => Vec::new(),
+        Some(s) => s.to_vec(),
+        None => Vec::new(),
+    }
 }
 
 /// 校验请求的 model 字段：缺省时使用配置的模型名，
@@ -903,6 +930,7 @@ fn generation_params(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
+    stop: Vec<String>,
 ) -> Result<GenerationParams, ApiError> {
     // 缺省值即 greedy（后端当前唯一支持的生成模式）；显式传入其他
     // 采样参数的请求会在 submit 阶段以 400 拒绝，而非静默降级。
@@ -910,6 +938,7 @@ fn generation_params(
         max_tokens: max_tokens.unwrap_or(16),
         temperature: temperature.unwrap_or(0.0),
         top_p: top_p.unwrap_or(1.0),
+        stop,
     };
     params
         .validate()

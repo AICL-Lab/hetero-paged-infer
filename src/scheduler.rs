@@ -221,8 +221,10 @@ impl Scheduler {
                         }
                     }
                     Err((seq_id, request)) => {
-                        self.pending_queue
-                            .push_front(PendingRequest { seq_id, request });
+                        self.pending_queue.push_front(PendingRequest {
+                            seq_id,
+                            request: *request,
+                        });
                         break;
                     }
                 }
@@ -278,6 +280,49 @@ impl Scheduler {
 
     pub fn get_completed(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.completed_requests)
+    }
+
+    /// 按 request_id 只读查询请求（pending / prefill / decode）。
+    pub fn get_request_by_id(&self, request_id: RequestId) -> Option<&Request> {
+        self.pending_queue
+            .iter()
+            .find(|p| p.request.id == request_id)
+            .map(|p| &p.request)
+            .or_else(|| {
+                self.prefill_sequences
+                    .values()
+                    .chain(self.decode_sequences.values())
+                    .find(|seq| seq.request.id == request_id)
+                    .map(|seq| &seq.request)
+            })
+    }
+
+    /// 因命中 stop 序列而终止请求（PINF-105）：
+    /// 把输出 token 截断到 stop 序列之前、标记 `stop_sequence_hit` 并完成。
+    /// 仅可能命中已开始生成的 prefill/decode 请求（pending 无输出 token）。
+    /// 返回是否找到了对应请求。
+    pub fn complete_by_stop_sequence(&mut self, request_id: RequestId, keep_tokens: usize) -> bool {
+        let seq_id = self
+            .prefill_sequences
+            .values()
+            .chain(self.decode_sequences.values())
+            .find(|seq| seq.request.id == request_id)
+            .map(|seq| seq.seq_id);
+        match seq_id {
+            Some(seq_id) => {
+                if let Some(seq) = self
+                    .prefill_sequences
+                    .get_mut(&seq_id)
+                    .or_else(|| self.decode_sequences.get_mut(&seq_id))
+                {
+                    seq.request.output_tokens.truncate(keep_tokens);
+                    seq.request.stop_sequence_hit = true;
+                }
+                self.complete_sequence(seq_id);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn has_pending_work(&self) -> bool {
@@ -386,16 +431,16 @@ impl Scheduler {
         &mut self,
         seq_id: SeqId,
         request: Request,
-    ) -> Result<SeqId, (SeqId, Request)> {
+    ) -> Result<SeqId, (SeqId, Box<Request>)> {
         let num_tokens = request.input_tokens.len() as u32;
         let blocks_needed = self.config.blocks_for_tokens(num_tokens);
 
         if !self.kv_cache.can_allocate(blocks_needed) {
-            return Err((seq_id, request));
+            return Err((seq_id, Box::new(request)));
         }
 
         if self.kv_cache.allocate_sequence(seq_id, num_tokens).is_err() {
-            return Err((seq_id, request));
+            return Err((seq_id, Box::new(request)));
         }
 
         let mut sequence = Sequence::new(seq_id, request);

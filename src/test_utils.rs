@@ -89,6 +89,41 @@ impl GPUExecutorTrait for AlwaysFailExecutor {
     }
 }
 
+/// A GPU executor that emits tokens from a fixed sequence, one per step.
+///
+/// Useful for stop-sequence tests where the generated text must be known
+/// in advance (e.g. emit `A, A, B` so that stop="AB" hits at a chosen step).
+/// Single-request tests only; the cursor is shared across sequences.
+pub struct SequenceExecutor {
+    /// Tokens to emit in order; the sequence loops when exhausted.
+    pub tokens: Vec<crate::types::TokenId>,
+    next: usize,
+}
+
+impl SequenceExecutor {
+    pub fn new(tokens: Vec<crate::types::TokenId>) -> Self {
+        Self { tokens, next: 0 }
+    }
+}
+
+impl GPUExecutorTrait for SequenceExecutor {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+        let next_tokens = batch
+            .seq_ids
+            .iter()
+            .map(|_| {
+                let token = self.tokens[self.next % self.tokens.len()];
+                self.next += 1;
+                token
+            })
+            .collect();
+        Ok(ExecutionOutput {
+            next_tokens,
+            seq_ids: batch.seq_ids.clone(),
+        })
+    }
+}
+
 /// A GPU executor that always succeeds, emitting a fixed token per sequence.
 ///
 /// Useful for driving generation loops in tests without a real model.

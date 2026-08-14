@@ -22,8 +22,7 @@
 //!
 //! let params = GenerationParams {
 //!     max_tokens: 0,
-//!     temperature: 1.0,
-//!     top_p: 1.0,
+//!     ..GenerationParams::default()
 //! };
 //!
 //! match params.validate() {
@@ -150,6 +149,10 @@ pub enum EngineError {
     /// 在 submit 阶段拒绝，而不是在执行时静默忽略采样参数。
     #[error("后端不支持的生成模式: {0}")]
     UnsupportedGenerationMode(String),
+
+    /// 停止序列数量超出限制：{0}（OpenAI 允许最多 4 个）
+    #[error("停止序列数量超出限制: {0}（最多 4 个）")]
+    TooManyStopSequences(usize),
 
     /// 输入文本为空
     #[error("输入文本为空")]

@@ -30,7 +30,9 @@ fn bench_request_submission(c: &mut Criterion) {
         b.iter_batched(
             || InferenceEngine::new(config.clone()).unwrap(),
             |mut engine| {
-                let id = engine.submit_request("Hello world", params).unwrap();
+                let id = engine
+                    .submit_request("Hello world", params.clone())
+                    .unwrap();
                 black_box(id)
             },
             criterion::BatchSize::SmallInput,
@@ -54,7 +56,7 @@ fn bench_engine_step(c: &mut Criterion) {
                 let mut engine = InferenceEngine::new(config.clone()).unwrap();
                 for i in 0..10 {
                     engine
-                        .submit_request(&format!("Request {}", i), params)
+                        .submit_request(&format!("Request {}", i), params.clone())
                         .unwrap();
                 }
                 engine
@@ -91,7 +93,7 @@ fn bench_batch_sizes(c: &mut Criterion) {
                     };
                     for i in 0..size {
                         engine
-                            .submit_request(&format!("Request {}", i), params)
+                            .submit_request(&format!("Request {}", i), params.clone())
                             .unwrap();
                     }
                     engine

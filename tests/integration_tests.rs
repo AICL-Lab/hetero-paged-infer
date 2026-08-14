@@ -87,7 +87,7 @@ fn test_multiple_requests_completion() {
     let num_requests = 5;
     for i in 0..num_requests {
         engine
-            .submit_request(&format!("Request number {}", i), params)
+            .submit_request(&format!("Request number {}", i), params.clone())
             .unwrap();
     }
 
@@ -159,7 +159,7 @@ fn test_memory_utilization_tracking() {
 
     for i in 0..5 {
         engine
-            .submit_request(&format!("Request {}", i), params)
+            .submit_request(&format!("Request {}", i), params.clone())
             .unwrap();
     }
 
@@ -206,6 +206,7 @@ fn test_invalid_request_handling() {
         max_tokens: 10,
         temperature: -0.5,
         top_p: 0.9,
+        stop: Vec::new(),
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid temperature should be rejected");
@@ -215,6 +216,7 @@ fn test_invalid_request_handling() {
         max_tokens: 10,
         temperature: 0.0,
         top_p: 1.0,
+        stop: Vec::new(),
     };
     let result = engine.submit_request("Hello", greedy_params);
     assert!(result.is_ok(), "Greedy temperature 0.0 should be accepted");
@@ -224,6 +226,7 @@ fn test_invalid_request_handling() {
         max_tokens: 10,
         temperature: 1.0,
         top_p: 1.0,
+        stop: Vec::new(),
     };
     let result = engine.submit_request("Hello", sampled_params);
     assert!(
@@ -235,6 +238,7 @@ fn test_invalid_request_handling() {
         max_tokens: 10,
         temperature: 0.0,
         top_p: 0.9,
+        stop: Vec::new(),
     };
     let result = engine.submit_request("Hello", top_p_params);
     assert!(
@@ -247,6 +251,7 @@ fn test_invalid_request_handling() {
         max_tokens: 10,
         temperature: 1.0,
         top_p: 1.5,
+        stop: Vec::new(),
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid top_p should be rejected");
@@ -281,7 +286,9 @@ fn test_continuous_batching() {
     };
 
     // Submit first request
-    engine.submit_request("First request", params).unwrap();
+    engine
+        .submit_request("First request", params.clone())
+        .unwrap();
 
     // Run a few steps to get it into decode phase
     for _ in 0..3 {
@@ -289,7 +296,9 @@ fn test_continuous_batching() {
     }
 
     // Submit second request while first is in decode
-    engine.submit_request("Second request", params).unwrap();
+    engine
+        .submit_request("Second request", params.clone())
+        .unwrap();
 
     // Continue running
     let completed = engine.run();
@@ -368,7 +377,7 @@ fn test_memory_pressure_handling() {
     let mut saw_memory_pressure = false;
     let mut finished = Vec::new();
     for i in 0..20 {
-        match engine.submit_request(&format!("Request {}", i), params) {
+        match engine.submit_request(&format!("Request {}", i), params.clone()) {
             Ok(_) => {
                 submitted += 1;
                 // Schedule to allocate memory
@@ -434,7 +443,7 @@ fn test_large_batch_processing() {
     let num_requests = 20;
     for i in 0..num_requests {
         engine
-            .submit_request(&format!("Batch request {}", i), params)
+            .submit_request(&format!("Batch request {}", i), params.clone())
             .unwrap();
     }
 
@@ -465,7 +474,7 @@ fn test_sequential_request_processing() {
     let mut completed_ids = Vec::new();
     for i in 0..3 {
         engine
-            .submit_request(&format!("Sequential {}", i), params)
+            .submit_request(&format!("Sequential {}", i), params.clone())
             .unwrap();
 
         // Run until this request completes

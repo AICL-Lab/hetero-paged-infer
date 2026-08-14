@@ -3,7 +3,7 @@ use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use paged_infer::{
     create_router, create_router_with_engine,
-    test_utils::{AlwaysFailExecutor, ConstantTokenExecutor},
+    test_utils::{AlwaysFailExecutor, ConstantTokenExecutor, SequenceExecutor},
     EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine,
     Scheduler, ServingConfig, SimpleTokenizer, TokenizerTrait,
 };
@@ -881,10 +881,7 @@ async fn test_completions_rejects_unsupported_params() {
     let app = create_router(create_test_config()).unwrap();
 
     let cases = [
-        (
-            "stop",
-            json!({"model":"test-model","prompt":"hi","max_tokens":2,"stop":"\n"}),
-        ),
+        // stop 已由 PINF-105 支持，不再在此拒绝（见 test_completions_honors_stop_sequences）
         (
             "n",
             json!({"model":"test-model","prompt":"hi","max_tokens":2,"n":2}),
@@ -1038,4 +1035,219 @@ async fn test_completions_accepts_unsupported_params_at_defaults() {
             "default values must pass: {body}"
         );
     }
+}
+
+#[tokio::test]
+async fn test_completions_honors_stop_sequences() {
+    // PINF-105：stop 序列命中时，非流式响应移除 stop 序列并报告
+    // finish_reason="stop"（而非 length）。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(SequenceExecutor::new(vec![37, 37, 38])), // A, A, B
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 10,
+                        "stop": "AB"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    // 生成 "AAB" 命中 "AB"@1 → 保留前缀 "A"
+    assert_eq!(json["choices"][0]["text"], "A");
+    assert_eq!(
+        json["choices"][0]["finish_reason"], "stop",
+        "stop sequence hit must report stop"
+    );
+    assert_usage_consistent(&json);
+}
+
+#[tokio::test]
+async fn test_streaming_honors_stop_sequences() {
+    // PINF-105：流式下 stop 命中后不再推送新内容，终止 chunk 报 "stop"；
+    // 拼接文本 == 非流式文本（单字符 stop 序列保证无跨 token 前缀残留）。
+    let config = create_test_config();
+    let make_app = || {
+        let engine = InferenceEngine::with_components(
+            config.clone(),
+            Box::new(SimpleTokenizer::new()),
+            Scheduler::new(config.clone()),
+            Box::new(SequenceExecutor::new(vec![37, 37, 38])), // A, A, B
+        )
+        .unwrap();
+        create_router_with_engine(config.clone(), engine).unwrap()
+    };
+    let stream_app = make_app();
+    let unary_app = make_app();
+
+    let stream_response = stream_app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 10,
+                        "stop": "B",
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream_response.status(), StatusCode::OK);
+
+    let body = to_bytes(stream_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    let mut streamed_text = String::new();
+    let mut final_reason = None;
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
+        let payload: Value = serde_json::from_str(data).unwrap();
+        let choice = &payload["choices"][0];
+        if choice["finish_reason"].is_null() {
+            streamed_text.push_str(choice["text"].as_str().unwrap());
+        } else {
+            final_reason = Some(choice["finish_reason"].as_str().unwrap().to_string());
+        }
+    }
+    assert_eq!(
+        final_reason.as_deref(),
+        Some("stop"),
+        "stop-terminated stream must end with a stop chunk, got: {final_reason:?}"
+    );
+
+    let unary_response = unary_app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 10,
+                        "stop": "B"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(unary_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let unary_text = json["choices"][0]["text"].as_str().unwrap();
+
+    // 生成 A, A, B，stop="B" 命中 → 移除 B，保留 "AA"
+    assert_eq!(streamed_text, "AA");
+    assert_eq!(streamed_text, unary_text);
+}
+
+#[tokio::test]
+async fn test_completions_rejects_too_many_stop_sequences() {
+    // PINF-105：stop 超过 4 个（OpenAI 限制）在准入阶段返回 400。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hi",
+                        "max_tokens": 2,
+                        "stop": ["a", "b", "c", "d", "e"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+}
+
+#[tokio::test]
+async fn test_chat_completions_honors_stop_sequences() {
+    // PINF-105：chat/completions 同样支持 stop 序列。
+    let config = create_test_config();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(SequenceExecutor::new(vec![37, 37, 38])), // A, A, B
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 10,
+                        "stop": "AB"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["choices"][0]["message"]["content"], "A");
+    assert_eq!(json["choices"][0]["finish_reason"], "stop");
 }

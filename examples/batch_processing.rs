@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Submitting {} requests...\n", inputs.len());
 
     for (i, input) in inputs.iter().enumerate() {
-        let (request_id, _prompt_tokens) = engine.submit_request(input, params)?;
+        let (request_id, _prompt_tokens) = engine.submit_request(input, params.clone())?;
         println!("  Request {}: '{}' -> ID {}", i + 1, input, request_id);
     }
 

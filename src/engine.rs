@@ -60,6 +60,37 @@ use crate::types::{
 };
 use std::collections::HashMap;
 
+/// 文本中第一个 stop 序列出现的字符偏移（取最早命中者）。
+fn find_stop_sequence(text: &str, stops: &[String]) -> Option<usize> {
+    stops
+        .iter()
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| text.find(s.as_str()))
+        .min()
+}
+
+/// 输出 token 中位于字符偏移 `char_offset` 之前（不含）的 token 数。
+///
+/// 对逐字符 tokenizer（SimpleTokenizer）与整体解码的字符偏移精确对齐；
+/// 对子词 tokenizer（HuggingFace）保守下取整——stop 序列开头的部分
+/// token 也会一并移除，保证输出中绝不残留 stop 序列。
+fn tokens_before_char(
+    tokens: &[TokenId],
+    tokenizer: &dyn TokenizerTrait,
+    char_offset: usize,
+) -> usize {
+    let mut len = 0usize;
+    for (i, &token) in tokens.iter().enumerate() {
+        if len >= char_offset {
+            return i;
+        }
+        if let Ok(segment) = tokenizer.try_decode(&[token]) {
+            len += segment.chars().count();
+        }
+    }
+    tokens.len()
+}
+
 /// 推理引擎
 ///
 /// 主编排器，协调所有组件实现端到端推理。
@@ -332,6 +363,10 @@ impl InferenceEngine {
             }
         }
 
+        // PINF-105：stop 序列生成端检测（在 decoder push 之前，
+        // 命中后触发 token 不会作为片段推送给客户端）。
+        self.apply_stop_sequences(&generated);
+
         // 用每请求增量解码器把新 token 解码为文本片段。
         // 解码失败时让请求诚实失败（tokenizer 错误），而不是静默丢失文本。
         let mut chunks: Vec<(RequestId, String)> = Vec::new();
@@ -353,6 +388,34 @@ impl InferenceEngine {
         chunks.extend(tail_chunks);
 
         Ok(StepEvents { completed, chunks })
+    }
+
+    /// PINF-105：对本次生成过 token 且配置了 stop 序列的请求做生成端检测。
+    ///
+    /// 一旦输出文本命中任一 stop 序列：把输出 token 截断到序列之前、
+    /// 标记请求完成（`finish_reason="stop"`），并销毁其增量解码器——
+    /// 已推送的片段无法撤回，避免 `finish()` 把未截断的文本回放给客户端。
+    fn apply_stop_sequences(&mut self, generated: &[(RequestId, TokenId)]) {
+        let mut to_stop: Vec<(RequestId, usize)> = Vec::new();
+        for &(request_id, _) in generated {
+            let Some(req) = self.scheduler.get_request_by_id(request_id) else {
+                continue;
+            };
+            if req.params.stop.is_empty() {
+                continue;
+            }
+            let Ok(text) = self.tokenizer.try_decode(&req.output_tokens) else {
+                continue;
+            };
+            if let Some(start) = find_stop_sequence(&text, &req.params.stop) {
+                let keep = tokens_before_char(&req.output_tokens, &*self.tokenizer, start);
+                to_stop.push((request_id, keep));
+            }
+        }
+        for (request_id, keep) in to_stop {
+            self.scheduler.complete_by_stop_sequence(request_id, keep);
+            self.decoders.remove(&request_id);
+        }
     }
 
     /// 排出所有到达终态的请求；同时销毁其增量解码器。
@@ -380,7 +443,8 @@ impl InferenceEngine {
                 // max_tokens 被截断。失败/取消的请求没有 finish_reason。
                 let finish_reason = if success {
                     let stopped_on_eos = req.output_tokens.last() == Some(&self.eos_token_id);
-                    Some(if stopped_on_eos {
+                    // stop 序列命中（可能已把 EOS 之后的 token 截断）或 EOS → 自然停止
+                    Some(if req.stop_sequence_hit || stopped_on_eos {
                         FinishReason::Stop
                     } else {
                         FinishReason::Length
@@ -566,7 +630,7 @@ mod tests {
     use crate::error::EngineError;
     use crate::test_utils::{
         create_test_config, test_params, write_test_tokenizer_json, AlwaysFailExecutor,
-        ConstantTokenExecutor,
+        ConstantTokenExecutor, SequenceExecutor,
     };
     use crate::tokenizer::SimpleTokenizer;
     use crate::types::{ExecutionBatch, ExecutionOutput};
@@ -707,6 +771,7 @@ mod tests {
             max_tokens: 10,
             temperature: 1.0,
             top_p: 1.0,
+            stop: Vec::new(),
         };
         let result = engine.submit_request("Hello", sampled);
         assert!(
@@ -719,6 +784,7 @@ mod tests {
             max_tokens: 10,
             temperature: 0.0,
             top_p: 0.9,
+            stop: Vec::new(),
         };
         let result = engine.submit_request("Hello", top_p);
         assert!(
@@ -731,6 +797,7 @@ mod tests {
             max_tokens: 10,
             temperature: 0.0,
             top_p: 1.0,
+            stop: Vec::new(),
         };
         assert!(engine.submit_request("Hello", greedy).is_ok());
     }
@@ -876,7 +943,7 @@ mod tests {
 
         for i in 0..3 {
             engine
-                .submit_request(&format!("Request {}", i), params)
+                .submit_request(&format!("Request {}", i), params.clone())
                 .unwrap();
         }
 
@@ -1220,5 +1287,70 @@ mod tests {
         let completed = engine.run();
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn test_stop_sequence_truncates_output_and_reports_stop() {
+        // PINF-105：输出文本命中 stop 序列时请求立即停止；stop 序列本身
+        // 从输出中移除（保留此前缀），finish_reason 为 Stop。
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config.clone(),
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            // 逐 token 输出 A, A, B（SimpleTokenizer: 'A'=37, 'B'=38）：
+            // 第 3 步文本 "AAB" 命中 "AB"@1
+            Box::new(SequenceExecutor::new(vec![37, 37, 38])),
+        )
+        .unwrap();
+        engine
+            .submit_request(
+                "hi",
+                GenerationParams {
+                    max_tokens: 10,
+                    stop: vec!["AB".to_string()],
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1);
+        let result = &completed[0];
+        assert!(result.success);
+        // "AAB" 中 "AB" 起始于字符偏移 1 → 保留第 1 个 A，移除 AB
+        assert_eq!(result.output_tokens, vec![37]);
+        assert_eq!(result.output_text, "A");
+        assert_eq!(result.finish_reason, Some(FinishReason::Stop));
+        assert!(!engine.has_pending_work());
+    }
+
+    #[test]
+    fn test_stop_sequence_unmatched_reports_length() {
+        // PINF-105：stop 序列未命中时，请求照常以 max_tokens 截断结束（Length）。
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config.clone(),
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(ConstantTokenExecutor { token: 37 }), // 'A' A A ...
+        )
+        .unwrap();
+        engine
+            .submit_request(
+                "hi",
+                GenerationParams {
+                    max_tokens: 3,
+                    stop: vec!["Z".to_string()], // 永不出现
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].success);
+        assert_eq!(completed[0].output_text, "AAA");
+        assert_eq!(completed[0].finish_reason, Some(FinishReason::Length));
     }
 }
