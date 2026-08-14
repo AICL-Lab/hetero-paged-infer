@@ -33,6 +33,9 @@ default = []
 # 暴露 src/test_utils.rs 中的测试辅助代码，供集成测试与 bench 使用。
 # 经由本 crate 的 dev-dependencies 启用，不会进入正常发布构建。
 test-utils = []
+# 链接 tiny-llm（C++/CUDA）静态库并启用其 C ABI 符号。
+# 需先完成 tiny_llm_ffi 模块文档列出的接入前置条件（真实模型端到端验证 + 导出 C ABI）。
+tiny-llm = []
 
 [[bin]]
 name = "paged-infer"

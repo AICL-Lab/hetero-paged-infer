@@ -106,6 +106,7 @@ pub mod gpu_executor;
 pub mod kv_cache;
 pub mod scheduler;
 pub mod server;
+pub mod tiny_llm_ffi;
 pub mod tokenizer;
 pub mod types;
 

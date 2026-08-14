@@ -1,19 +1,36 @@
-//! GPU 执行器 - 推理计算
+//! 执行后端抽象（EngineBackend 契约）
 //!
-//! 提供 GPU 执行的抽象接口，支持：
-//! - Paged Attention 块表间接访问
-//! - 批次内可变序列长度
+//! [`GPUExecutorTrait`] 是引擎与"计算后端"之间的唯一契约：引擎每步调度出
+//! 一个 [`ExecutionBatch`]，交给后端执行，后端返回每序列的下一 token 及
+//! 可选的 logprob 信息。调度器、分页 KV 内存管理与服务控制面都在引擎侧，
+//! 后端只负责"对给定 batch 做一次前向 + 采样"。
 //!
-//! # 当前实现
+//! # 契约语义（实现方必须满足）
 //!
-//! 默认实现为 **Mock 执行器**，生成确定性占位 token，尚未接入真实模型计算。
-//! 真实 CUDA kernel 为后续工作，届时再引入 build 脚本与 FFI 桥接。
+//! - **每步一个 batch**：`execute` 收到的是本步可并行计算的序列集合，
+//!   prefill 与 decode 可混合（`is_prefill` 逐序列标注）。prefill 序列的
+//!   `input_tokens` 是其完整 prompt，decode 序列只有 1 个新 token。
+//! - **KV 由引擎侧分页管理**：`block_tables` 给出每序列的物理块表，
+//!   后端据此间接访问 KV。连续 KV 后端可忽略块表（自行管理），但必须
+//!   在文档中声明该边界。
+//! - **输出**：`next_tokens` 与 `seq_ids` 逐序列对齐；`logprobs` 为每序列
+//!   该步 token 的 top-k 信息（请求未启用或后端不支持时为 `None`）。
+//! - **能力声明**：[`capabilities`](GPUExecutorTrait::capabilities) 告知引擎
+//!   后端实现了哪些采样语义，引擎在准入阶段据此拒绝不支持的参数。
+//!
+//! # 内置后端
+//!
+//! - [`CpuReferenceExecutor`](crate::cpu_executor::CpuReferenceExecutor)：
+//!   默认后端，CPU 上执行真实前向（随机权重小模型），greedy 采样，提供 logprobs。
+//! - [`MockGPUExecutor`]：测试用确定性占位后端。
+//! - tiny-llm（C++/CUDA）对接：见 [`crate::tiny_llm_ffi`]（FFI 骨架）。
 //!
 //! # 接口
 //!
 //! ```text
 //! trait GPUExecutorTrait: Send {
 //!     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
+//!     fn capabilities(&self) -> ExecutorCapabilities;
 //! }
 //! ```
 
@@ -67,9 +84,18 @@ impl ExecutorCapabilities {
     pub const GREEDY_ONLY: Self = Self { sampling: false };
 }
 
-/// GPU Executor trait defining the interface
+/// 执行后端契约（EngineBackend）
+///
+/// 引擎与计算后端之间的唯一接口。语义见模块文档；实现方需保证
+/// `execute` 对同构输入是确定性的（便于差分测试与回归）。
 pub trait GPUExecutorTrait: Send {
-    /// Execute a batch of sequences
+    /// 对给定 batch 执行一次前向 + 采样，返回每序列下一 token 与 logprob。
+    ///
+    /// 契约：
+    /// - `next_tokens` 与 `seq_ids` 逐序列对齐，长度等于 `batch.seq_ids.len()`；
+    /// - `logprobs` 与 `seq_ids` 对齐，每项为该步 token 的 top-k 信息
+    ///   （请求未启用或后端不支持时为 `None`）；
+    /// - 不能对 batch 内序列的 KV 状态做跨步假设（引擎负责持久化）。
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
 
     /// 声明后端能力；默认仅支持 greedy 解码。
