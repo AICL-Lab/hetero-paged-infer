@@ -22,7 +22,7 @@
 //! // 单步执行一个 batch（prefill/decode 混合），逐序列输出下一 token 与 logprobs。
 //! // 返回 0 成功，非 0 错误码。
 //! int tinyllm_step(TinyLlmHandle* handle,
-//!                  const int* input_tokens, const int* positions,
+//!                  const int* seq_ids, const int* input_tokens, const int* positions,
 //!                  const int* seq_lens, const int* block_tables,
 //!                  const unsigned char* is_prefill, int num_sequences,
 //!                  int* next_tokens, float* logprobs, int logprobs_k);
@@ -36,9 +36,12 @@
 //!
 //! # 数据布局约定
 //!
-//! - `input_tokens` / `positions` 是扁平化数组（`seq_lens` 描述每序列切分）；
+//! - `seq_ids` 显式给出每个序列的 id（由 `tinyllm_allocate_sequence` 分配），
+//!   支持任意 id 的序列混批；
+//! - `input_tokens` / `positions` 是扁平化数组（`seq_lens` 描述每序列切分，
+//!   与 `seq_ids` 对齐）；
 //! - `block_tables` 是 `num_sequences × 每序列块数` 的扁平化物理块索引，
-//!   对齐 paged-infer 的 [`ExecutionBatch::block_tables`]；
+//!   对齐 paged-infer 的 [`ExecutionBatch::block_tables`]（策略 2 下忽略）；
 //! - `logprobs_k == 0` 表示不输出 logprobs；否则 `logprobs` 为
 //!   `num_sequences × logprobs_k` 的 `(token_id, logprob)` 交错数组。
 //!
@@ -98,6 +101,7 @@ pub mod symbols {
 
         pub fn tinyllm_step(
             handle: *mut TinyLlmHandle,
+            seq_ids: *const c_int,
             input_tokens: *const c_int,
             positions: *const c_int,
             seq_lens: *const c_int,

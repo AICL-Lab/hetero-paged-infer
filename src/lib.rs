@@ -107,6 +107,8 @@ pub mod kv_cache;
 pub mod scheduler;
 pub mod server;
 pub mod tiny_llm_ffi;
+#[cfg(feature = "tiny-llm")]
+pub mod tiny_llm_executor;
 pub mod tokenizer;
 pub mod types;
 
@@ -123,6 +125,8 @@ pub use engine::{EngineMetrics, InferenceEngine, StepEvents};
 pub use error::{ConfigError, EngineError};
 pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
 pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
+#[cfg(feature = "tiny-llm")]
+pub use tiny_llm_executor::TinyLlmExecutor;
 pub use kv_cache::KVCacheManager;
 pub use scheduler::Scheduler;
 pub use server::{create_router, create_router_with_engine};

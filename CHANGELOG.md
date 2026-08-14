@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- tiny-llm 真实后端接入（里程碑 3/4）：
+  - `build.rs`：`TINY_LLM_DIR` 指向 tiny-llm 构建目录时链接 `libtiny_llm.a` +
+    spdlog + CUDA runtime（监听库文件变更自动重链）
+  - `src/tiny_llm_executor.rs`：`TinyLlmExecutor` 实现 `GPUExecutorTrait`，
+    把引擎调度的 `ExecutionBatch` 经 C ABI 交给 tiny-llm 步进执行
+    （策略 2 连续 KV，位置由后端跟踪，greedy only）
+  - `tiny_llm_ffi.rs`：契约同步（`tinyllm_step` 增加 `seq_ids`，支持任意 id 混批）
+  - 测试：`tests/tiny_llm_backend.rs`（feature + `TINY_LLM_MODEL` 门控，
+    能力声明、3 并发端到端、资源守恒）
 - 并发压测框架（ROADMAP 选项 A 第三项）：
   - `tests/concurrency_stress.rs`：并发突发尾延迟分布、高并发资源守恒、
     失败隔离与失败后资源归还、内存压力优雅处理（4 个场景断言）
