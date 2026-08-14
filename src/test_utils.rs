@@ -62,18 +62,17 @@ pub fn create_test_request_with_params(id: RequestId, num_tokens: usize, max_gen
         vec![1; num_tokens],
         GenerationParams {
             max_tokens: max_gen,
-            temperature: 1.0,
-            top_p: 1.0,
+            ..GenerationParams::default()
         },
     )
 }
 
-/// Standard generation parameters for tests
+/// Standard generation parameters for tests (greedy: the only mode the
+/// CPU reference backend implements)
 pub fn test_params(max_tokens: u32) -> GenerationParams {
     GenerationParams {
         max_tokens,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     }
 }
 
@@ -87,6 +86,23 @@ impl GPUExecutorTrait for AlwaysFailExecutor {
         Err(EngineError::KernelLaunchFailed(
             "test executor failure".to_string(),
         ))
+    }
+}
+
+/// A GPU executor that always succeeds, emitting a fixed token per sequence.
+///
+/// Useful for driving generation loops in tests without a real model.
+pub struct ConstantTokenExecutor {
+    /// Token emitted for every sequence on every step
+    pub token: crate::types::TokenId,
+}
+
+impl GPUExecutorTrait for ConstantTokenExecutor {
+    fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+        Ok(ExecutionOutput {
+            next_tokens: vec![self.token; batch.seq_ids.len()],
+            seq_ids: batch.seq_ids.clone(),
+        })
     }
 }
 

@@ -33,8 +33,7 @@ fn test_end_to_end_request_flow() {
 
     let params = GenerationParams {
         max_tokens: 5,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit request
@@ -81,8 +80,7 @@ fn test_multiple_requests_completion() {
 
     let params = GenerationParams {
         max_tokens: 3,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit multiple requests
@@ -122,8 +120,7 @@ fn test_request_completion_on_max_tokens() {
     let max_tokens = 5;
     let params = GenerationParams {
         max_tokens,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     engine.submit_request("Test input", params).unwrap();
@@ -157,8 +154,7 @@ fn test_memory_utilization_tracking() {
     // Submit requests
     let params = GenerationParams {
         max_tokens: 10,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     for i in 0..5 {
@@ -200,8 +196,7 @@ fn test_invalid_request_handling() {
     // Invalid max_tokens
     let invalid_params = GenerationParams {
         max_tokens: 0,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid params should be rejected");
@@ -215,14 +210,37 @@ fn test_invalid_request_handling() {
     let result = engine.submit_request("Hello", invalid_params);
     assert!(result.is_err(), "Invalid temperature should be rejected");
 
-    // Greedy decoding (temperature == 0.0) is valid
+    // Greedy decoding (temperature == 0.0, top_p == 1.0) is valid
     let greedy_params = GenerationParams {
+        max_tokens: 10,
+        temperature: 0.0,
+        top_p: 1.0,
+    };
+    let result = engine.submit_request("Hello", greedy_params);
+    assert!(result.is_ok(), "Greedy temperature 0.0 should be accepted");
+
+    // 范围内但后端不支持的采样参数：submit 阶段诚实失败，而非静默降级
+    let sampled_params = GenerationParams {
+        max_tokens: 10,
+        temperature: 1.0,
+        top_p: 1.0,
+    };
+    let result = engine.submit_request("Hello", sampled_params);
+    assert!(
+        matches!(result, Err(EngineError::UnsupportedGenerationMode(_))),
+        "non-greedy temperature must be rejected with UnsupportedGenerationMode"
+    );
+
+    let top_p_params = GenerationParams {
         max_tokens: 10,
         temperature: 0.0,
         top_p: 0.9,
     };
-    let result = engine.submit_request("Hello", greedy_params);
-    assert!(result.is_ok(), "Greedy temperature 0.0 should be accepted");
+    let result = engine.submit_request("Hello", top_p_params);
+    assert!(
+        matches!(result, Err(EngineError::UnsupportedGenerationMode(_))),
+        "top_p != 1.0 must be rejected with UnsupportedGenerationMode"
+    );
 
     // Invalid top_p
     let invalid_params = GenerationParams {
@@ -241,8 +259,7 @@ fn test_invalid_request_handling() {
     let mut tiny_engine = InferenceEngine::new(tiny_config).unwrap();
     let too_long_params = GenerationParams {
         max_tokens: 4,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
     let result = tiny_engine.submit_request("Hello", too_long_params);
     assert!(result.is_err(), "Total requested length should be rejected");
@@ -260,8 +277,7 @@ fn test_continuous_batching() {
 
     let params = GenerationParams {
         max_tokens: 5,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit first request
@@ -343,8 +359,7 @@ fn test_memory_pressure_handling() {
 
     let params = GenerationParams {
         max_tokens: 50, // Long generation to hold memory
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit requests until memory pressure, collecting everything that
@@ -412,8 +427,7 @@ fn test_large_batch_processing() {
 
     let params = GenerationParams {
         max_tokens: 3,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit many requests
@@ -444,8 +458,7 @@ fn test_sequential_request_processing() {
 
     let params = GenerationParams {
         max_tokens: 2,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit requests one at a time and process each to completion
@@ -487,8 +500,7 @@ fn test_execution_failure_surfaces_as_completed_error() {
 
     let params = GenerationParams {
         max_tokens: 5,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     engine.submit_request("Failure case", params).unwrap();
@@ -520,8 +532,7 @@ fn test_metrics_collection() {
     // Submit request and check metrics update
     let params = GenerationParams {
         max_tokens: 5,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     engine.submit_request("Test", params).unwrap();

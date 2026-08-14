@@ -13,6 +13,13 @@ use super::{RequestId, RequestState, TokenId};
 /// | `max_tokens` | > 0 |
 /// | `temperature` | [0.0, 2.0]（0.0 表示贪心解码） |
 /// | `top_p` | (0.0, 1.0] |
+///
+/// # 采样支持
+///
+/// [`validate`](Self::validate) 只做范围校验。当前 CPU 参考执行器只实现
+/// greedy 解码（[`is_greedy`](Self::is_greedy)），非 greedy 参数会在
+/// submit 阶段以 [`crate::EngineError::UnsupportedGenerationMode`] 拒绝，
+/// 而不是在执行时被静默忽略。
 #[derive(Debug, Clone, Copy)]
 pub struct GenerationParams {
     /// 最大生成 token 数
@@ -26,17 +33,18 @@ pub struct GenerationParams {
 }
 
 impl Default for GenerationParams {
+    /// 默认参数即当前后端唯一支持的组合：greedy 解码。
     fn default() -> Self {
         Self {
             max_tokens: 100,
-            temperature: 1.0,
+            temperature: 0.0,
             top_p: 1.0,
         }
     }
 }
 
 impl GenerationParams {
-    /// 验证生成参数
+    /// 验证生成参数（仅范围校验，不表达后端能力）
     pub fn validate(&self) -> Result<(), crate::EngineError> {
         if self.max_tokens == 0 {
             return Err(crate::EngineError::InvalidMaxTokens(self.max_tokens));
@@ -48,6 +56,11 @@ impl GenerationParams {
             return Err(crate::EngineError::InvalidTopP(self.top_p));
         }
         Ok(())
+    }
+
+    /// 是否为 greedy 解码（argmax，采样参数不生效）
+    pub fn is_greedy(&self) -> bool {
+        self.temperature == 0.0 && self.top_p == 1.0
     }
 }
 
@@ -103,6 +116,27 @@ impl Request {
     }
 }
 
+/// 生成结束原因（OpenAI `finish_reason` 语义）
+///
+/// 成功完成的请求一定携带其中一个值；失败/取消的请求为 `None`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinishReason {
+    /// 模型生成 EOS 自然停止
+    Stop,
+    /// 达到 `max_tokens` 上限被截断
+    Length,
+}
+
+impl FinishReason {
+    /// OpenAI 兼容的字符串表示
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FinishReason::Stop => "stop",
+            FinishReason::Length => "length",
+        }
+    }
+}
+
 /// 完成的请求
 ///
 /// 包含已完成请求的输出结果。
@@ -125,6 +159,9 @@ pub struct CompletedRequest {
 
     /// 错误信息（失败时）
     pub error: Option<String>,
+
+    /// 生成结束原因（成功时为 Some，失败/取消时为 None）
+    pub finish_reason: Option<FinishReason>,
 }
 
 #[cfg(test)]
@@ -196,6 +233,12 @@ mod tests {
 
         request.output_tokens = vec![10, 11, 12, 13, 14];
         assert!(request.is_complete(eos_token));
+    }
+
+    #[test]
+    fn test_finish_reason_as_str() {
+        assert_eq!(FinishReason::Stop.as_str(), "stop");
+        assert_eq!(FinishReason::Length.as_str(), "length");
     }
 }
 

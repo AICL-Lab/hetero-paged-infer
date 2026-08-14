@@ -81,12 +81,11 @@ cargo test
 # 基本用法
 ./target/release/paged-infer --input "你好，世界！" --max-tokens 50
 
-# 使用自定义参数
+# 使用自定义参数（当前 CPU 后端仅支持 greedy：--temperature 0.0 --top-p 1.0，
+# 其他采样参数会在提交时返回错误，而不是被静默忽略）
 ./target/release/paged-infer \
   --input "解释量子计算" \
-  --max-tokens 100 \
-  --temperature 0.8 \
-  --top-p 0.95
+  --max-tokens 100
 
 # 启动 OpenAI 兼容 HTTP 服务
 ./target/release/paged-infer --serve
@@ -122,13 +121,12 @@ use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 // 使用默认配置创建引擎
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
 
-// 提交生成请求
+// 提交生成请求（greedy 解码，当前后端唯一支持的模式）
 let request_id = engine.submit_request(
     "你好，世界！",
-    GenerationParams { 
-        max_tokens: 100, 
-        temperature: 0.8, 
-        top_p: 0.95 
+    GenerationParams {
+        max_tokens: 100,
+        ..GenerationParams::default()
     }
 )?;
 
@@ -151,8 +149,8 @@ for result in results {
 | `--max-total-tokens` | 4096 | 每批次最大 token 总数 |
 | `--memory-threshold` | 0.9 | 内存压力阈值 (0.0-1.0) |
 | `--max-tokens` | 100 | 最大生成 token 数 |
-| `--temperature` | 1.0 | 采样温度（当前仅做范围校验，采样尚未实现） |
-| `--top-p` | 0.9 | 核采样阈值（当前仅做范围校验，采样尚未实现） |
+| `--temperature` | 0.0 | 采样温度；CPU 后端仅支持 0.0（greedy），其他值提交时返回错误 |
+| `--top-p` | 1.0 | 核采样阈值；CPU 后端仅支持 1.0，其他值提交时返回错误 |
 
 配置文件 (`config.json`):
 

@@ -1,11 +1,12 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
-use paged_infer::{
-    create_router, create_router_with_engine, test_utils::AlwaysFailExecutor, EngineConfig,
-    EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine, Scheduler,
-    ServingConfig, SimpleTokenizer,
-};
 use http_body_util::BodyExt;
+use paged_infer::{
+    create_router, create_router_with_engine,
+    test_utils::{AlwaysFailExecutor, ConstantTokenExecutor},
+    EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine,
+    Scheduler, ServingConfig, SimpleTokenizer, TokenizerTrait,
+};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -195,11 +196,137 @@ async fn test_completions_stream_returns_done_event() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(body.to_vec()).unwrap();
     assert!(body.contains("data: [DONE]"));
-    // 流必须以带 finish_reason 的终止 chunk 结束，且其 usage 字段完整
+    // 流必须以带 finish_reason 的终止 chunk 结束，且其 usage 字段完整。
+    // 该请求 max_tokens=2 且 CPU 执行器不生成 EOS，终止原因应为 length。
     assert!(
-        body.contains("\"finish_reason\":\"stop\""),
-        "stream must end with a stop chunk, got: {body}"
+        body.contains("\"finish_reason\":\"length\""),
+        "stream must end with a length chunk, got: {body}"
     );
+}
+
+#[tokio::test]
+async fn test_completions_rejects_non_greedy_sampling_params() {
+    // PINF-101：CPU 参考后端只有 greedy 一条路径；显式传入其他采样参数
+    // 必须在准入阶段返回 400，而不是在执行时被静默忽略。
+    let app = create_router(create_test_config()).unwrap();
+
+    for body in [
+        json!({"prompt": "hello", "max_tokens": 2, "temperature": 0.8}),
+        json!({"prompt": "hello", "max_tokens": 2, "temperature": 0.0, "top_p": 0.9}),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "non-greedy params must be rejected: {body}"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["type"], "invalid_request_error");
+        assert!(json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("greedy"));
+    }
+}
+
+#[tokio::test]
+async fn test_streaming_chunks_concat_equals_non_streaming_text() {
+    // PINF-102 端到端性质：SSE 片段拼接 == 同一请求非流式返回的完整文本。
+    // CPU 执行器固定种子 → 两个全新引擎对同一 prompt 产生相同 token 序列。
+    let stream_app = create_router(create_test_config()).unwrap();
+    let unary_app = create_router(create_test_config()).unwrap();
+
+    let stream_response = stream_app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 6,
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream_response.status(), StatusCode::OK);
+
+    let body = to_bytes(stream_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    let mut streamed_text = String::new();
+    let mut saw_final = false;
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
+        let payload: Value = serde_json::from_str(data).unwrap();
+        let choice = &payload["choices"][0];
+        if choice["finish_reason"].is_null() {
+            streamed_text.push_str(choice["text"].as_str().unwrap());
+        } else {
+            saw_final = true;
+        }
+    }
+    assert!(
+        saw_final,
+        "stream must terminate with a finish_reason chunk"
+    );
+
+    let unary_response = unary_app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 6
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unary_response.status(), StatusCode::OK);
+    let body = to_bytes(unary_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let unary_text = json["choices"][0]["text"].as_str().unwrap();
+
+    assert_eq!(
+        streamed_text, unary_text,
+        "concatenated SSE chunks must equal the one-shot completion text"
+    );
+    assert!(!streamed_text.is_empty());
 }
 
 #[tokio::test]
@@ -607,5 +734,142 @@ async fn test_client_disconnect_cancels_generation() {
     assert_eq!(
         first_sample, second_sample,
         "engine must stop executing a request after its client disconnects"
+    );
+}
+
+#[tokio::test]
+async fn test_completions_reports_length_finish_reason_when_truncated() {
+    // PINF-103：CPU 执行器生成非 EOS token，达到 max_tokens 截断时，
+    // 非流式响应必须报告 finish_reason="length"，而不是始终 "stop"。
+    let app = create_router(create_test_config()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["choices"][0]["finish_reason"], "length",
+        "truncated completion must report length"
+    );
+    assert_usage_consistent(&json);
+}
+
+#[tokio::test]
+async fn test_completions_reports_stop_finish_reason_on_eos() {
+    // PINF-103：注入恒生成 EOS 的执行器，请求在首个 token 后自然停止，
+    // 非流式响应必须报告 finish_reason="stop"。
+    let config = create_test_config();
+    let eos = SimpleTokenizer::new().eos_token_id();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(ConstantTokenExecutor { token: eos }), // EOS 动态取自 tokenizer
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 8
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["choices"][0]["finish_reason"], "stop",
+        "EOS-terminated completion must report stop"
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_reports_stop_finish_reason_on_eos() {
+    // PINF-103：流式场景下 EOS 自然停止，终止 chunk 的 finish_reason 必须是 "stop"。
+    let config = create_test_config();
+    let eos = SimpleTokenizer::new().eos_token_id();
+    let engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config.clone()),
+        Box::new(ConstantTokenExecutor { token: eos }), // EOS 动态取自 tokenizer
+    )
+    .unwrap();
+    let app = create_router_with_engine(config, engine).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "prompt": "hello world",
+                        "max_tokens": 8,
+                        "stream": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    let mut final_reason = None;
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
+        let payload: Value = serde_json::from_str(data).unwrap();
+        let reason = &payload["choices"][0]["finish_reason"];
+        if !reason.is_null() {
+            final_reason = Some(reason.as_str().unwrap().to_string());
+        }
+    }
+    assert_eq!(
+        final_reason.as_deref(),
+        Some("stop"),
+        "EOS-terminated stream must end with a stop chunk, got: {final_reason:?}"
     );
 }

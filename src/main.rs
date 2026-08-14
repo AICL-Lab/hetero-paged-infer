@@ -1,8 +1,8 @@
 //! Heterogeneous Inference System - Main Entry Point
 
 use clap::Parser;
-use paged_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
 use log::info;
+use paged_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -63,12 +63,12 @@ struct Args {
     #[arg(long, default_value = "100")]
     max_tokens: u32,
 
-    /// Sampling temperature
-    #[arg(long, default_value = "1.0")]
+    /// Sampling temperature (only 0.0 = greedy is supported by the CPU backend)
+    #[arg(long, default_value = "0.0")]
     temperature: f32,
 
-    /// Top-p sampling parameter
-    #[arg(long, default_value = "0.9")]
+    /// Top-p sampling parameter (only 1.0 is supported by the CPU backend)
+    #[arg(long, default_value = "1.0")]
     top_p: f32,
 }
 

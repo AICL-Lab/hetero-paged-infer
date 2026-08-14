@@ -25,6 +25,9 @@ use crate::types::{
     Sequence, TokenId,
 };
 
+/// 取消请求的失败原因前缀；引擎据此把终态归类为"客户端取消"而非后端错误。
+pub const CANCEL_REASON_PREFIX: &str = "request cancelled";
+
 #[derive(Debug, Clone)]
 struct PendingRequest {
     seq_id: SeqId,
@@ -310,6 +313,15 @@ impl Scheduler {
     /// 按 request_id 取消请求：无论它处于 pending、prefill 还是 decode，
     /// 都将其标记失败并释放 KV 资源。返回是否真的取消到了东西。
     pub fn cancel_by_request_id(&mut self, request_id: RequestId) -> bool {
+        self.fail_by_request_id(
+            request_id,
+            &format!("{CANCEL_REASON_PREFIX}: client disconnected"),
+        )
+    }
+
+    /// 按 request_id 将请求标记为失败（释放 KV 资源），失败原因随请求排出。
+    /// 返回是否找到了对应请求。
+    pub fn fail_by_request_id(&mut self, request_id: RequestId, reason: &str) -> bool {
         let seq_id = self
             .pending_queue
             .iter()
@@ -324,7 +336,7 @@ impl Scheduler {
             });
         match seq_id {
             Some(seq_id) => {
-                self.fail_sequence(seq_id, "request cancelled: client disconnected");
+                self.fail_sequence(seq_id, reason);
                 true
             }
             None => false,

@@ -37,11 +37,10 @@
 //! let config = EngineConfig::default();
 //! let mut engine = InferenceEngine::new(config)?;
 //!
-//! // 提交请求
+//! // 提交请求（CPU 参考后端当前仅支持 greedy：temperature = 0.0, top_p = 1.0）
 //! let params = GenerationParams {
 //!     max_tokens: 50,
-//!     temperature: 1.0,
-//!     top_p: 0.9,
+//!     ..GenerationParams::default()
 //! };
 //! let (request_id, _prompt_tokens) = engine.submit_request("你好，世界！", params)?;
 //!
@@ -126,7 +125,9 @@ pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExe
 pub use kv_cache::KVCacheManager;
 pub use scheduler::Scheduler;
 pub use server::{create_router, create_router_with_engine};
-pub use tokenizer::{build_tokenizer, HuggingFaceTokenizer, SimpleTokenizer, TokenizerTrait};
+pub use tokenizer::{
+    build_tokenizer, HuggingFaceTokenizer, IncrementalDecoder, SimpleTokenizer, TokenizerTrait,
+};
 pub use types::{
     BlockIdx, CompletedRequest, ExecutionBatch, ExecutionOutput, GenerationParams, MemoryStats,
     PhysicalBlockRef, Request, RequestId, RequestState, SchedulerOutput, SeqId, Sequence, TokenId,

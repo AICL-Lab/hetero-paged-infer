@@ -49,10 +49,33 @@ fn validate_execution_batch(
     Ok(())
 }
 
+/// 执行后端能力声明
+///
+/// 引擎在 submit 阶段据此校验生成参数，让不支持的采样语义尽早失败，
+/// 而不是在执行时被后端静默忽略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutorCapabilities {
+    /// 是否真正实现非贪心采样（temperature / top_p 生效）。
+    /// 为 `false` 时仅接受 [`GenerationParams::is_greedy`] 的参数组合。
+    ///
+    /// [`GenerationParams::is_greedy`]: crate::types::GenerationParams::is_greedy
+    pub sampling: bool,
+}
+
+impl ExecutorCapabilities {
+    /// 仅支持 greedy 解码（当前所有内置后端的共同能力）。
+    pub const GREEDY_ONLY: Self = Self { sampling: false };
+}
+
 /// GPU Executor trait defining the interface
 pub trait GPUExecutorTrait: Send {
     /// Execute a batch of sequences
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
+
+    /// 声明后端能力；默认仅支持 greedy 解码。
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::GREEDY_ONLY
+    }
 }
 
 pub fn create_default_gpu_executor(

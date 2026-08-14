@@ -79,6 +79,29 @@ pub trait TokenizerTrait: Send + Sync {
 
     /// 获取 PAD token ID
     fn pad_token_id(&self) -> TokenId;
+
+    /// 创建一个属于单个请求的增量解码器
+    ///
+    /// 流式响应必须保证：对任意成功生成的 token 序列，
+    /// `push`/`finish` 输出的全部片段拼接 == 对同一序列一次性 `try_decode` 的文本。
+    ///
+    /// 解码器状态按请求持有，请求完成、取消或失败时随之销毁。
+    fn create_decoder(&self) -> Box<dyn IncrementalDecoder>;
+}
+
+/// 每请求增量解码器
+///
+/// 禁止用“每次 decode 全前缀再取字符串后缀”的方式实现：某些 decoder 会
+/// 修改尾部空格或 byte 序列，已发送的片段无法撤回。
+pub trait IncrementalDecoder: Send {
+    /// 喂入一个新生成的 token。
+    ///
+    /// 返回此刻可安全下发的文本片段；若解码器需要更多上下文
+    /// （例如 byte/wordpiece 跨 token 边界），返回 `Ok(None)`。
+    fn push(&mut self, token: TokenId) -> Result<Option<String>, String>;
+
+    /// 冲刷末尾状态。请求到达终态时调用一次，返回值是最后一段文本。
+    fn finish(&mut self) -> Result<Option<String>, String>;
 }
 
 /// 简单字符级分词器
@@ -222,9 +245,40 @@ impl TokenizerTrait for SimpleTokenizer {
     fn pad_token_id(&self) -> TokenId {
         self.special_tokens.pad
     }
+
+    fn create_decoder(&self) -> Box<dyn IncrementalDecoder> {
+        Box::new(SimpleDecoder {
+            id_to_char: self.id_to_char.clone(),
+            special_tokens: self.special_tokens.clone(),
+            add_special_tokens: self.add_special_tokens,
+        })
+    }
 }
 
-/// HuggingFace tokenizer 适配器
+/// SimpleTokenizer 的增量解码器：token 与字符一一对应，可以逐 token 输出。
+struct SimpleDecoder {
+    id_to_char: HashMap<TokenId, char>,
+    special_tokens: SpecialTokenIds,
+    add_special_tokens: bool,
+}
+
+impl IncrementalDecoder for SimpleDecoder {
+    fn push(&mut self, token: TokenId) -> Result<Option<String>, String> {
+        // 与 SimpleTokenizer::try_decode 保持完全一致的跳过规则
+        if self.add_special_tokens
+            && (token == self.special_tokens.bos
+                || token == self.special_tokens.eos
+                || token == self.special_tokens.pad)
+        {
+            return Ok(None);
+        }
+        Ok(self.id_to_char.get(&token).map(|c| c.to_string()))
+    }
+
+    fn finish(&mut self) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+}
 #[derive(Debug, Clone)]
 pub struct HuggingFaceTokenizer {
     inner: Tokenizer,
@@ -277,9 +331,40 @@ impl TokenizerTrait for HuggingFaceTokenizer {
     fn pad_token_id(&self) -> TokenId {
         self.special_tokens.pad
     }
+
+    fn create_decoder(&self) -> Box<dyn IncrementalDecoder> {
+        // 当前依赖的 tokenizers 版本不提供安全的逐 token streaming decode
+        // （BPE/WordPiece 可能跨 token 修改尾部字节）。先缓冲 token、仅在
+        // finish 时输出完整解码结果，不伪造增量语义。
+        Box::new(BufferedDecoder {
+            inner: self.inner.clone(),
+            tokens: Vec::new(),
+        })
+    }
 }
 
-/// 根据配置构建 tokenizer
+/// HuggingFace tokenizer 的增量解码器：缓冲全部 token，finish 时一次性解码。
+struct BufferedDecoder {
+    inner: Tokenizer,
+    tokens: Vec<TokenId>,
+}
+
+impl IncrementalDecoder for BufferedDecoder {
+    fn push(&mut self, token: TokenId) -> Result<Option<String>, String> {
+        self.tokens.push(token);
+        Ok(None)
+    }
+
+    fn finish(&mut self) -> Result<Option<String>, String> {
+        if self.tokens.is_empty() {
+            return Ok(None);
+        }
+        self.inner
+            .decode(&self.tokens, true)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    }
+}
 pub fn build_tokenizer(config: &EngineConfig) -> Result<Box<dyn TokenizerTrait>, EngineError> {
     match config.tokenizer.kind {
         TokenizerKind::Simple => Ok(Box::new(SimpleTokenizer::with_special_tokens(
@@ -420,6 +505,128 @@ mod tests {
         let decoded = tokenizer.decode(&tokenizer.encode("hello world"));
 
         assert_eq!(decoded, "hello world");
+
+        let _ = fs::remove_file(path);
+    }
+
+    /// PINF-102 流式等价性质：逐 token push 的片段拼接 + finish 输出
+    /// 必须等于对同一 token 序列的一次性 decode。
+    #[test]
+    fn test_simple_decoder_streaming_equivalence() {
+        let tokenizer = SimpleTokenizer::new();
+        let tokens = tokenizer.encode("Hello, World!\n");
+
+        let mut decoder = tokenizer.create_decoder();
+        let mut streamed = String::new();
+        for &token in &tokens {
+            if let Some(chunk) = decoder.push(token).unwrap() {
+                streamed.push_str(&chunk);
+            }
+        }
+        if let Some(tail) = decoder.finish().unwrap() {
+            streamed.push_str(&tail);
+        }
+
+        assert_eq!(streamed, tokenizer.decode(&tokens));
+        assert_eq!(streamed, "Hello, World!\n");
+    }
+
+    #[test]
+    fn test_simple_decoder_without_special_tokens_round_trip() {
+        let tokenizer = SimpleTokenizer::without_special_tokens();
+        let tokens = tokenizer.encode("abc 123");
+
+        let mut decoder = tokenizer.create_decoder();
+        let mut streamed = String::new();
+        for &token in &tokens {
+            if let Some(chunk) = decoder.push(token).unwrap() {
+                streamed.push_str(&chunk);
+            }
+        }
+        if let Some(tail) = decoder.finish().unwrap() {
+            streamed.push_str(&tail);
+        }
+
+        assert_eq!(streamed, "abc 123");
+    }
+
+    /// 生成过程中混入特殊 token（如 EOS）时，增量输出与一次性 decode 一致跳过。
+    #[test]
+    fn test_simple_decoder_skips_special_tokens_like_one_shot() {
+        let tokenizer = SimpleTokenizer::new();
+        let specials = tokenizer.special_tokens().clone();
+        let h = tokenizer.encode("H")[1]; // skip BOS
+        let i = tokenizer.encode("i")[1];
+        let tokens = vec![h, specials.eos, i, specials.pad];
+
+        let mut decoder = tokenizer.create_decoder();
+        let mut streamed = String::new();
+        for &token in &tokens {
+            if let Some(chunk) = decoder.push(token).unwrap() {
+                streamed.push_str(&chunk);
+            }
+        }
+        if let Some(tail) = decoder.finish().unwrap() {
+            streamed.push_str(&tail);
+        }
+
+        assert_eq!(streamed, tokenizer.decode(&tokens));
+        assert_eq!(streamed, "Hi");
+    }
+
+    /// 非 ASCII（中文/UTF-8）输入：SimpleTokenizer 把未知字符映射为 UNK，
+    /// 增量与一次性 decode 一致地丢弃它——等价性质对损失路径同样成立。
+    #[test]
+    fn test_simple_decoder_utf8_equivalence() {
+        let tokenizer = SimpleTokenizer::new();
+        let tokens = tokenizer.encode("hi 你好");
+
+        let mut decoder = tokenizer.create_decoder();
+        let mut streamed = String::new();
+        for &token in &tokens {
+            if let Some(chunk) = decoder.push(token).unwrap() {
+                streamed.push_str(&chunk);
+            }
+        }
+        if let Some(tail) = decoder.finish().unwrap() {
+            streamed.push_str(&tail);
+        }
+
+        assert_eq!(streamed, tokenizer.decode(&tokens));
+        assert_eq!(streamed, "hi ");
+    }
+
+    /// HuggingFace 适配器缓冲 token、finish 时输出完整文本；
+    /// 拼接性质仍然成立（中间片段为空）。
+    #[test]
+    fn test_huggingface_decoder_buffers_until_finish() {
+        let path = write_test_tokenizer_json();
+        let tokenizer = HuggingFaceTokenizer::from_file(&path).unwrap();
+        let tokens = tokenizer.encode("hello world");
+
+        let mut decoder = tokenizer.create_decoder();
+        let mut streamed = String::new();
+        for &token in &tokens {
+            let chunk = decoder.push(token).unwrap();
+            assert!(chunk.is_none(), "buffered decoder must not emit mid-stream");
+        }
+        if let Some(tail) = decoder.finish().unwrap() {
+            streamed.push_str(&tail);
+        }
+
+        assert_eq!(streamed, tokenizer.decode(&tokens));
+        assert_eq!(streamed, "hello world");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_huggingface_decoder_finish_on_empty_is_none() {
+        let path = write_test_tokenizer_json();
+        let tokenizer = HuggingFaceTokenizer::from_file(&path).unwrap();
+
+        let mut decoder = tokenizer.create_decoder();
+        assert_eq!(decoder.finish().unwrap(), None);
 
         let _ = fs::remove_file(path);
     }

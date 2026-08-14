@@ -26,10 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = InferenceEngine::new(config)?;
 
     // Generation parameters
+    // CPU 参考后端仅支持 greedy 解码（temperature = 0.0, top_p = 1.0）
     let params = GenerationParams {
         max_tokens: 10,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // Submit multiple requests

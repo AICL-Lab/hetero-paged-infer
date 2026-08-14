@@ -14,7 +14,7 @@
 
 use crate::config::EngineConfig;
 use crate::error::EngineError;
-use crate::types::{CompletedRequest, GenerationParams, RequestId};
+use crate::types::{CompletedRequest, FinishReason, GenerationParams, RequestId};
 use crate::InferenceEngine;
 use async_stream::stream;
 use axum::extract::rejection::JsonRejection;
@@ -170,6 +170,11 @@ fn generation_result(
             text: completed.output_text,
             prompt_tokens,
             completion_tokens: completed.output_tokens.len(),
+            finish_reason: completed
+                .finish_reason
+                .unwrap_or(FinishReason::Stop)
+                .as_str()
+                .to_string(),
         })
     } else {
         Err(ApiError::internal(
@@ -206,7 +211,8 @@ impl From<EngineError> for ApiError {
             | EngineError::TotalLengthTooLong(_, _)
             | EngineError::InvalidMaxTokens(_)
             | EngineError::InvalidTemperature(_)
-            | EngineError::InvalidTopP(_) => ApiError::BadRequest(err.to_string()),
+            | EngineError::InvalidTopP(_)
+            | EngineError::UnsupportedGenerationMode(_) => ApiError::BadRequest(err.to_string()),
             EngineError::MemoryPressure | EngineError::MaxConcurrentSequencesReached(_) => {
                 ApiError::Overloaded(err.to_string())
             }
@@ -246,6 +252,8 @@ struct GenerationResult {
     prompt_tokens: usize,
     /// 生成 token 数
     completion_tokens: usize,
+    /// 生成结束原因（stop / length）
+    finish_reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -288,7 +296,7 @@ struct CompletionResponse {
 struct CompletionChoice {
     text: String,
     index: u32,
-    finish_reason: &'static str,
+    finish_reason: String,
 }
 
 #[derive(Serialize)]
@@ -305,7 +313,7 @@ struct ChatCompletionResponse {
 struct ChatCompletionChoice {
     index: u32,
     message: ChatMessage,
-    finish_reason: &'static str,
+    finish_reason: String,
 }
 
 #[derive(Serialize)]
@@ -552,7 +560,7 @@ async fn respond_generation(
                         choices: vec![CompletionChoice {
                             text: generated.text,
                             index: 0,
-                            finish_reason: "stop",
+                            finish_reason: generated.finish_reason,
                         }],
                         usage: response_usage,
                     })
@@ -571,7 +579,7 @@ async fn respond_generation(
                                 role: "assistant".to_string(),
                                 content: generated.text,
                             },
-                            finish_reason: "stop",
+                            finish_reason: generated.finish_reason,
                         }],
                         usage: response_usage,
                     })
@@ -619,6 +627,7 @@ impl StreamKind {
         created: u64,
         model: &str,
         usage: &Usage,
+        finish_reason: &str,
     ) -> serde_json::Value {
         let mut payload = match self {
             StreamKind::Completion => serde_json::json!({
@@ -626,14 +635,14 @@ impl StreamKind {
                 "object": "text_completion",
                 "created": created,
                 "model": model,
-                "choices": [{"text": "", "index": 0, "finish_reason": "stop"}],
+                "choices": [{"text": "", "index": 0, "finish_reason": finish_reason}],
             }),
             StreamKind::Chat => serde_json::json!({
                 "id": id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
             }),
         };
         payload["usage"] = serde_json::json!({
@@ -675,8 +684,13 @@ fn stream_response(
                             completion_tokens: completed.output_tokens.len(),
                             total_tokens: prompt_tokens + completed.output_tokens.len(),
                         };
+                        let finish_reason = completed
+                            .finish_reason
+                            .unwrap_or(FinishReason::Stop)
+                            .as_str();
                         yield Ok::<Event, Infallible>(Event::default()
-                            .data(kind.final_payload(&id, created, &model, &usage).to_string()));
+                            .data(kind.final_payload(&id, created, &model, &usage, finish_reason)
+                                .to_string()));
                     } else {
                         failure = completed.error;
                     }
@@ -770,9 +784,11 @@ fn generation_params(
     temperature: Option<f32>,
     top_p: Option<f32>,
 ) -> Result<GenerationParams, ApiError> {
+    // 缺省值即 greedy（后端当前唯一支持的生成模式）；显式传入其他
+    // 采样参数的请求会在 submit 阶段以 400 拒绝，而非静默降级。
     let params = GenerationParams {
         max_tokens: max_tokens.unwrap_or(16),
-        temperature: temperature.unwrap_or(1.0),
+        temperature: temperature.unwrap_or(0.0),
         top_p: top_p.unwrap_or(1.0),
     };
     params

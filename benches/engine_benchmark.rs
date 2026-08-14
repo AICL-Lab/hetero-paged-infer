@@ -21,8 +21,7 @@ fn bench_request_submission(c: &mut Criterion) {
     let config = EngineConfig::default();
     let params = GenerationParams {
         max_tokens: 10,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // 每批使用全新引擎：向同一引擎无限提交会超过 max_num_seqs 而 panic
@@ -44,8 +43,7 @@ fn bench_engine_step(c: &mut Criterion) {
     let config = EngineConfig::default();
     let params = GenerationParams {
         max_tokens: 10,
-        temperature: 1.0,
-        top_p: 0.9,
+        ..GenerationParams::default()
     };
 
     // 每批使用带待处理请求的全新引擎，保证每个被测 step 都在做真实的
@@ -89,8 +87,7 @@ fn bench_batch_sizes(c: &mut Criterion) {
                     let mut engine = InferenceEngine::new(config.clone()).unwrap();
                     let params = GenerationParams {
                         max_tokens: 5,
-                        temperature: 1.0,
-                        top_p: 0.9,
+                        ..GenerationParams::default()
                     };
                     for i in 0..size {
                         engine

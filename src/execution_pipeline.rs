@@ -5,7 +5,7 @@
 
 use crate::config::EngineConfig;
 use crate::error::EngineError;
-use crate::gpu_executor::GPUExecutorTrait;
+use crate::gpu_executor::{ExecutorCapabilities, GPUExecutorTrait};
 use crate::types::{ExecutionBatch, ExecutionOutput, SchedulerOutput};
 
 /// 批次执行流水线
@@ -38,6 +38,11 @@ impl BatchExecutionPipeline {
             gpu_executor,
             max_retry_attempts: config.max_retry_attempts,
         }
+    }
+
+    /// 底层执行后端的能力声明（供引擎在 submit 阶段校验生成参数）。
+    pub fn capabilities(&self) -> ExecutorCapabilities {
+        self.gpu_executor.capabilities()
     }
 
     /// 执行调度器输出对应的批次

@@ -71,10 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n4. Creating engine with custom config:");
     let mut engine = InferenceEngine::new(loaded_config)?;
 
+    // CPU 参考后端仅支持 greedy 解码（temperature = 0.0, top_p = 1.0）；
+    // 传入其他采样参数会在 submit 阶段返回 UnsupportedGenerationMode。
     let params = GenerationParams {
         max_tokens: 5,
-        temperature: 0.8,
-        top_p: 0.95,
+        ..GenerationParams::default()
     };
 
     engine.submit_request("Test input", params)?;

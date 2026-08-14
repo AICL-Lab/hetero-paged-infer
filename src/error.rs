@@ -143,6 +143,14 @@ pub enum EngineError {
     #[error("无效的 top_p: 必须在 (0.0, 1.0] 范围内，实际值为 {0}")]
     InvalidTopP(f32),
 
+    /// 后端不支持的生成模式：{0}
+    ///
+    /// 参数本身在合法范围内，但当前执行后端没有实现对应语义
+    /// （例如 CPU 参考执行器只支持 greedy：`temperature == 0.0` 且 `top_p == 1.0`）。
+    /// 在 submit 阶段拒绝，而不是在执行时静默忽略采样参数。
+    #[error("后端不支持的生成模式: {0}")]
+    UnsupportedGenerationMode(String),
+
     /// 输入文本为空
     #[error("输入文本为空")]
     EmptyInput,
