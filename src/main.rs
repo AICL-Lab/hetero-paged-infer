@@ -2,7 +2,9 @@
 
 use clap::Parser;
 use log::info;
-use paged_infer::{create_router, EngineConfig, GenerationParams, InferenceEngine};
+use paged_infer::{
+    create_router, EngineConfig, GenerationParams, InferenceEngine, TokenizerConfig, TokenizerKind,
+};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -70,6 +72,11 @@ struct Args {
     /// Top-p sampling parameter (only 1.0 is supported by the CPU backend)
     #[arg(long, default_value = "1.0")]
     top_p: f32,
+
+    /// HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（词表与模型一致，
+    /// 例如 Qwen2.5 的 151936 词表），替代默认的 SimpleTokenizer
+    #[arg(long)]
+    tokenizer: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -131,6 +138,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(port) = args.port {
         config.serving.port = port;
+    }
+
+    // --tokenizer 可与 --config 组合：显式覆盖配置文件的 tokenizer 设置
+    if let Some(path) = args.tokenizer {
+        config.tokenizer = TokenizerConfig {
+            kind: TokenizerKind::HuggingFace,
+            path: Some(path),
+        };
     }
 
     info!("Starting Heterogeneous Inference System");

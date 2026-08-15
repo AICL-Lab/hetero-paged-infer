@@ -216,6 +216,7 @@ for result in results {
 | `--max-tokens` | 100 | 最大生成 token 数 |
 | `--temperature` | 0.0 | 采样温度；CPU 后端仅支持 0.0（greedy），其他值提交时返回错误 |
 | `--top-p` | 1.0 | 核采样阈值；CPU 后端仅支持 1.0，其他值提交时返回错误 |
+| `--tokenizer` | 无 | HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（词表与模型一致，如 Qwen2.5），替代默认的 SimpleTokenizer |
 
 配置文件 (`config.json`):
 

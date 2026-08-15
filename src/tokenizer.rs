@@ -285,18 +285,45 @@ pub struct HuggingFaceTokenizer {
     special_tokens: SpecialTokenIds,
 }
 
+/// 常见 BOS token 名（按优先级；Qwen2 系为 `<|endoftext|>`）
+const BOS_TOKEN_NAMES: &[&str] = &["<|endoftext|>", "<s>", "<bos>", "<BOS>"];
+/// 常见 EOS token 名（Qwen2 系为 `<|im_end|>`）
+const EOS_TOKEN_NAMES: &[&str] = &["<|im_end|>", "</s>", "<eos>", "<EOS>", "<|endoftext|>"];
+/// 常见 PAD token 名（Qwen2 系与 BOS 同为 `<|endoftext|>`）
+const PAD_TOKEN_NAMES: &[&str] = &["<|endoftext|>", "<pad>", "<PAD>"];
+
+/// 返回词表中第一个命中的 token id
+fn first_token_id(inner: &Tokenizer, names: &[&str]) -> Option<u32> {
+    names
+        .iter()
+        .find_map(|name| inner.token_to_id(name))
+        .map(|id| id as u32)
+}
+
 impl HuggingFaceTokenizer {
     /// 从 tokenizer JSON 文件创建
     pub fn from_file(path: &Path) -> Result<Self, String> {
         Self::with_special_tokens_from_file(path, SpecialTokenIds::default())
     }
 
-    /// 使用自定义 special token 配置从文件创建
+    /// 使用自定义 special token 配置从文件创建。
+    ///
+    /// 特殊 token ID 优先从词表探测真实值（Qwen2：BOS/PAD=151643、EOS=151645），
+    /// 命中则覆盖传入配置；未命中才回退到配置值。
     pub fn with_special_tokens_from_file(
         path: &Path,
-        special_tokens: SpecialTokenIds,
+        mut special_tokens: SpecialTokenIds,
     ) -> Result<Self, String> {
         let inner = Tokenizer::from_file(path).map_err(|e| e.to_string())?;
+        if let Some(id) = first_token_id(&inner, BOS_TOKEN_NAMES) {
+            special_tokens.bos = id;
+        }
+        if let Some(id) = first_token_id(&inner, EOS_TOKEN_NAMES) {
+            special_tokens.eos = id;
+        }
+        if let Some(id) = first_token_id(&inner, PAD_TOKEN_NAMES) {
+            special_tokens.pad = id;
+        }
         Ok(Self {
             inner,
             special_tokens,
@@ -306,8 +333,10 @@ impl HuggingFaceTokenizer {
 
 impl TokenizerTrait for HuggingFaceTokenizer {
     fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
+        // 不自动添加特殊 token（Qwen2 等真实模型 add_bos=false，聊天模板由上层
+        // 拼装），与 tiny-llm 的 tokenizer 语义保持一致，保证两侧词表对齐。
         self.inner
-            .encode(text, true)
+            .encode(text, false)
             .map(|encoding| encoding.get_ids().to_vec())
             .map_err(|e| e.to_string())
     }
@@ -317,7 +346,10 @@ impl TokenizerTrait for HuggingFaceTokenizer {
     }
 
     fn vocab_size(&self) -> u32 {
-        self.inner.get_vocab_size(false) as u32
+        // tokenizer 的完整词表（含 added tokens 特殊 token）。Qwen2.5-0.5B 为
+        // 151665；模型 embedding 虽是 151936，多出的 271 个是 llama.cpp 填充的
+        // [PADnnnn] 占位符（未训练行），不影响编码一致性。
+        self.inner.get_vocab_size(true) as u32
     }
 
     fn bos_token_id(&self) -> TokenId {
@@ -616,6 +648,57 @@ mod tests {
 
         assert_eq!(streamed, tokenizer.decode(&tokens));
         assert_eq!(streamed, "hello world");
+
+        let _ = fs::remove_file(path);
+    }
+
+    /// 真实 tokenizer（Qwen2 风格 added tokens）加载时，BOS/EOS/PAD 应从词表
+    /// 探测真实值并覆盖配置默认值（1/2/0/3 与真实模型不符）。
+    #[test]
+    fn test_huggingface_tokenizer_detects_real_special_tokens() {
+        let json = r###"{
+          "version": "1.0",
+          "truncation": null,
+          "padding": null,
+          "added_tokens": [
+            {"id": 151643, "content": "<|endoftext|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true},
+            {"id": 151644, "content": "<|im_start|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true},
+            {"id": 151645, "content": "<|im_end|>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true}
+          ],
+          "normalizer": null,
+          "pre_tokenizer": { "type": "Whitespace" },
+          "post_processor": null,
+          "decoder": { "type": "WordPiece", "prefix": "##", "cleanup": false },
+          "model": {
+            "type": "WordLevel",
+            "vocab": {
+              "[UNK]": 0,
+              "hi": 1,
+              "<|endoftext|>": 151643,
+              "<|im_start|>": 151644,
+              "<|im_end|>": 151645
+            },
+            "unk_token": "[UNK]"
+          }
+        }"###;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("paged-test-special-{unique}.json"));
+        fs::write(&path, json).unwrap();
+
+        let tokenizer = HuggingFaceTokenizer::with_special_tokens_from_file(
+            &path,
+            SpecialTokenIds::default(), // 默认 1/2/0/3，应被探测覆盖
+        )
+        .unwrap();
+
+        assert_eq!(tokenizer.bos_token_id(), 151643);
+        assert_eq!(tokenizer.eos_token_id(), 151645);
+        assert_eq!(tokenizer.pad_token_id(), 151643);
+        // add_special_tokens=false：encode 不自动添加 BOS/EOS
+        assert_eq!(tokenizer.encode("hi"), vec![1]);
 
         let _ = fs::remove_file(path);
     }

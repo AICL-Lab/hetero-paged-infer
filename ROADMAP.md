@@ -29,8 +29,11 @@
 - [~] 真实模型的端到端 serving：分页 KV + 连续批处理 + 真实 token 生成
       - 引擎驱动 + 真实后端的接入流程已验证（`cargo test --features tiny-llm`，
         3 并发请求、KV 生命周期、资源守恒、能力声明）
-      - 待完善：tokenizer 需与模型词表一致（当前用 SimpleTokenizer，词表语义不符）；
-        分页 KV（策略 1）暂未启用（当前策略 2 连续 KV）
+      - tokenizer 词表对齐已完成：`--tokenizer <tokenizer.json>` 启用 HF tokenizer
+        （真实 BOS/EOS/PAD 探测），差分测试与 tiny-llm 权威 fixture 逐 id 对齐，
+        真实后端端到端与 llama.cpp 同 prompt greedy 输出逐 token 一致
+        （`tests/tokenizer_real_diff.rs`、`tests/tiny_llm_text_e2e.rs`）
+      - 待完善：分页 KV（策略 1）暂未启用（当前策略 2 连续 KV）
 - [x] 并发压测：资源守恒、尾延迟、失败传播
       （Mock/CPU 后端先行，真实 tiny-llm 后端接入后直接切换 executor 复用场景：
       `tests/concurrency_stress.rs` 断言 + `benches/concurrency_benchmark.rs` 性能基线）
