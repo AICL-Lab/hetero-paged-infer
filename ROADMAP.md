@@ -28,6 +28,13 @@
 - [x] T7：Unicode stop 序列字节偏移修复
 - [x] T8：文档与代码事实对齐
 
+## P1（部分完成）
+
+- [x] T9：Chat Completions 应用真实 chat template（Qwen2 `<|im_start|>`，HF tokenizer）
+- [ ] T10：引擎指标 /metrics + CB on/off benchmark
+- [ ] T11：tiny-llm 策略 1（分页 KV C ABI，跨仓库，不阻塞冻结）
+- [ ] T12：BPE 安全增量解码（或文档明确降级——已部分完成）
+
 ## 阶段 1：巩固（低成本，面试前做一次）
 
 - [x] README 补一节「调度器设计讲解」：状态机、准入控制、抢占策略（面试讲述用）

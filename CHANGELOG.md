@@ -107,6 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **T7** Unicode stop 序列字节偏移修复：`tokens_before_char` 按字节长度累加，
   中文等非 ASCII 文本不再错误保留 stop 序列。
 
+### P1（T9）
+
+- **T9** Chat Completions 应用真实 chat template：使用 HuggingFace tokenizer 时
+  采用 Qwen2 的 `<|im_start|>` 模板（system/user/assistant + 末尾 assistant 引导）；
+  `SimpleTokenizer` 保持原 `role: content` 拼接。模板当前硬编码 Qwen2。
+
 ## [0.1.0] - 2026-04-16
 
 ### Added

@@ -277,9 +277,12 @@ for result in results {
 
 ### Chat Completions 的 chat template
 
-当前 `prepare_chat_request` 只做 `"role: content\n"` 的简单文本拼接，**没有**
-应用 Qwen2 等模型的真实 chat template（如 `<|im_start|>`）。如需与 HF 模型
-词表对齐的真实对话格式，需要扩展 chat template（见路线图 T9）。
+- 使用 `SimpleTokenizer` 时，`prepare_chat_request` 保持简单的 `role: content`
+  文本拼接。
+- 使用 HuggingFace tokenizer 时，应用 **Qwen2 的 chat template**
+  （`<|im_start|>` / `<|im_end|>`，末尾追加 `<|im_start|>assistant`），
+  与 Qwen2 系模型词表对齐。当前模板是**硬编码 Qwen2** 的，其他模型需扩展
+  `build_chat_prompt`。
 
 ### 为什么选择 PagedAttention？
 

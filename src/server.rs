@@ -12,7 +12,7 @@
 //!   组成真正的 continuous batching 批次；
 //! - 流式响应随 token 生成逐片段推送（真实的首 token 延迟）。
 
-use crate::config::EngineConfig;
+use crate::config::{EngineConfig, TokenizerKind};
 use crate::error::EngineError;
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, FinishReason, GenerationParams, RequestId, TokenLogprobs};
@@ -1282,14 +1282,10 @@ fn prepare_chat_request(
         }
     }
 
-    let prompt = validate_prompt(
-        request
-            .messages
-            .iter()
-            .map(|message| format!("{}: {}", message.role, message.content))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )?;
+    let prompt = validate_prompt(build_chat_prompt(
+        &state.config.tokenizer.kind,
+        &request.messages,
+    ))?;
 
     Ok(PreparedGenerationRequest {
         model: resolve_model(state, request.model)?,
@@ -1304,6 +1300,44 @@ fn prepare_chat_request(
         stream: request.stream.unwrap_or(false),
         n: candidate_count(request.n)?,
     })
+}
+
+/// 构建 Chat Completions 的 prompt 文本。
+///
+/// - [`TokenizerKind::HuggingFace`]：应用 Qwen2 的 chat template（`<|im_start|>`），
+///   与 HF 模型词表对齐；其他模型需按需扩展。
+/// - [`TokenizerKind::Simple`]：保持简单的 `role: content` 文本拼接（默认/测试）。
+fn build_chat_prompt(kind: &TokenizerKind, messages: &[ChatMessage]) -> String {
+    match kind {
+        TokenizerKind::HuggingFace => qwen2_chat_prompt(messages),
+        TokenizerKind::Simple => messages
+            .iter()
+            .map(|message| format!("{}: {}", message.role, message.content))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// Qwen2 系模型的 chat template：
+///
+/// - 有 system 消息时以 `<|im_start|>system\n{content}<|im_end|>` 开头；
+/// - 每个 user/assistant 消息为 `<|im_start|>{role}\n{content}<|im_end|>`；
+/// - 最后追加 `<|im_start|>assistant`，提示模型开始回复。
+fn qwen2_chat_prompt(messages: &[ChatMessage]) -> String {
+    let mut parts = Vec::with_capacity(messages.len() + 1);
+    for (i, message) in messages.iter().enumerate() {
+        // 仅第一条 system 消息按 system 特殊处理；后续重复按普通消息（防御）。
+        if i == 0 && message.role == "system" {
+            parts.push(format!("<|im_start|>system\n{}<|im_end|>", message.content));
+        } else {
+            parts.push(format!(
+                "<|im_start|>{}\n{}<|im_end|>",
+                message.role, message.content
+            ));
+        }
+    }
+    parts.push("<|im_start|>assistant".to_string());
+    parts.join("\n")
 }
 
 /// 将请求的 `stop` 字段展开为引擎使用的停止序列列表。
@@ -1421,4 +1455,62 @@ fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_qwen2_chat_prompt_with_system() {
+        let messages = vec![
+            msg("system", "You are helpful"),
+            msg("user", "Hello"),
+            msg("assistant", "Hi there"),
+        ];
+        let prompt = qwen2_chat_prompt(&messages);
+        assert_eq!(
+            prompt,
+            "<|im_start|>system\nYou are helpful<|im_end|>\n\
+             <|im_start|>user\nHello<|im_end|>\n\
+             <|im_start|>assistant\nHi there<|im_end|>\n\
+             <|im_start|>assistant"
+        );
+    }
+
+    #[test]
+    fn test_qwen2_chat_prompt_without_system() {
+        let messages = vec![msg("user", "Hello"), msg("assistant", "Hi")];
+        let prompt = qwen2_chat_prompt(&messages);
+        assert_eq!(
+            prompt,
+            "<|im_start|>user\nHello<|im_end|>\n\
+             <|im_start|>assistant\nHi<|im_end|>\n\
+             <|im_start|>assistant"
+        );
+    }
+
+    #[test]
+    fn test_build_chat_prompt_simple_keeps_role_concat() {
+        let messages = vec![msg("user", "Hello"), msg("assistant", "Hi")];
+        let prompt = build_chat_prompt(&TokenizerKind::Simple, &messages);
+        assert_eq!(prompt, "user: Hello\nassistant: Hi");
+    }
+
+    #[test]
+    fn test_build_chat_prompt_huggingface_uses_qwen2() {
+        let messages = vec![msg("user", "Hello")];
+        let prompt = build_chat_prompt(&TokenizerKind::HuggingFace, &messages);
+        assert_eq!(
+            prompt,
+            "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant"
+        );
+    }
 }
