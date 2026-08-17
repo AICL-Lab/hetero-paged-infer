@@ -63,7 +63,7 @@ use std::collections::HashMap;
 /// 本步为单个请求生成的文本片段：`(request_id, 解码文本, 该 token 的 logprob)`。
 pub type StepChunk = (RequestId, String, Option<TokenLogprobs>);
 
-/// 文本中第一个 stop 序列出现的字符偏移（取最早命中者）。
+/// 文本中第一个 stop 序列出现的**字节偏移**（`str::find` 语义，取最早命中者）。
 fn find_stop_sequence(text: &str, stops: &[String]) -> Option<usize> {
     stops
         .iter()
@@ -72,23 +72,25 @@ fn find_stop_sequence(text: &str, stops: &[String]) -> Option<usize> {
         .min()
 }
 
-/// 输出 token 中位于字符偏移 `char_offset` 之前（不含）的 token 数。
+/// 输出 token 中位于字节偏移 `byte_offset` 之前（不含）的 token 数。
 ///
-/// 对逐字符 tokenizer（SimpleTokenizer）与整体解码的字符偏移精确对齐；
-/// 对子词 tokenizer（HuggingFace）保守下取整——stop 序列开头的部分
+/// `str::find` 返回的是**字节偏移**（而非字符偏移），因此这里必须按
+/// 每个 token 解码后的**字节长度**（`str::len`）累加，才能与非 ASCII
+/// 文本精确对齐。对逐字符 tokenizer（SimpleTokenizer）两者等价；对
+/// 子词 tokenizer（HuggingFace）保守下取整——stop 序列开头的部分
 /// token 也会一并移除，保证输出中绝不残留 stop 序列。
 fn tokens_before_char(
     tokens: &[TokenId],
     tokenizer: &dyn TokenizerTrait,
-    char_offset: usize,
+    byte_offset: usize,
 ) -> usize {
     let mut len = 0usize;
     for (i, &token) in tokens.iter().enumerate() {
-        if len >= char_offset {
+        if len >= byte_offset {
             return i;
         }
         if let Ok(segment) = tokenizer.try_decode(&[token]) {
-            len += segment.chars().count();
+            len += segment.len();
         }
     }
     tokens.len()
@@ -1356,6 +1358,57 @@ mod tests {
         }
     }
 
+    /// 单 token 解码返回固定字符串的测试 tokenizer：token 0 → "好"（3 字节）、
+    /// 1 → "A"、2 → "B"。用于验证 stop 序列的**字节偏移**处理。
+    struct FixedSegmentTokenizer;
+
+    impl TokenizerTrait for FixedSegmentTokenizer {
+        fn try_encode(&self, text: &str) -> Result<Vec<TokenId>, String> {
+            // 非空文本编码为单个 token（让请求有合法输入）。
+            if text.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![0])
+            }
+        }
+        fn try_decode(&self, tokens: &[TokenId]) -> Result<String, String> {
+            let mut s = String::new();
+            for &t in tokens {
+                match t {
+                    0 => s.push('好'),
+                    1 => s.push('A'),
+                    2 => s.push('B'),
+                    _ => s.push('?'),
+                }
+            }
+            Ok(s)
+        }
+        fn vocab_size(&self) -> u32 {
+            3
+        }
+        fn bos_token_id(&self) -> TokenId {
+            0
+        }
+        fn eos_token_id(&self) -> TokenId {
+            0
+        }
+        fn pad_token_id(&self) -> TokenId {
+            0
+        }
+        fn create_decoder(&self) -> Box<dyn crate::tokenizer::IncrementalDecoder> {
+            struct NoopDecoder;
+            impl crate::tokenizer::IncrementalDecoder for NoopDecoder {
+                fn push(&mut self, _token: TokenId) -> Result<Option<String>, String> {
+                    Ok(None)
+                }
+                fn finish(&mut self) -> Result<Option<String>, String> {
+                    Ok(None)
+                }
+            }
+            Box::new(NoopDecoder)
+        }
+    }
+
     #[test]
     fn test_decoder_push_failure_fails_request_honestly() {
         let config = create_test_config();
@@ -1571,6 +1624,50 @@ mod tests {
         // "AAB" 中 "AB" 起始于字符偏移 1 → 保留第 1 个 A，移除 AB
         assert_eq!(result.output_tokens, vec![37]);
         assert_eq!(result.output_text, "A");
+        assert_eq!(result.finish_reason, Some(FinishReason::Stop));
+        assert!(!engine.has_pending_work());
+    }
+
+    #[test]
+    fn test_tokens_before_char_uses_byte_offset_for_unicode() {
+        // tokens: 好(0), A(1), B(2)；"好" 占 3 字节。
+        // `str::find("AB")` 在 "好AB" 中返回字节偏移 3，应只保留第一个 token。
+        let tokens = vec![0u32, 1, 2];
+        let tokenizer = FixedSegmentTokenizer;
+        let keep = tokens_before_char(&tokens, &tokenizer, "好".len());
+        assert_eq!(keep, 1, "only the first token (好) should be kept");
+    }
+
+    #[test]
+    fn test_stop_sequence_unicode_byte_offset_end_to_end() {
+        // 输出 好AB，stop="AB"：按字节偏移截断后最终输出应为 "好"，
+        // finish_reason="stop"（修复前会保留 stop 序列 "AB"）。
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(FixedSegmentTokenizer),
+            scheduler,
+            // 逐 token 输出 0(好), 1(A), 2(B)
+            Box::new(SequenceExecutor::new(vec![0, 1, 2])),
+        )
+        .unwrap();
+        engine
+            .submit_request(
+                "hi",
+                GenerationParams {
+                    max_tokens: 10,
+                    stop: vec!["AB".to_string()],
+                    logprobs: None,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1);
+        let result = &completed[0];
+        assert!(result.success);
+        assert_eq!(result.output_text, "好");
         assert_eq!(result.finish_reason, Some(FinishReason::Stop));
         assert!(!engine.has_pending_work());
     }
