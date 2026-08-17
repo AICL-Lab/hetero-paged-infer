@@ -94,8 +94,10 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块
    - 序列数 ≤ `max_batch_size`
    - 本步总 token ≤ `max_total_tokens`（decode 每序列 1，prefill 按输入长度）
    - 单请求块需求 ≤ `max_num_blocks`（超出直接失败，而非悄悄截断）
-3. **内存压力**：KV 池利用率 ≥ `memory_threshold` 时暂停启动新 prefill
-   （pending 保留），已解码序列继续推进；`MemoryPressure` → HTTP 429 + `Retry-After`。
+3. **内存压力**：KV 池利用率 ≥ `memory_threshold` 时，**新提交的请求直接拒绝**
+   （`MemoryPressure` → HTTP 429 + `Retry-After`）；已解码序列继续推进；
+   每步启动新 prefill 前还检查高水位线与"下一步 decode 增长"的预留块，
+   预算不足的候选延后到后续步骤，而不是把池子打满导致 OOM。
 
 ### 每步调度优先级
 
@@ -142,14 +144,17 @@ cargo test
 
 ### 命令行用法
 
+> 默认 `SimpleTokenizer` 只支持 ASCII；中文等非 ASCII 文本请配合
+> `--tokenizer <tokenizer.json>` 使用 HuggingFace tokenizer（否则会变成 UNK）。
+
 ```bash
 # 基本用法
-./target/release/paged-infer --input "你好，世界！" --max-tokens 50
+./target/release/paged-infer --input "Hello, world!" --max-tokens 50
 
 # 使用自定义参数（当前 CPU 后端仅支持 greedy：--temperature 0.0 --top-p 1.0，
 # 其他采样参数会在提交时返回错误，而不是被静默忽略）
 ./target/release/paged-infer \
-  --input "解释量子计算" \
+  --input "Explain quantum computing" \
   --max-tokens 100
 
 # 启动 OpenAI 兼容 HTTP 服务
@@ -170,12 +175,12 @@ curl http://127.0.0.1:3000/metrics
 # Completions 接口
 curl http://127.0.0.1:3000/v1/completions \
   -H "content-type: application/json" \
-  -d '{"model":"paged-infer","prompt":"你好","max_tokens":8}'
+  -d '{"model":"paged-infer","prompt":"Hello","max_tokens":8}'
 
 # Chat Completions 接口
 curl http://127.0.0.1:3000/v1/chat/completions \
   -H "content-type: application/json" \
-  -d '{"model":"paged-infer","messages":[{"role":"user","content":"说你好"}],"max_tokens":8}'
+  -d '{"model":"paged-infer","messages":[{"role":"user","content":"Say hello"}],"max_tokens":8}'
 ```
 
 ### 库用法
@@ -187,8 +192,9 @@ use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
 
 // 提交生成请求（greedy 解码，当前后端唯一支持的模式）
+// 注意：默认 SimpleTokenizer 仅支持 ASCII，中文请改用 HuggingFace tokenizer。
 let request_id = engine.submit_request(
-    "你好，世界！",
+    "Hello, world!",
     GenerationParams {
         max_tokens: 100,
         ..GenerationParams::default()
@@ -216,7 +222,7 @@ for result in results {
 | `--max-tokens` | 100 | 最大生成 token 数 |
 | `--temperature` | 0.0 | 采样温度；CPU 后端仅支持 0.0（greedy），其他值提交时返回错误 |
 | `--top-p` | 1.0 | 核采样阈值；CPU 后端仅支持 1.0，其他值提交时返回错误 |
-| `--tokenizer` | 无 | HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（词表与模型一致，如 Qwen2.5），替代默认的 SimpleTokenizer |
+| `--tokenizer` | 无 | HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（完整有效词表 151665；GGUF embedding 可能为 151936 并含 padding 行），替代默认的 SimpleTokenizer |
 
 配置文件 (`config.json`):
 
@@ -246,6 +252,34 @@ for result in results {
 ## 性能边界
 
 当前计算后端为 CPU 参考执行器（随机权重小模型），因此仓库不宣称真实 token 吞吐或 GPU 利用率。现阶段 benchmark 只用于观察调度、KV 分页与服务控制面的相对开销；接入真实 CUDA kernel 后才能建立硬件性能基线。
+
+### 流式（SSE）与分词器
+
+- 默认 `SimpleTokenizer` 是逐 token 解码，SSE 为真正的 **token 级流式**。
+- 使用 HuggingFace tokenizer 时，增量解码走 `BufferedDecoder`：为安全起见
+  直到请求结束（`finish()`）才一次性输出完整文本 chunk，因此此时 SSE 不是
+  token 级流式，而是"请求结束时的一个完整文本 chunk"。所有
+  "token-level streaming" 的表述均限定于 `SimpleTokenizer`。
+
+### 内存压力与无抢占
+
+本项目**没有抢占**（vLLM 式的 swap / preempt-resume 未实现）。内存压力下的
+策略是：
+
+1. **拒绝新 prefill**（`add_request` 提交侧：利用率 ≥ 阈值时返回 `MemoryPressure`）；
+2. **保留在途 decode**（已开始的序列继续推进，不驱逐）；
+3. **预留即时 decode 增长块**：启动新 prefill 前既检查高水位线
+   （启动后 `used_blocks / total_blocks ≤ memory_threshold`），也为
+   "本步已调度/在跑序列 + 候选序列"下一步的 decode 增长预留空闲块。
+
+该策略只解决"下一步马上需要增长"的 OOM；长期最坏情况（大量长序列同时需要
+多个增长块）仍可能 OOM——这是无抢占实现的固有边界。
+
+### Chat Completions 的 chat template
+
+当前 `prepare_chat_request` 只做 `"role: content\n"` 的简单文本拼接，**没有**
+应用 Qwen2 等模型的真实 chat template（如 `<|im_start|>`）。如需与 HF 模型
+词表对齐的真实对话格式，需要扩展 chat template（见路线图 T9）。
 
 ### 为什么选择 PagedAttention？
 

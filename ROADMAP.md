@@ -16,6 +16,18 @@
 - [x] OpenAI 兼容服务（/v1/completions、/v1/chat/completions、SSE）
 - [x] 资源不变量属性测试（used + free == total 等）
 
+## P0 正确性修复（已完成）
+
+- [x] T0：fmt / clippy 恢复 CI 绿色
+- [x] T1：执行输出契约校验（坏后端不得卡死请求）
+- [x] T2：调度器内存水位线 + decode 增长预留
+- [x] T3：修复 pending 队头阻塞（HOL）
+- [x] T4：后端序列生命周期钩子 + tiny-llm KV 释放
+- [x] T5：超时重试声明幂等性
+- [x] T6：浮点参数 NaN 校验
+- [x] T7：Unicode stop 序列字节偏移修复
+- [x] T8：文档与代码事实对齐
+
 ## 阶段 1：巩固（低成本，面试前做一次）
 
 - [x] README 补一节「调度器设计讲解」：状态机、准入控制、抢占策略（面试讲述用）

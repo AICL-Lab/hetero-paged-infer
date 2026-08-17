@@ -1,4 +1,4 @@
-//! Heterogeneous Inference System - Main Entry Point
+//! Paged-Infer - Main Entry Point
 
 use clap::Parser;
 use log::info;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "paged-infer")]
 #[command(
-    about = "Paged-memory, continuously-batched inference engine scaffold with a mock compute backend"
+    about = "Paged-memory, continuously-batched inference engine scaffold with a CPU reference backend"
 )]
 struct Args {
     /// Path to configuration file
@@ -73,8 +73,8 @@ struct Args {
     #[arg(long, default_value = "1.0")]
     top_p: f32,
 
-    /// HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（词表与模型一致，
-    /// 例如 Qwen2.5 的 151936 词表），替代默认的 SimpleTokenizer
+    /// HuggingFace tokenizer.json 路径；设置后引擎改用 HF tokenizer（完整有效词表
+    /// 151665，GGUF embedding 可能为 151936 并含 padding 行），替代默认的 SimpleTokenizer
     #[arg(long)]
     tokenizer: Option<PathBuf>,
 }
@@ -148,11 +148,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     }
 
-    info!("Starting Heterogeneous Inference System");
+    info!("Starting Paged-Infer");
     info!("Configuration: {:?}", config);
 
-    println!("Heterogeneous Inference System");
-    println!("==============================");
+    println!("Paged-Infer");
+    println!("===========");
     println!("Configuration:");
     println!("  Block size: {}", config.block_size);
     println!("  Max blocks: {}", config.max_num_blocks);

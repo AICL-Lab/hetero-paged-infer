@@ -1,10 +1,11 @@
-//! # Hetero-Paged-Infer
+//! # Paged-Infer
 //!
-//! 异构推理系统 — 基于 `PagedAttention` 分页内存与 Continuous Batching 的推理引擎脚手架；当前计算后端为 mock。
+//! 基于 `PagedAttention` 分页内存与 Continuous Batching 的推理引擎脚手架；
+//! 默认计算后端为 CPU 参考执行器（真实前向、greedy 采样）。
 //!
 //! ## 概述
 //!
-//! 本库提供了一个推理引擎脚手架，实现了以下核心技术（计算后端当前为 mock）：
+//! 本库提供了一个推理引擎脚手架，实现了以下核心技术（默认计算后端为 CPU 参考执行器）：
 //!
 //! - **`PagedAttention`**: 分页式 KV Cache 管理，按需分配/释放显存块
 //! - **Continuous Batching**: 连续批处理调度，prefill/decode 分阶段管理
@@ -37,12 +38,13 @@
 //! let config = EngineConfig::default();
 //! let mut engine = InferenceEngine::new(config)?;
 //!
-//! // 提交请求（CPU 参考后端当前仅支持 greedy：temperature = 0.0, top_p = 1.0）
+//! // 提交请求（CPU 参考后端当前仅支持 greedy：temperature = 0.0, top_p = 1.0；
+//! // 默认 SimpleTokenizer 仅支持 ASCII，中文请改用 HuggingFace tokenizer）
 //! let params = GenerationParams {
 //!     max_tokens: 50,
 //!     ..GenerationParams::default()
 //! };
-//! let (request_id, _prompt_tokens) = engine.submit_request("你好，世界！", params)?;
+//! let (request_id, _prompt_tokens) = engine.submit_request("Hello, world!", params)?;
 //!
 //! // 运行推理
 //! let completed = engine.run();
@@ -106,9 +108,9 @@ pub mod gpu_executor;
 pub mod kv_cache;
 pub mod scheduler;
 pub mod server;
-pub mod tiny_llm_ffi;
 #[cfg(feature = "tiny-llm")]
 pub mod tiny_llm_executor;
+pub mod tiny_llm_ffi;
 pub mod tokenizer;
 pub mod types;
 
@@ -125,11 +127,11 @@ pub use engine::{EngineMetrics, InferenceEngine, StepEvents};
 pub use error::{ConfigError, EngineError};
 pub use execution_pipeline::{build_execution_batch, BatchExecutionPipeline};
 pub use gpu_executor::{create_default_gpu_executor, GPUExecutorTrait, MockGPUExecutor};
-#[cfg(feature = "tiny-llm")]
-pub use tiny_llm_executor::TinyLlmExecutor;
 pub use kv_cache::KVCacheManager;
 pub use scheduler::Scheduler;
 pub use server::{create_router, create_router_with_engine};
+#[cfg(feature = "tiny-llm")]
+pub use tiny_llm_executor::TinyLlmExecutor;
 pub use tokenizer::{
     build_tokenizer, HuggingFaceTokenizer, IncrementalDecoder, SimpleTokenizer, TokenizerTrait,
 };

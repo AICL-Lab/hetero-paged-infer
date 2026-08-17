@@ -38,8 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `benches/concurrency_benchmark.rs`：并发突发吞吐基线
     （n8/16/32/64 全部排空耗时，Mock 后端）
 - Engine event API: `InferenceEngine::step_events()` / `StepEvents` (per-step completions plus per-token text events), `create_router_with_engine()` for injecting custom executors into the HTTP layer (used by tests), and `submit_request()` returning `(request_id, prompt_tokens)` from a single tokenization pass.
-- Server: true token-level SSE streaming, 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
-- Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones; CI now runs the test suite with `--all-features` and a `cargo bench -- --test` smoke run.
+- Server: token-level SSE streaming (with SimpleTokenizer), 429 overload rejection with `Retry-After`, graceful shutdown (SIGTERM / Ctrl+C), a real `/readyz` probe, `model` validation (404 on mismatch), chat role whitelist, and a JSON error envelope with a `type` field on every error path (including malformed bodies and unknown routes).
+- Tests: GPU-timeout retry-exhaustion path, server concurrency / 500 / 429 / 404 coverage, and strengthened assertions replacing tautological ones. CI runs fmt + clippy + test + doc (no `--all-features`; the tiny-llm feature needs a real model and is not part of default CI).
 - `test-utils` cargo feature: test helpers are now compiled only under `cfg(test)` or this feature, keeping them out of release builds.
 - `InferenceEngine::cancel_request()` / `Scheduler::cancel_by_request_id()`: cancel in-flight requests (any stage) and free their KV blocks.
 - `--host` / `--port` CLI overrides for serve mode (work with or without `--config`).
@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused docs dependency `vitepress-plugin-llms`.
 - Unused direct Rust dependencies `tracing` and `tracing-subscriber`.
 - Dead code: CUDA Graph trait methods (never invoked by the engine), `Request::created_at`, `Scheduler::get_sequence_mut`, `PageTable::get_physical`, `RequestState::is_active`/`is_terminal`, the never-occurring unmapped `LogicalBlock` state, and the misleading copy-on-write comment on `PhysicalBlock::ref_count`.
-- Fake after-the-fact "streaming" (chunking finished text into 32-char slices), replaced by true token-level streaming.
+- Fake after-the-fact "streaming" (chunking finished text into 32-char slices), replaced by token-level streaming (SimpleTokenizer; HF tokenizer uses a buffered chunk emitted at finish).
 - Dead fields `Sequence::num_computed_tokens` and `ExecutionOutput::logits` (never read).
 - `LogicalBlock` wrapper type: `PageTable` / `Sequence` now hold `Vec<PhysicalBlockRef>` directly.
 - Unused `KVCacheManager::has_sequence` and `Scheduler::num_prefill_sequences`.
@@ -88,6 +88,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mock executor divide-by-zero panic on an empty vocabulary (now an error, consistent with the CUDA backend).
 - Double-free and zero `block_size` misuse are now caught by debug assertions with clear messages.
 - Engine loop had no await point during active generation, starving handlers / SSE streams on single-threaded runtimes (first token never reached the client until the batch finished) and pinning a worker on multi-threaded runtimes; now yields each step.
+
+### P0 正确性修复（T0–T7）
+
+- **T0** 修复 fmt / clippy，恢复 CI 绿色（`unnecessary_cast`、未使用 import、`manual_is_multiple_of`）。
+- **T1** 执行输出契约校验：坏后端（空输出、重复/缺失 seq id、错位 logprobs）不再让请求
+  卡死在调度器中，而是快速失败并以终态排出。
+- **T2** 调度器内存水位线 + decode 增长预留：启动新 prefill 前同时检查高水位线与
+  "下一步 decode 增长"的预留块，避免把块池打满导致下一步 `OutOfBlocks`。
+- **T3** 修复 pending 队头阻塞（HOL）：每步按当前队列长度扫描一轮，装不下的请求
+  `push_back` 延后，不再用 `push_front + break` 让大 prefill 挡住小 prefill。
+- **T4** 后端序列生命周期钩子 `sequences_finished`：引擎在序列完成/失败/取消并释放
+  逻辑 KV 块后通知后端，tiny-llm 据此释放物理 KV 槽位（修复 slot 耗尽）。
+- **T5** 超时重试声明幂等性：仅 `retry_safe=true` 的后端才会在 `GpuTimeout` 后重放
+  同一 batch；真实 CUDA 后端默认不重放。
+- **T6** 浮点参数 NaN 校验：`memory_threshold`、`temperature`、`top_p` 的 NaN/infinity
+  均被拒绝，避免内存保护与采样范围校验被绕过。
+- **T7** Unicode stop 序列字节偏移修复：`tokens_before_char` 按字节长度累加，
+  中文等非 ASCII 文本不再错误保留 stop 序列。
 
 ## [0.1.0] - 2026-04-16
 
