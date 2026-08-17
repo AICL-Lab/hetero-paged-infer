@@ -686,3 +686,92 @@ fn test_memory_pressure_leaves_decode_growth_reserve() {
         "memory utilization must never exceed 1.0, got {max_util}"
     );
 }
+
+/// pending 队头阻塞（HOL）修复：大 prefill 不应挡住后面的小 prefill。
+/// 8 个长 decode 占住 batch 预算后，96 token 的大 pending 排在 1 token 的
+/// 小 pending 前面；小请求必须在 5 个 step 内完成，而大请求仍可等待。
+#[test]
+fn test_small_pending_request_not_blocked_by_large_one() {
+    let config = EngineConfig {
+        block_size: 16,
+        max_num_blocks: 64,
+        max_batch_size: 16,
+        max_num_seqs: 64,
+        max_model_len: 2048,
+        max_total_tokens: 100,
+        memory_threshold: 0.9,
+        ..Default::default()
+    };
+    let scheduler = Scheduler::new(config.clone());
+    let non_eos = 37; // 'A'，非 EOS
+    let mut engine = InferenceEngine::with_components(
+        config,
+        Box::new(SimpleTokenizer::without_special_tokens()),
+        scheduler,
+        Box::new(ConstantTokenExecutor { token: non_eos }),
+    )
+    .unwrap();
+
+    // 8 个长 decode（max_tokens 较大）占住 batch。
+    for _ in 0..8 {
+        engine
+            .submit_request(
+                "a".repeat(16).as_str(),
+                GenerationParams {
+                    max_tokens: 50,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+    }
+    // 推进一步，让 8 个请求进入 decode。
+    let _ = engine.step().unwrap();
+
+    // 96 token 的大 pending 先提交，1 token 的小 pending 后提交。
+    let (large_id, _) = engine
+        .submit_request(
+            "b".repeat(96).as_str(),
+            GenerationParams {
+                max_tokens: 10,
+                ..GenerationParams::default()
+            },
+        )
+        .unwrap();
+    let (small_id, _) = engine
+        .submit_request(
+            "c",
+            GenerationParams {
+                max_tokens: 2,
+                ..GenerationParams::default()
+            },
+        )
+        .unwrap();
+
+    let mut small_done = false;
+    let mut large_done = false;
+    for _ in 0..5 {
+        let completed = engine.step().unwrap();
+        for c in &completed {
+            if c.request_id == small_id {
+                small_done = true;
+                assert!(c.success, "small request must succeed");
+            }
+            if c.request_id == large_id {
+                large_done = true;
+            }
+        }
+        if small_done {
+            break;
+        }
+    }
+
+    assert!(
+        small_done,
+        "small pending request must complete within 5 steps (not blocked by the large one)"
+    );
+    assert!(
+        !large_done,
+        "large pending request must still be waiting while the small one gets served"
+    );
+    assert!(engine.has_pending_work());
+}

@@ -1001,6 +1001,57 @@ mod tests {
         // 只剩 seq1（decode, 1 block）计数；seq2（context 41, 3 blocks）不计数。
         assert_eq!(scheduler.next_step_growth_reserve(), 1);
     }
+
+    #[test]
+    fn test_pending_queue_skips_large_prefill_for_smaller_one() {
+        let config = EngineConfig {
+            block_size: 16,
+            max_num_blocks: 200,
+            max_batch_size: 8,
+            max_num_seqs: 64,
+            max_model_len: 2048,
+            max_total_tokens: 100,
+            memory_threshold: 0.9,
+            ..Default::default()
+        };
+        let mut scheduler = Scheduler::new(config);
+
+        // 7 个 decode 序列占住批次（每步各 1 token）。
+        for i in 0..7 {
+            let seq = scheduler
+                .add_request(create_test_request(i + 1, 16))
+                .unwrap();
+            let pending = scheduler.pending_queue.pop_front().unwrap();
+            scheduler
+                .try_start_prefill(pending.seq_id, pending.request)
+                .unwrap();
+            scheduler.transition_prefill_to_decode(seq);
+        }
+
+        // 96 token 的大 pending 排在 1 token 的小 pending 之前。
+        let large_seq = scheduler.add_request(create_test_request(100, 96)).unwrap();
+        let small_seq = scheduler.add_request(create_test_request(200, 1)).unwrap();
+
+        let output = scheduler.schedule();
+
+        // 小请求本步应被启动（进入 prefill），大请求仍留在 pending 等待后续步骤。
+        assert!(
+            output
+                .prefill_sequences
+                .iter()
+                .any(|s| s.seq_id == small_seq),
+            "small pending request must be started this step"
+        );
+        assert!(
+            !output
+                .prefill_sequences
+                .iter()
+                .any(|s| s.seq_id == large_seq),
+            "large pending request must not be started this step"
+        );
+        assert!(scheduler.has_pending_request(large_seq));
+        assert!(!scheduler.has_pending_request(small_seq));
+    }
 }
 
 #[cfg(test)]
