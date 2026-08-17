@@ -8,8 +8,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use paged_infer::test_utils::create_test_config;
 use paged_infer::types::RequestId;
 use paged_infer::{
-    EngineConfig, GenerationParams, GPUExecutorTrait, InferenceEngine, MockGPUExecutor, Scheduler,
-    SimpleTokenizer,
+    EngineConfig, GenerationParams, InferenceEngine, MockGPUExecutor, Scheduler, SimpleTokenizer,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -33,7 +32,9 @@ fn run_burst(engine: &mut InferenceEngine, n: usize) -> Vec<f64> {
             max_tokens: 8,
             ..GenerationParams::default()
         };
-        let (id, _) = engine.submit_request(&format!("prompt {}", i), params).unwrap();
+        let (id, _) = engine
+            .submit_request(&format!("prompt {}", i), params)
+            .unwrap();
         starts.insert(id, Instant::now());
     }
     let mut latencies = Vec::with_capacity(n);

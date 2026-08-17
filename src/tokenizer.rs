@@ -294,10 +294,7 @@ const PAD_TOKEN_NAMES: &[&str] = &["<|endoftext|>", "<pad>", "<PAD>"];
 
 /// 返回词表中第一个命中的 token id
 fn first_token_id(inner: &Tokenizer, names: &[&str]) -> Option<u32> {
-    names
-        .iter()
-        .find_map(|name| inner.token_to_id(name))
-        .map(|id| id as u32)
+    names.iter().find_map(|name| inner.token_to_id(name))
 }
 
 impl HuggingFaceTokenizer {

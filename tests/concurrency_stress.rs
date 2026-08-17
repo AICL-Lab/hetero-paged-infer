@@ -7,8 +7,8 @@
 use paged_infer::test_utils::create_test_config;
 use paged_infer::types::{CompletedRequest, ExecutionBatch, ExecutionOutput, RequestId, TokenId};
 use paged_infer::{
-    EngineConfig, EngineError, GenerationParams, GPUExecutorTrait, InferenceEngine, MockGPUExecutor,
-    Scheduler, SimpleTokenizer,
+    EngineConfig, EngineError, GPUExecutorTrait, GenerationParams, InferenceEngine,
+    MockGPUExecutor, Scheduler, SimpleTokenizer,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -36,7 +36,11 @@ struct PeriodicFailExecutor {
 
 impl PeriodicFailExecutor {
     fn new(fail_mod: usize, token: TokenId) -> Self {
-        Self { counter: 0, fail_mod: fail_mod.max(1), token }
+        Self {
+            counter: 0,
+            fail_mod: fail_mod.max(1),
+            token,
+        }
     }
 }
 
@@ -46,7 +50,7 @@ impl GPUExecutorTrait for PeriodicFailExecutor {
             return Ok(ExecutionOutput::default());
         }
         self.counter += 1;
-        if self.counter % self.fail_mod == 0 {
+        if self.counter.is_multiple_of(self.fail_mod) {
             return Err(EngineError::KernelLaunchFailed(
                 "injected periodic failure".to_string(),
             ));
@@ -98,9 +102,7 @@ fn drain(
     let mut latencies = Vec::new();
     let mut guard = 0;
     while engine.has_pending_work() {
-        let done = engine
-            .step()
-            .unwrap_or_else(|e| panic!("step failed: {e}"));
+        let done = engine.step().unwrap_or_else(|e| panic!("step failed: {e}"));
         for c in &done {
             if let Some(t0) = starts.remove(&c.request_id) {
                 latencies.push(t0.elapsed().as_secs_f64() * 1000.0);
@@ -236,8 +238,7 @@ fn test_memory_pressure_rejects_or_queues_gracefully() {
                 assert!(
                     matches!(
                         e,
-                        EngineError::MemoryPressure
-                            | EngineError::MaxConcurrentSequencesReached(_)
+                        EngineError::MemoryPressure | EngineError::MaxConcurrentSequencesReached(_)
                     ),
                     "压力下应返回内存/并发类错误，实际: {e}"
                 );
