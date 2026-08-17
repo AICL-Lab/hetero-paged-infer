@@ -32,6 +32,20 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块
 
 在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-kernel-academy/LEARNING_PATH.md`](https://github.com/AICL-Lab/cuda-kernel-academy/blob/master/LEARNING_PATH.md)。
 
+## 项目边界（IN / OUT）
+
+**IN（本仓库负责）**：
+- Paged KV（分页块内存管理）
+- continuous batching（动态 prefill/decode 调度）
+- 准入控制 / 内存水位线 / 队头阻塞处理
+- OpenAI 兼容 API（/v1/completions、/v1/chat/completions、SSE）
+- 属性测试与资源不变量验证
+
+**OUT（明确不做，见对应仓库）**：
+- 计算 kernel（GEMM/attention/RoPE/W8A16）→ [tiny-llm](https://github.com/AICL-Lab/tiny-llm)
+- 模型加载与 tokenizer → [tiny-llm](https://github.com/AICL-Lab/tiny-llm)
+- FlashAttention 深挖 → [cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)
+
 ## 系统架构
 
 ```
