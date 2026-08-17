@@ -64,10 +64,10 @@ impl GenerationParams {
         if self.max_tokens == 0 {
             return Err(crate::EngineError::InvalidMaxTokens(self.max_tokens));
         }
-        if !(0.0..=2.0).contains(&self.temperature) {
+        if !self.temperature.is_finite() || !(0.0..=2.0).contains(&self.temperature) {
             return Err(crate::EngineError::InvalidTemperature(self.temperature));
         }
-        if self.top_p <= 0.0 || self.top_p > 1.0 {
+        if !self.top_p.is_finite() || self.top_p <= 0.0 || self.top_p > 1.0 {
             return Err(crate::EngineError::InvalidTopP(self.top_p));
         }
         if self.stop.len() > 4 {
@@ -249,6 +249,46 @@ mod tests {
             logprobs: None,
         };
         assert!(invalid_top_p.validate().is_err());
+    }
+
+    #[test]
+    fn test_nan_parameters_rejected() {
+        // NaN 会绕过普通范围比较，必须显式 is_finite 拒绝。
+        let nan_temp = GenerationParams {
+            max_tokens: 100,
+            temperature: f32::NAN,
+            top_p: 1.0,
+            stop: Vec::new(),
+            logprobs: None,
+        };
+        assert!(matches!(
+            nan_temp.validate(),
+            Err(crate::EngineError::InvalidTemperature(_))
+        ));
+
+        let inf_temp = GenerationParams {
+            max_tokens: 100,
+            temperature: f32::INFINITY,
+            top_p: 1.0,
+            stop: Vec::new(),
+            logprobs: None,
+        };
+        assert!(matches!(
+            inf_temp.validate(),
+            Err(crate::EngineError::InvalidTemperature(_))
+        ));
+
+        let nan_top_p = GenerationParams {
+            max_tokens: 100,
+            temperature: 1.0,
+            top_p: f32::NAN,
+            stop: Vec::new(),
+            logprobs: None,
+        };
+        assert!(matches!(
+            nan_top_p.validate(),
+            Err(crate::EngineError::InvalidTopP(_))
+        ));
     }
 
     #[test]

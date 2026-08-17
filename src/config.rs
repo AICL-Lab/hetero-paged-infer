@@ -176,7 +176,10 @@ impl EngineConfig {
         if self.max_total_tokens == 0 {
             return Err(ConfigError::InvalidMaxTotalTokens(self.max_total_tokens));
         }
-        if self.memory_threshold <= 0.0 || self.memory_threshold > 1.0 {
+        if !self.memory_threshold.is_finite()
+            || self.memory_threshold <= 0.0
+            || self.memory_threshold > 1.0
+        {
             return Err(ConfigError::InvalidMemoryThreshold(self.memory_threshold));
         }
         if matches!(self.tokenizer.kind, TokenizerKind::HuggingFace)
@@ -290,7 +293,15 @@ mod tests {
 
     #[test]
     fn test_invalid_memory_threshold() {
-        for &threshold in &[0.0f32, -0.1, 1.5, 2.0] {
+        for &threshold in &[
+            0.0f32,
+            -0.1,
+            1.5,
+            2.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
             let config = EngineConfig {
                 memory_threshold: threshold,
                 ..Default::default()
@@ -300,6 +311,28 @@ mod tests {
                 Err(ConfigError::InvalidMemoryThreshold(_))
             ));
         }
+    }
+
+    #[test]
+    fn test_invalid_memory_threshold_nan_rejected() {
+        // NaN 会绕过普通范围比较，必须显式 is_finite 拒绝，否则内存保护永久失效。
+        let config = EngineConfig {
+            memory_threshold: f32::NAN,
+            ..Default::default()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidMemoryThreshold(_))
+        ));
+
+        let config = EngineConfig {
+            memory_threshold: f32::INFINITY,
+            ..Default::default()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidMemoryThreshold(_))
+        ));
     }
 
     #[test]
