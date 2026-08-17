@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **T7** Unicode stop 序列字节偏移修复：`tokens_before_char` 按字节长度累加，
   中文等非 ASCII 文本不再错误保留 stop 序列。
 
-### P1（T9–T10）
+### P1（T9–T10、T12）
 
 - **T9** Chat Completions 应用真实 chat template：使用 HuggingFace tokenizer 时
   采用 Qwen2 的 `<|im_start|>` 模板（system/user/assistant + 末尾 assistant 引导）；
@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `paged_engine_kv_utilization` / `paged_engine_completed_requests` /
   `paged_engine_failed_requests` / `paged_engine_tokens_generated_total`；
   `concurrency_benchmark` 增加 CB on/off 对比组（`max_batch_size=1` vs `=N`）。
+- **T12（选项 A）** 明确流式降级：保留 `BufferedDecoder`，文档明确 HF tokenizer
+  流式为"请求结束时的一个完整文本 chunk"，"token-level streaming" 表述限定
+  `SimpleTokenizer`（随 T8 完成）。
+- **T11** 未实施：需要 tiny-llm 仓库同步改造（分页 KV C ABI），跨仓库任务，
+  不阻塞 paged-infer 冻结。
 
 ## [0.1.0] - 2026-04-16
 
