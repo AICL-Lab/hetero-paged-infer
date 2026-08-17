@@ -175,13 +175,20 @@ impl Scheduler {
 
         // Priority 3: Start new prefills from pending queue (if not under memory pressure)
         if !self.under_memory_pressure {
-            while let Some(pending) = self.pending_queue.pop_front() {
+            // 只扫描"进入本步时"的队列长度一轮：装不下的请求 push_back 留到后续步骤，
+            // 而不是 push_front + break——否则一个大 prefill 会永久挡住后面的小 prefill。
+            // 这也让内存预算不足的候选能被跳过，尝试后面的小请求。
+            let pending_count = self.pending_queue.len();
+            for _ in 0..pending_count {
+                let Some(pending) = self.pending_queue.pop_front() else {
+                    break;
+                };
                 let (seq_id, request) = (pending.seq_id, pending.request);
 
                 if num_sequences >= self.config.max_batch_size {
                     self.pending_queue
-                        .push_front(PendingRequest { seq_id, request });
-                    break;
+                        .push_back(PendingRequest { seq_id, request });
+                    continue;
                 }
 
                 let prefill_tokens = request.input_tokens.len() as u32;
@@ -208,8 +215,16 @@ impl Scheduler {
 
                 if total_tokens.saturating_add(prefill_tokens) > self.config.max_total_tokens {
                     self.pending_queue
-                        .push_front(PendingRequest { seq_id, request });
-                    break;
+                        .push_back(PendingRequest { seq_id, request });
+                    continue;
+                }
+
+                // 内存水位线 + decode 增长预留：预算不足的候选延后，而不是把池子打满
+                // 或让下一步 decode 增长时 OOM。
+                if !self.has_prefill_budget(blocks_needed, prefill_tokens) {
+                    self.pending_queue
+                        .push_back(PendingRequest { seq_id, request });
+                    continue;
                 }
 
                 match self.try_start_prefill(seq_id, request) {
@@ -221,11 +236,11 @@ impl Scheduler {
                         }
                     }
                     Err((seq_id, request)) => {
-                        self.pending_queue.push_front(PendingRequest {
+                        self.pending_queue.push_back(PendingRequest {
                             seq_id,
                             request: *request,
                         });
-                        break;
+                        continue;
                     }
                 }
             }
@@ -436,6 +451,41 @@ impl Scheduler {
     fn update_memory_pressure(&mut self) {
         let stats = self.kv_cache.get_memory_stats();
         self.under_memory_pressure = stats.utilization() >= self.config.memory_threshold;
+    }
+
+    /// 一个 prefill 在首 token 生成后的下一步，是否需要多分配 1 个 block。
+    fn prefill_needs_decode_reserve(&self, prompt_tokens: u32) -> bool {
+        let prompt_blocks = self.config.blocks_for_tokens(prompt_tokens);
+        self.config
+            .blocks_for_tokens(prompt_tokens.saturating_add(2))
+            > prompt_blocks
+    }
+
+    /// 当前已调度/在跑的序列在"本步执行完成后、下下步 grow 时"需要的新增块数。
+    fn next_step_growth_reserve(&self) -> u32 {
+        self.prefill_sequences
+            .values()
+            .chain(self.decode_sequences.values())
+            .filter(|seq| {
+                let after_this_step = seq.context_len().saturating_add(1);
+                self.config
+                    .blocks_for_tokens(after_this_step.saturating_add(1))
+                    > seq.logical_blocks.len() as u32
+            })
+            .count() as u32
+    }
+
+    /// 启动一个 prefill 是否安全（高水位线 + 即时 decode 增长预留）。
+    fn has_prefill_budget(&self, blocks_needed: u32, prompt_tokens: u32) -> bool {
+        let stats = self.kv_cache.get_memory_stats();
+        let used_after = stats.used_blocks.saturating_add(blocks_needed);
+        let free_after = stats.free_blocks.saturating_sub(blocks_needed);
+        let reserve = self
+            .next_step_growth_reserve()
+            .saturating_add(u32::from(self.prefill_needs_decode_reserve(prompt_tokens)));
+        let watermark_ok = (used_after as f32)
+            <= (stats.total_blocks as f32 * self.config.memory_threshold).floor();
+        watermark_ok && free_after >= reserve
     }
 
     fn try_start_prefill(
@@ -890,6 +940,66 @@ mod tests {
             completed[0].output_tokens.is_empty(),
             "malformed output must not append synthetic tokens"
         );
+    }
+
+    #[test]
+    fn test_has_prefill_budget_false_when_only_one_block_left_and_candidate_needs_decode_reserve() {
+        let config = EngineConfig {
+            block_size: 16,
+            max_num_blocks: 64,
+            max_batch_size: 8,
+            max_num_seqs: 32,
+            max_model_len: 2048,
+            max_total_tokens: 512,
+            memory_threshold: 0.9,
+            ..Default::default()
+        };
+        let mut scheduler = Scheduler::new(config);
+
+        // 占满 63 块，只剩 1 块。
+        scheduler.kv_cache.allocate_sequence(999, 1008).unwrap();
+        assert_eq!(scheduler.kv_cache.get_memory_stats().free_blocks, 1);
+
+        // 候选需要 1 块且其下一步需要 decode 增长：必须拒绝（水位线与预留都不过）。
+        assert!(!scheduler.has_prefill_budget(1, 16));
+    }
+
+    #[test]
+    fn test_next_step_growth_reserve_counts_boundary_sequences() {
+        let mut scheduler = Scheduler::new(create_test_config());
+
+        // 16 tokens = 恰好 1 个 block：prefill 阶段就应在下一步需要增长。
+        let seq1 = scheduler.add_request(create_test_request(1, 16)).unwrap();
+        let p1 = scheduler.pending_queue.pop_front().unwrap();
+        scheduler.try_start_prefill(p1.seq_id, p1.request).unwrap();
+        assert_eq!(scheduler.next_step_growth_reserve(), 1);
+
+        // 推进到 decode（context 17，仍 1 个 block）：仍需要增长。
+        scheduler.update_sequences(
+            &ExecutionOutput {
+                next_tokens: vec![100],
+                seq_ids: vec![seq1],
+                logprobs: Vec::new(),
+            },
+            0,
+        );
+        assert!(scheduler.has_decode_sequence(seq1));
+        assert_eq!(scheduler.next_step_growth_reserve(), 1);
+
+        // 40 tokens = 3 个 block：+2 tokens 后仍 3 块，短期无需增长，不计入。
+        let seq2 = scheduler.add_request(create_test_request(2, 40)).unwrap();
+        let p2 = scheduler.pending_queue.pop_front().unwrap();
+        scheduler.try_start_prefill(p2.seq_id, p2.request).unwrap();
+        scheduler.update_sequences(
+            &ExecutionOutput {
+                next_tokens: vec![101],
+                seq_ids: vec![seq2],
+                logprobs: Vec::new(),
+            },
+            0,
+        );
+        // 只剩 seq1（decode, 1 block）计数；seq2（context 41, 3 blocks）不计数。
+        assert_eq!(scheduler.next_step_growth_reserve(), 1);
     }
 }
 

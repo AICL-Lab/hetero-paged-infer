@@ -3,7 +3,7 @@
 //! These tests verify end-to-end functionality across all components.
 
 use paged_infer::{
-    test_utils::{create_test_config, AlwaysFailExecutor},
+    test_utils::{create_test_config, AlwaysFailExecutor, ConstantTokenExecutor},
     EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, GenerationParams,
     InferenceEngine, Scheduler, SimpleTokenizer,
 };
@@ -611,5 +611,78 @@ fn test_malformed_backend_output_fails_request_and_terminates() {
     assert!(
         !engine.has_pending_work(),
         "no work may remain stuck in the scheduler"
+    );
+}
+
+/// 调度器内存水位线 + decode 增长预留：
+/// 64 个请求、每个 prompt 正好 1 个 block、64 块池、threshold=0.9 时，
+/// 第一步只能启动 32 个 prefill（util=0.5），后续 decode 增长有预留，
+/// 全部 64 个请求必须成功，且没有任何请求因 `OutOfBlocks` 失败。
+#[test]
+fn test_memory_pressure_leaves_decode_growth_reserve() {
+    let config = EngineConfig {
+        block_size: 16,
+        max_num_blocks: 64,
+        max_batch_size: 64,
+        max_num_seqs: 64,
+        max_model_len: 2048,
+        max_total_tokens: 2048,
+        memory_threshold: 0.9,
+        ..Default::default()
+    };
+    let scheduler = Scheduler::new(config.clone());
+    // 'A'（37）不是 EOS（默认 2），恒生成非 EOS token 以推进 decode。
+    let non_eos = 37;
+    let mut engine = InferenceEngine::with_components(
+        config,
+        Box::new(SimpleTokenizer::without_special_tokens()),
+        scheduler,
+        Box::new(ConstantTokenExecutor { token: non_eos }),
+    )
+    .unwrap();
+
+    // 提交 64 个请求：prompt 为 16 个 ASCII 字符（正好 1 个 block），max_tokens=2。
+    for _ in 0..64 {
+        engine
+            .submit_request(
+                "a".repeat(16).as_str(),
+                GenerationParams {
+                    max_tokens: 2,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+    }
+
+    let mut completed = Vec::new();
+    let mut max_util = 0.0f32;
+    let mut steps = 0;
+    while engine.has_pending_work() {
+        let done = engine.step().unwrap();
+        let util = engine.memory_utilization();
+        max_util = max_util.max(util);
+        if steps == 0 {
+            assert_eq!(
+                util, 0.5,
+                "first step must start at most 32 prefills (32/64 blocks), got {util}"
+            );
+        }
+        completed.extend(done);
+        steps += 1;
+        assert!(steps < 1000, "run must terminate");
+    }
+
+    assert_eq!(completed.len(), 64, "all 64 requests must complete");
+    assert!(
+        completed.iter().all(|c| c.success),
+        "every request must succeed"
+    );
+    assert!(
+        completed.iter().all(|c| c.error.is_none()),
+        "no request may fail (e.g. OutOfBlocks)"
+    );
+    assert!(
+        max_util <= 1.0,
+        "memory utilization must never exceed 1.0, got {max_util}"
     );
 }
