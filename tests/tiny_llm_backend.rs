@@ -16,8 +16,7 @@
 
 use paged_infer::test_utils::create_test_config;
 use paged_infer::{
-    EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
-    TinyLlmExecutor,
+    EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer, TinyLlmExecutor,
 };
 
 fn model_path() -> Option<String> {
@@ -52,10 +51,7 @@ fn tiny_llm_backend_end_to_end() {
         ..GenerationParams::default()
     };
     let err = engine.submit_request("sampling", params).unwrap_err();
-    assert!(matches!(
-        err,
-        EngineError::UnsupportedGenerationMode(_)
-    ));
+    assert!(matches!(err, EngineError::UnsupportedGenerationMode(_)));
 
     // 并发提交 3 个请求（greedy），驱动到全部完成
     for i in 0..3 {
@@ -81,4 +77,33 @@ fn tiny_llm_backend_end_to_end() {
     let m = engine.get_metrics();
     assert_eq!(m.completed_requests, 3);
     assert_eq!(m.failed_requests, 0);
+
+    // 第二波请求：复用同一后端实例，验证 `sequences_finished` 释放物理 KV 后
+    // 没有 slot 泄漏（再跑 3 个也应全部成功）。
+    for i in 3..6 {
+        let params = GenerationParams {
+            max_tokens: 4,
+            ..GenerationParams::default()
+        };
+        engine
+            .submit_request(&format!("prompt {}", i), params)
+            .unwrap();
+    }
+
+    let completed2 = engine.run();
+    assert_eq!(completed2.len(), 3, "第二波全部请求应完成");
+    for c in &completed2 {
+        assert!(
+            c.success,
+            "第二波 request {} failed: {:?}",
+            c.request_id, c.error
+        );
+    }
+
+    let util2 = engine.memory_utilization();
+    assert!(util2 < 0.05, "第二波后 tiny-llm KV 未归还: {util2}");
+
+    let m2 = engine.get_metrics();
+    assert_eq!(m2.completed_requests, 6);
+    assert_eq!(m2.failed_requests, 0);
 }

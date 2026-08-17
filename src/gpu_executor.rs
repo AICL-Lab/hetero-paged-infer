@@ -41,7 +41,7 @@
 use crate::config::EngineConfig;
 use crate::cpu_executor::CpuReferenceExecutor;
 use crate::error::EngineError;
-use crate::types::{ExecutionBatch, ExecutionOutput, TokenId};
+use crate::types::{ExecutionBatch, ExecutionOutput, SeqId, TokenId};
 
 fn validate_execution_batch(
     config: &EngineConfig,
@@ -103,6 +103,13 @@ pub trait GPUExecutorTrait: Send {
     ///   （请求未启用或后端不支持时为 `None`）；为空或长度等于 `seq_ids.len()`；
     /// - 不能对 batch 内序列的 KV 状态做跨步假设（引擎负责持久化）。
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
+
+    /// 引擎在序列到达终态（完成/失败/取消）并释放逻辑 KV 块后调用。
+    ///
+    /// 后端应在此时释放该序列占用的物理 KV 资源。默认空实现适用于
+    /// 物理块按索引复用、写入时覆盖的后端（CPU/Mock）；持有真实物理 KV
+    /// 槽位的后端（如 tiny-llm 连续 KV）必须实现，否则槽位会耗尽。
+    fn sequences_finished(&mut self, _seq_ids: &[SeqId]) {}
 
     /// 声明后端能力；默认仅支持 greedy 解码。
     fn capabilities(&self) -> ExecutorCapabilities {

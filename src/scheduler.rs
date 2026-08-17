@@ -46,7 +46,8 @@ pub struct Scheduler {
     // 即先提交先调度（FCFS），保证公平性并让调度行为可复现。
     prefill_sequences: BTreeMap<SeqId, Sequence>,
     decode_sequences: BTreeMap<SeqId, Sequence>,
-    completed_requests: Vec<Request>,
+    // 携带 seq_id 的终态请求：引擎需要据此通知后端释放物理 KV 资源。
+    completed_requests: Vec<(SeqId, Request)>,
     next_seq_id: SeqId,
     under_memory_pressure: bool,
 }
@@ -198,7 +199,7 @@ impl Scheduler {
                         "Input tokens {} exceed max_total_tokens {}",
                         prefill_tokens, self.config.max_total_tokens
                     ));
-                    self.completed_requests.push(failed_request);
+                    self.completed_requests.push((seq_id, failed_request));
                     continue;
                 }
 
@@ -209,7 +210,7 @@ impl Scheduler {
                         "Required blocks {} exceed max_num_blocks {}",
                         blocks_needed, self.config.max_num_blocks
                     ));
-                    self.completed_requests.push(failed_request);
+                    self.completed_requests.push((seq_id, failed_request));
                     continue;
                 }
 
@@ -299,7 +300,16 @@ impl Scheduler {
         }
     }
 
+    /// 排出所有终态请求（兼容旧调用方，丢弃 seq_id）。
     pub fn get_completed(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.completed_requests)
+            .into_iter()
+            .map(|(_, request)| request)
+            .collect()
+    }
+
+    /// 排出所有终态请求并携带其 seq_id（引擎据此通知后端释放物理 KV）。
+    pub fn take_completed_with_seq_ids(&mut self) -> Vec<(SeqId, Request)> {
         std::mem::take(&mut self.completed_requests)
     }
 
@@ -319,7 +329,12 @@ impl Scheduler {
                     .find(|seq| seq.request.id == request_id)
                     .map(|seq| &seq.request)
             })
-            .or_else(|| self.completed_requests.iter().find(|r| r.id == request_id))
+            .or_else(|| {
+                self.completed_requests
+                    .iter()
+                    .find(|(_, r)| r.id == request_id)
+                    .map(|(_, r)| r)
+            })
     }
 
     /// 因命中 stop 序列而终止请求（PINF-105）：
@@ -556,14 +571,14 @@ impl Scheduler {
         if let Some(mut sequence) = self.decode_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Completed;
             self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
+            self.completed_requests.push((seq_id, sequence.request));
             return;
         }
 
         if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Completed;
             self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
+            self.completed_requests.push((seq_id, sequence.request));
         }
     }
 
@@ -571,21 +586,21 @@ impl Scheduler {
         if let Some(mut sequence) = self.decode_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Failed(reason.to_string());
             self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
+            self.completed_requests.push((seq_id, sequence.request));
             return;
         }
 
         if let Some(mut sequence) = self.prefill_sequences.remove(&seq_id) {
             sequence.request.state = RequestState::Failed(reason.to_string());
             self.kv_cache.free_sequence(seq_id);
-            self.completed_requests.push(sequence.request);
+            self.completed_requests.push((seq_id, sequence.request));
             return;
         }
 
         if let Some(index) = self.pending_queue.iter().position(|p| p.seq_id == seq_id) {
             if let Some(mut pending) = self.pending_queue.remove(index) {
                 pending.request.state = RequestState::Failed(reason.to_string());
-                self.completed_requests.push(pending.request);
+                self.completed_requests.push((seq_id, pending.request));
             }
         }
     }

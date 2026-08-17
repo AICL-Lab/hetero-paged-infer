@@ -18,7 +18,7 @@ use crate::error::EngineError;
 use crate::gpu_executor::{ExecutorCapabilities, GPUExecutorTrait};
 use crate::tiny_llm_ffi::symbols;
 use crate::tiny_llm_ffi::{TinyLlmConfig, TinyLlmHandle};
-use crate::types::{ExecutionBatch, ExecutionOutput, TokenId};
+use crate::types::{ExecutionBatch, ExecutionOutput, SeqId, TokenId};
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::os::raw::c_int;
@@ -119,8 +119,7 @@ impl GPUExecutorTrait for TinyLlmExecutor {
             seq_ids.push(sid_i);
         }
 
-        let input_tokens: Vec<c_int> =
-            batch.input_tokens.iter().map(|&t| t as c_int).collect();
+        let input_tokens: Vec<c_int> = batch.input_tokens.iter().map(|&t| t as c_int).collect();
         let positions: Vec<c_int> = batch.positions.iter().map(|&p| p as c_int).collect();
         let seq_lens: Vec<c_int> = batch.seq_lens.iter().map(|&l| l as c_int).collect();
         let is_prefill: Vec<u8> = batch.is_prefill.iter().map(|&b| b as u8).collect();
@@ -156,5 +155,17 @@ impl GPUExecutorTrait for TinyLlmExecutor {
 
     fn capabilities(&self) -> ExecutorCapabilities {
         ExecutorCapabilities::GREEDY_ONLY
+    }
+
+    fn sequences_finished(&mut self, seq_ids: &[SeqId]) {
+        for &sid in seq_ids {
+            let sid_i = sid as c_int;
+            if self.allocated.remove(&sid_i) {
+                let rc = unsafe { symbols::tinyllm_free_sequence(self.handle, sid_i) };
+                if rc != 0 {
+                    log::warn!("tinyllm_free_sequence({sid}) failed rc={rc}");
+                }
+            }
+        }
     }
 }

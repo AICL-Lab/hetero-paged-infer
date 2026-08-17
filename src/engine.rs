@@ -433,16 +433,25 @@ impl InferenceEngine {
     ///
     /// 对成功完成的请求调用 `finish()` 冲刷末尾文本，作为本步附加片段返回
     /// （保证在 Done 事件之前送达）；失败/取消的请求直接丢弃解码器状态。
+    /// 到达终态的序列会先通知后端释放物理 KV 资源（[`GPUExecutorTrait::sequences_finished`]）。
     fn collect_completed_requests(&mut self) -> (Vec<CompletedRequest>, Vec<StepChunk>) {
-        let completed_requests = self.scheduler.get_completed();
+        let completed_requests = self.scheduler.take_completed_with_seq_ids();
         if completed_requests.is_empty() {
             return (Vec::new(), Vec::new());
         }
 
+        // 序列已释放逻辑 KV 块，通知后端同步释放其物理 KV 资源。
+        let finished_seq_ids: Vec<SeqId> = completed_requests
+            .iter()
+            .map(|(seq_id, _)| *seq_id)
+            .collect();
+        self.execution_pipeline
+            .sequences_finished(&finished_seq_ids);
+
         let mut tail_chunks: Vec<StepChunk> = Vec::new();
         let results = completed_requests
             .into_iter()
-            .map(|req| {
+            .map(|(_, req)| {
                 let decoder = self.decoders.remove(&req.id);
                 let input_text = self.tokenizer.try_decode(&req.input_tokens).ok();
                 let decoded_output = self.tokenizer.try_decode(&req.output_tokens);
@@ -652,8 +661,47 @@ mod tests {
         ConstantTokenExecutor, SequenceExecutor,
     };
     use crate::tokenizer::SimpleTokenizer;
-    use crate::types::{ExecutionBatch, ExecutionOutput};
+    use crate::types::{ExecutionBatch, ExecutionOutput, SeqId};
     use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    /// 记录 `sequences_finished` 收到的 seq id；可配置 execute 失败与否。
+    struct RecordingExecutor {
+        fail: bool,
+        finished: Arc<Mutex<Vec<SeqId>>>,
+    }
+
+    impl RecordingExecutor {
+        fn new(fail: bool) -> (Self, Arc<Mutex<Vec<SeqId>>>) {
+            let finished = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    fail,
+                    finished: finished.clone(),
+                },
+                finished,
+            )
+        }
+    }
+
+    impl GPUExecutorTrait for RecordingExecutor {
+        fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+            if self.fail {
+                return Err(EngineError::KernelLaunchFailed(
+                    "recorded executor failure".to_string(),
+                ));
+            }
+            Ok(ExecutionOutput {
+                next_tokens: vec![123; batch.seq_ids.len()],
+                seq_ids: batch.seq_ids.clone(),
+                logprobs: Vec::new(),
+            })
+        }
+
+        fn sequences_finished(&mut self, seq_ids: &[SeqId]) {
+            self.finished.lock().unwrap().extend_from_slice(seq_ids);
+        }
+    }
 
     struct TimeoutThenSuccessExecutor {
         attempts: u32,
@@ -1020,6 +1068,101 @@ mod tests {
         let metrics = engine.get_metrics();
         assert_eq!(metrics.failed_requests, 1);
         assert_eq!(metrics.completed_requests, 0);
+    }
+
+    #[test]
+    fn test_sequences_finished_called_on_normal_completion() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let (executor, finished) = RecordingExecutor::new(false);
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(executor),
+        )
+        .unwrap();
+
+        engine
+            .submit_request(
+                "Hello",
+                GenerationParams {
+                    max_tokens: 1,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].success);
+        assert_eq!(
+            *finished.lock().unwrap(),
+            vec![1],
+            "normal completion must notify backend of the finished sequence"
+        );
+    }
+
+    #[test]
+    fn test_sequences_finished_called_on_execution_failure() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let (executor, finished) = RecordingExecutor::new(true);
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(executor),
+        )
+        .unwrap();
+
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert_eq!(
+            *finished.lock().unwrap(),
+            vec![1],
+            "execution failure must also notify backend to release KV"
+        );
+    }
+
+    #[test]
+    fn test_sequences_finished_called_on_cancel() {
+        let config = create_test_config();
+        let scheduler = Scheduler::new(config.clone());
+        let (executor, finished) = RecordingExecutor::new(false);
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(executor),
+        )
+        .unwrap();
+
+        let (request_id, _) = engine
+            .submit_request(
+                "Hello",
+                GenerationParams {
+                    max_tokens: 50,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+        engine.step().unwrap(); // 进入 decode
+        assert!(engine.cancel_request(request_id));
+
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert_eq!(
+            *finished.lock().unwrap(),
+            vec![1],
+            "cancel must also notify backend to release KV"
+        );
     }
 
     #[test]

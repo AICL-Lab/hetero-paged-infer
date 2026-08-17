@@ -46,6 +46,11 @@ impl BatchExecutionPipeline {
         self.gpu_executor.capabilities()
     }
 
+    /// 通知后端这些序列已到达终态（完成/失败/取消），可以释放物理 KV 资源。
+    pub fn sequences_finished(&mut self, seq_ids: &[SeqId]) {
+        self.gpu_executor.sequences_finished(seq_ids);
+    }
+
     /// 执行调度器输出对应的批次
     ///
     /// 内部完成 `ExecutionBatch` 构建、GPU 执行、超时重试。
