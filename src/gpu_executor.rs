@@ -15,6 +15,10 @@
 //!   在文档中声明该边界。
 //! - **输出**：`next_tokens` 与 `seq_ids` 逐序列对齐；`logprobs` 为每序列
 //!   该步 token 的 top-k 信息（请求未启用或后端不支持时为 `None`）。
+//!   引擎会校验输出契约，不满足的后端会被视为坏后端并快速失败：
+//!   - `next_tokens.len() == seq_ids.len() == batch.seq_ids.len()`；
+//!   - `seq_ids` 无重复，且与 `batch.seq_ids` 的集合完全一致（顺序可以不同）；
+//!   - `logprobs` 为空或长度等于 `seq_ids.len()`。
 //! - **能力声明**：[`capabilities`](GPUExecutorTrait::capabilities) 告知引擎
 //!   后端实现了哪些采样语义，引擎在准入阶段据此拒绝不支持的参数。
 //!
@@ -91,10 +95,12 @@ impl ExecutorCapabilities {
 pub trait GPUExecutorTrait: Send {
     /// 对给定 batch 执行一次前向 + 采样，返回每序列下一 token 与 logprob。
     ///
-    /// 契约：
+    /// 契约（引擎会在 [`crate::execution_pipeline::BatchExecutionPipeline::execute`]
+    /// 中校验，不满足视为坏后端）：
     /// - `next_tokens` 与 `seq_ids` 逐序列对齐，长度等于 `batch.seq_ids.len()`；
+    /// - `seq_ids` 无重复，且与 `batch.seq_ids` 的集合完全一致（顺序可以不同）；
     /// - `logprobs` 与 `seq_ids` 对齐，每项为该步 token 的 top-k 信息
-    ///   （请求未启用或后端不支持时为 `None`）；
+    ///   （请求未启用或后端不支持时为 `None`）；为空或长度等于 `seq_ids.len()`；
     /// - 不能对 batch 内序列的 KV 状态做跨步假设（引擎负责持久化）。
     fn execute(&mut self, batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError>;
 

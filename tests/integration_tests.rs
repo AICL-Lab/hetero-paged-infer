@@ -4,7 +4,8 @@
 
 use paged_infer::{
     test_utils::{create_test_config, AlwaysFailExecutor},
-    EngineConfig, EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer,
+    EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, GenerationParams,
+    InferenceEngine, Scheduler, SimpleTokenizer,
 };
 
 fn create_failure_test_engine(config: EngineConfig) -> InferenceEngine {
@@ -569,5 +570,46 @@ fn test_metrics_collection() {
     assert!(
         final_metrics.total_tokens_generated > 0,
         "generated tokens must be counted"
+    );
+}
+
+/// 坏后端返回空输出：执行输出契约校验必须让请求失败并以终态排出，
+/// 而不是让请求永久卡在调度器中（修复前 `engine.run()` 会无限循环）。
+#[test]
+fn test_malformed_backend_output_fails_request_and_terminates() {
+    /// 永远返回空输出的坏后端。
+    struct EmptyOutputExecutor;
+
+    impl GPUExecutorTrait for EmptyOutputExecutor {
+        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+            Ok(ExecutionOutput::default())
+        }
+    }
+
+    let config = create_test_config();
+    let scheduler = Scheduler::new(config.clone());
+    let mut engine = InferenceEngine::with_components(
+        config,
+        Box::new(SimpleTokenizer::new()),
+        scheduler,
+        Box::new(EmptyOutputExecutor),
+    )
+    .unwrap();
+
+    engine
+        .submit_request("Hello", GenerationParams::default())
+        .unwrap();
+
+    // 只调用一次 step()，避免修复前测试挂死。
+    let completed = engine.step().unwrap();
+    assert_eq!(completed.len(), 1, "the single request must terminate");
+    assert!(
+        !completed[0].success,
+        "malformed backend output must fail the request"
+    );
+    assert!(completed[0].error.is_some());
+    assert!(
+        !engine.has_pending_work(),
+        "no work may remain stuck in the scheduler"
     );
 }
