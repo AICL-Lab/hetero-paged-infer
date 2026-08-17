@@ -13,6 +13,7 @@
 //! - 流式响应随 token 生成逐片段推送（真实的首 token 延迟）。
 
 use crate::config::{EngineConfig, TokenizerKind};
+use crate::engine::EngineMetrics;
 use crate::error::EngineError;
 use crate::tokenizer::{build_tokenizer, TokenizerTrait};
 use crate::types::{CompletedRequest, FinishReason, GenerationParams, RequestId, TokenLogprobs};
@@ -53,6 +54,49 @@ impl ServerMetrics {
             self.errors_total.load(Ordering::Relaxed),
             self.inflight_requests.load(Ordering::Relaxed),
             self.streaming_requests_total.load(Ordering::Relaxed),
+        )
+    }
+}
+
+/// 引擎指标共享快照：由引擎循环每步结束后写入，/metrics 读取。
+/// `kv_utilization_bp` 用 basis points（万分之）存储，避免 f32 原子。
+#[derive(Default)]
+struct SharedEngineMetrics {
+    active_sequences: AtomicU64,
+    kv_utilization_bp: AtomicU64,
+    completed_requests: AtomicU64,
+    failed_requests: AtomicU64,
+    total_tokens_generated: AtomicU64,
+}
+
+impl SharedEngineMetrics {
+    fn update(&self, metrics: &EngineMetrics) {
+        self.active_sequences
+            .store(metrics.active_sequences as u64, Ordering::Relaxed);
+        self.kv_utilization_bp.store(
+            (metrics.memory_utilization.clamp(0.0, 1.0) * 10_000.0).round() as u64,
+            Ordering::Relaxed,
+        );
+        self.completed_requests
+            .store(metrics.completed_requests, Ordering::Relaxed);
+        self.failed_requests
+            .store(metrics.failed_requests, Ordering::Relaxed);
+        self.total_tokens_generated
+            .store(metrics.total_tokens_generated, Ordering::Relaxed);
+    }
+
+    fn render(&self) -> String {
+        format!(
+            "# TYPE paged_engine_active_sequences gauge\npaged_engine_active_sequences {}\n\
+             # TYPE paged_engine_kv_utilization gauge\npaged_engine_kv_utilization {}\n\
+             # TYPE paged_engine_completed_requests counter\npaged_engine_completed_requests {}\n\
+             # TYPE paged_engine_failed_requests counter\npaged_engine_failed_requests {}\n\
+             # TYPE paged_engine_tokens_generated_total counter\npaged_engine_tokens_generated_total {}\n",
+            self.active_sequences.load(Ordering::Relaxed),
+            (self.kv_utilization_bp.load(Ordering::Relaxed) as f64) / 10_000.0,
+            self.completed_requests.load(Ordering::Relaxed),
+            self.failed_requests.load(Ordering::Relaxed),
+            self.total_tokens_generated.load(Ordering::Relaxed),
         )
     }
 }
@@ -109,6 +153,7 @@ struct AppState {
     config: EngineConfig,
     submit_tx: mpsc::Sender<Submission>,
     metrics: Arc<ServerMetrics>,
+    engine_metrics: Arc<SharedEngineMetrics>,
     response_counter: Arc<AtomicU64>,
     /// 用于把 token id 解码为文本（logprobs 的 tokens 字段等）。
     tokenizer: Arc<dyn TokenizerTrait>,
@@ -577,12 +622,15 @@ pub fn create_router_with_engine(
     config.validate()?;
     let tokenizer: Arc<dyn TokenizerTrait> = Arc::from(build_tokenizer(&config)?);
     let (submit_tx, submit_rx) = mpsc::channel(SUBMISSION_QUEUE_CAPACITY);
-    tokio::spawn(engine_loop(engine, submit_rx));
+    let engine_metrics = Arc::new(SharedEngineMetrics::default());
+    let engine_metrics_loop = engine_metrics.clone();
+    tokio::spawn(engine_loop(engine, submit_rx, engine_metrics_loop));
 
     let state = Arc::new(AppState {
         config,
         submit_tx,
         metrics: Arc::new(ServerMetrics::default()),
+        engine_metrics,
         response_counter: Arc::new(AtomicU64::new(1)),
         tokenizer,
     });
@@ -601,7 +649,11 @@ pub fn create_router_with_engine(
 ///
 /// 每一步之间清空提交队列（使调度器能看到并发请求并组批），并把每请求事件
 /// 推送给对应 handler。所有提交端被丢弃（服务器关闭）时退出。
-async fn engine_loop(mut engine: InferenceEngine, mut submit_rx: mpsc::Receiver<Submission>) {
+async fn engine_loop(
+    mut engine: InferenceEngine,
+    mut submit_rx: mpsc::Receiver<Submission>,
+    engine_metrics: Arc<SharedEngineMetrics>,
+) {
     // request_id → 事件发送端，用于路由每请求事件
     let mut waiters: HashMap<RequestId, mpsc::UnboundedSender<RequestEvent>> = HashMap::new();
 
@@ -646,6 +698,9 @@ async fn engine_loop(mut engine: InferenceEngine, mut submit_rx: mpsc::Receiver<
                 log::error!("engine step failed: {err}");
             }
         }
+
+        // 每步结束后刷新引擎指标快照，供 /metrics 读取。
+        engine_metrics.update(&engine.get_metrics());
 
         // 每步让出一次：生成循环本身没有 await 点，单线程 runtime 上
         // 会饿死 handler / SSE 流任务（首 token 永远到不了客户端）；
@@ -693,13 +748,18 @@ async fn not_found(uri: Uri) -> ApiError {
 }
 
 async fn metrics(State(state): State<Arc<AppState>>) -> Response {
+    let body = format!(
+        "{}{}",
+        state.metrics.render(),
+        state.engine_metrics.render()
+    );
     (
         StatusCode::OK,
         [(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/plain; version=0.0.4"),
         )],
-        state.metrics.render(),
+        body,
     )
         .into_response()
 }

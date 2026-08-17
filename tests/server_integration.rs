@@ -91,6 +91,12 @@ async fn test_metrics_endpoint_exposes_prometheus_counters() {
     let body = String::from_utf8(body.to_vec()).unwrap();
     assert!(body.contains("paged_requests_total"));
     assert!(body.contains("paged_inflight_requests"));
+    // 引擎指标快照
+    assert!(body.contains("paged_engine_active_sequences"));
+    assert!(body.contains("paged_engine_kv_utilization"));
+    assert!(body.contains("paged_engine_completed_requests"));
+    assert!(body.contains("paged_engine_failed_requests"));
+    assert!(body.contains("paged_engine_tokens_generated_total"));
 }
 
 #[tokio::test]

@@ -49,6 +49,15 @@ fn run_burst(engine: &mut InferenceEngine, n: usize) -> Vec<f64> {
     latencies
 }
 
+/// 有序样本的百分位（p ∈ [0,1]，线性插值取最近秩）。
+fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
 fn bench_concurrent_burst(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_burst");
     for &n in &[8u32, 16, 32, 64] {
@@ -70,5 +79,42 @@ fn bench_concurrent_burst(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_concurrent_burst);
+/// Continuous Batching on/off 对比：相同 N 并发请求，
+/// - `cb_off`：`max_batch_size = 1`（一次只跑一个序列，串行）；
+/// - `cb_on`：`max_batch_size = N`（全部并发组批）。
+///
+/// 输出总排空时间与 p50/p95/p99。使用 Mock 后端，只反映调度开销，
+/// 不是 GPU 吞吐。
+fn bench_cb_on_off(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cb_on_off");
+    for &n in &[8u32, 16, 32] {
+        for (label, max_batch_size) in [("cb_off", 1u32), ("cb_on", n)] {
+            group.bench_function(format!("{label}_n{n}"), |b| {
+                b.iter_batched(
+                    || {
+                        let mut cfg = create_test_config();
+                        cfg.max_batch_size = max_batch_size;
+                        cfg.max_num_seqs = n.max(32);
+                        make_mock_engine(cfg)
+                    },
+                    |mut engine| {
+                        let mut lat = run_burst(&mut engine, n as usize);
+                        lat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        let total = lat.iter().sum::<f64>();
+                        std::hint::black_box((
+                            total,
+                            percentile(&lat, 0.5),
+                            percentile(&lat, 0.95),
+                            percentile(&lat, 0.99),
+                        ));
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_concurrent_burst, bench_cb_on_off);
 criterion_main!(benches);

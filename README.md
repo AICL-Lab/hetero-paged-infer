@@ -183,6 +183,20 @@ curl http://127.0.0.1:3000/v1/chat/completions \
   -d '{"model":"paged-infer","messages":[{"role":"user","content":"Say hello"}],"max_tokens":8}'
 ```
 
+### 指标（/metrics，Prometheus 格式）
+
+| 指标名 | 类型 | 说明 |
+|--------|------|------|
+| `paged_requests_total` | counter | 累计 HTTP 请求数 |
+| `paged_errors_total` | counter | 累计错误响应数 |
+| `paged_inflight_requests` | gauge | 当前在途 HTTP 请求数 |
+| `paged_streaming_requests_total` | counter | 累计流式请求数 |
+| `paged_engine_active_sequences` | gauge | 引擎当前活跃序列数 |
+| `paged_engine_kv_utilization` | gauge | KV 块池利用率（0.0–1.0） |
+| `paged_engine_completed_requests` | counter | 累计成功完成请求数 |
+| `paged_engine_failed_requests` | counter | 累计失败请求数 |
+| `paged_engine_tokens_generated_total` | counter | 累计生成 token 数 |
+
 ### 库用法
 
 ```rust

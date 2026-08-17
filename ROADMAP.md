@@ -31,7 +31,7 @@
 ## P1（部分完成）
 
 - [x] T9：Chat Completions 应用真实 chat template（Qwen2 `<|im_start|>`，HF tokenizer）
-- [ ] T10：引擎指标 /metrics + CB on/off benchmark
+- [x] T10：引擎指标 /metrics + CB on/off benchmark
 - [ ] T11：tiny-llm 策略 1（分页 KV C ABI，跨仓库，不阻塞冻结）
 - [ ] T12：BPE 安全增量解码（或文档明确降级——已部分完成）
 
