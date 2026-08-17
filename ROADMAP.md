@@ -1,11 +1,11 @@
 # Paged-Infer 路线图
 
-> **当前定位**：Serving 控制面的**架构练习作品**（v0.1.0 脚手架）。
+> **当前定位**：Serving 控制面的**架构练习作品**（v0.2.0）。
 > 计算后端为 CPU 参考执行器 + Mock GPU 执行器，这是有意为之的边界：
 > 本仓库的价值在调度器、分页 KV 内存管理与资源不变量，不在计算 kernel。
 >
-> 本仓库目前处于**低优先级维护状态**：旗舰投入在
-> [tiny-llm](https://github.com/AICL-Lab/tiny-llm)，kernel 深度投入在
+> **开发已结束**（v0.2.0 冻结）：本仓库进入**低优先级维护状态**，后续重心在
+> [tiny-llm](https://github.com/AICL-Lab/tiny-llm)（分页 KV kernel）与
 > [cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)。
 
 ## 已完成（v0.1.0）
@@ -64,7 +64,16 @@
 - [ ] 从调度器/内存管理相关的 good-first-issue 入手
 - [ ] 本仓库保持冻结，README 注明"练习作品，真实生产经验见上游贡献"
 
-## 明确不做
+## 明确不做（冻结边界）
 
+- 不实现抢占（vLLM 式 swap / preempt-resume）
+- 不实现 chunked prefill
+- 不实现 prefix caching
+- 不实现生产级 CUDA kernel（真实 kernel 在 tiny-llm 仓库）
 - 不在没有真实执行后端前声称任何 serving 性能数字
 - 不重复实现 vLLM 已有的完整功能栈
+
+后续工作指向：
+
+- tiny-llm：分页 KV（策略 1）C ABI 与 kernel（本仓库 `tiny_llm_ffi` 已预留契约）
+- cuflash-attn：attention kernel 深度投入

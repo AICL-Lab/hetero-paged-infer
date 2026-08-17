@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+（当前无未发布变更。全部 P0/P1 已完成项见 [0.2.0]。）
+
+## [0.2.0] - 2026-08-17
+
 ### Changed
 
 - 仓库由 `hetero-paged-infer` 更名为 `paged-infer`：原名中的 "hetero"（异构）与当前纯 CPU 参考后端的实际状态不符。crate 更名为 `paged-infer`/`paged_infer`，指标名同步更名为 `paged_*`。旧仓库地址自动重定向。
@@ -141,4 +145,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
+[0.2.0]: https://github.com/AICL-Lab/paged-infer/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AICL-Lab/paged-infer/releases/tag/v0.1.0

@@ -9,7 +9,7 @@
 
 **基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎脚手架（CPU 参考执行器）**
 
-> ⚠️ **开发状态**：本项目处于早期开发阶段（v0.1.0）。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）。生产级 CUDA kernel 为后续工作。
+> ⚠️ **开发状态**：本项目已完成 v0.2.0 并进入低优先级维护状态。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）。生产级 CUDA kernel 为后续工作（见 tiny-llm）。
 
 **[文档](#文档) | [更新日志](CHANGELOG.md)**
 
@@ -346,6 +346,19 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] HuggingFace Tokenizer 集成
 - [ ] 真实 CUDA Kernel
 - [ ] 异步 CPU/GPU 重叠
+
+## 开发结束标准（v0.2.0 冻结）
+
+本项目已完成 v0.2.0 发布并进入**低优先级维护状态**。P0 正确性修复（T0–T8）
+与部分 P1（T9、T10、T12）已全部完成并保持 CI 绿色。明确的冻结边界：
+
+- **无抢占**（无 swap / preempt-resume）
+- **无 chunked prefill**、**无 prefix caching**
+- **无生产 CUDA kernel**（真实 kernel 在 tiny-llm 仓库）
+- 性能数字均为 Mock/CPU 参考后端的调度开销，不声称 GPU 吞吐
+
+后续重心转向 [tiny-llm](https://github.com/AICL-Lab/tiny-llm) 与
+[cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)。
 
 ## 许可证
 
