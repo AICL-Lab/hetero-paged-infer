@@ -71,6 +71,10 @@ impl BatchExecutionPipeline {
         let execution_batch = build_execution_batch(scheduler_output)?;
         validate_batch_shape(&execution_batch)?;
 
+        // 只有声明幂等（retry_safe）的后端才允许在 GpuTimeout 后重放同一 batch；
+        // 真实 CUDA kernel 超时时 KV 可能已部分写入，重放不安全。
+        let retry_safe = self.gpu_executor.capabilities().retry_safe;
+
         let mut retries = 0;
         loop {
             match self.gpu_executor.execute(&execution_batch) {
@@ -78,7 +82,7 @@ impl BatchExecutionPipeline {
                     validate_execution_output(&execution_batch, &output)?;
                     return Ok(output);
                 }
-                Err(EngineError::GpuTimeout) if retries < self.max_retry_attempts => {
+                Err(EngineError::GpuTimeout) if retry_safe && retries < self.max_retry_attempts => {
                     retries += 1;
                     log::warn!(
                         "重试批次执行 (尝试 {}/{}): GPU 超时",

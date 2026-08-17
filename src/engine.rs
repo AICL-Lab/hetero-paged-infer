@@ -656,6 +656,7 @@ mod tests {
     use super::*;
     use crate::config::{TokenizerConfig, TokenizerKind};
     use crate::error::EngineError;
+    use crate::gpu_executor::ExecutorCapabilities;
     use crate::test_utils::{
         create_test_config, test_params, write_test_tokenizer_json, AlwaysFailExecutor,
         ConstantTokenExecutor, SequenceExecutor,
@@ -720,6 +721,14 @@ mod tests {
                 })
             }
         }
+
+        fn capabilities(&self) -> ExecutorCapabilities {
+            // 确定性测试后端：超时后重放安全，允许重试。
+            ExecutorCapabilities {
+                sampling: false,
+                retry_safe: true,
+            }
+        }
     }
 
     struct AlwaysTimeoutExecutor;
@@ -727,6 +736,45 @@ mod tests {
     impl GPUExecutorTrait for AlwaysTimeoutExecutor {
         fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
             Err(EngineError::GpuTimeout)
+        }
+
+        fn capabilities(&self) -> ExecutorCapabilities {
+            // 保持 retry_safe=true，以便保留"重试耗尽后失败"的既有测试。
+            ExecutorCapabilities {
+                sampling: false,
+                retry_safe: true,
+            }
+        }
+    }
+
+    /// 非幂等超时后端：即使有重试预算也绝不重放同一 batch。
+    struct NonRetrySafeTimeoutExecutor {
+        attempts: Arc<Mutex<u32>>,
+    }
+
+    impl NonRetrySafeTimeoutExecutor {
+        fn new() -> (Self, Arc<Mutex<u32>>) {
+            let attempts = Arc::new(Mutex::new(0));
+            (
+                Self {
+                    attempts: attempts.clone(),
+                },
+                attempts,
+            )
+        }
+    }
+
+    impl GPUExecutorTrait for NonRetrySafeTimeoutExecutor {
+        fn execute(&mut self, _batch: &ExecutionBatch) -> Result<ExecutionOutput, EngineError> {
+            *self.attempts.lock().unwrap() += 1;
+            Err(EngineError::GpuTimeout)
+        }
+
+        fn capabilities(&self) -> ExecutorCapabilities {
+            ExecutorCapabilities {
+                sampling: false,
+                retry_safe: false,
+            }
         }
     }
 
@@ -1414,6 +1462,41 @@ mod tests {
         let metrics = engine.get_metrics();
         assert_eq!(metrics.failed_requests, 1);
         assert_eq!(metrics.completed_requests, 0);
+    }
+
+    #[test]
+    fn test_non_retry_safe_timeout_fails_without_replay() {
+        // 非幂等后端（retry_safe=false）：GpuTimeout 后不得重放同一 batch，
+        // execute 必须只被调用 1 次，请求直接失败。
+        let config = create_test_config(); // max_retry_attempts: 2
+        let scheduler = Scheduler::new(config.clone());
+        let (executor, attempts) = NonRetrySafeTimeoutExecutor::new();
+        let mut engine = InferenceEngine::with_components(
+            config,
+            Box::new(SimpleTokenizer::new()),
+            scheduler,
+            Box::new(executor),
+        )
+        .unwrap();
+
+        engine
+            .submit_request("Hello", GenerationParams::default())
+            .unwrap();
+        let completed = engine.run();
+
+        assert_eq!(completed.len(), 1);
+        assert!(!completed[0].success);
+        assert!(
+            completed[0].error.as_deref().unwrap_or("").contains("GPU"),
+            "error should surface the GPU timeout, got {:?}",
+            completed[0].error
+        );
+        assert!(!engine.has_pending_work());
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            1,
+            "non-retry-safe backend must not replay the batch on timeout"
+        );
     }
 
     #[test]

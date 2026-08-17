@@ -73,7 +73,7 @@ fn validate_execution_batch(
 /// 执行后端能力声明
 ///
 /// 引擎在 submit 阶段据此校验生成参数，让不支持的采样语义尽早失败，
-/// 而不是在执行时被后端静默忽略。
+/// 而不是在执行时被后端静默忽略；同时声明 GpuTimeout 后重放是否安全。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutorCapabilities {
     /// 是否真正实现非贪心采样（temperature / top_p 生效）。
@@ -81,11 +81,19 @@ pub struct ExecutorCapabilities {
     ///
     /// [`GenerationParams::is_greedy`]: crate::types::GenerationParams::is_greedy
     pub sampling: bool,
+    /// 后端执行是否幂等：`GpuTimeout` 后重放同一 batch 是否安全。
+    ///
+    /// 真实 CUDA kernel 超时时 KV 可能已部分写入，重放不安全，必须为 `false`；
+    /// 只有能保证重放幂等的后端（如确定性 CPU/Mock）才可设为 `true`。
+    pub retry_safe: bool,
 }
 
 impl ExecutorCapabilities {
-    /// 仅支持 greedy 解码（当前所有内置后端的共同能力）。
-    pub const GREEDY_ONLY: Self = Self { sampling: false };
+    /// 仅支持 greedy 解码且 **不保证** 超时重放安全（内置后端的保守默认）。
+    pub const GREEDY_ONLY: Self = Self {
+        sampling: false,
+        retry_safe: false,
+    };
 }
 
 /// 执行后端契约（EngineBackend）
