@@ -1,5 +1,7 @@
 # Paged-Infer
 
+> 📚 Portfolio map: https://github.com/aicl-lab/aicl-lab
+
 <div align="center">
 
 [![CI](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml)
