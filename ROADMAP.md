@@ -1,12 +1,9 @@
 # Paged-Infer 路线图
 
-> **当前定位**：Serving 控制面的**架构练习作品**（v0.2.0）。
-> 计算后端为 CPU 参考执行器 + Mock GPU 执行器，这是有意为之的边界：
-> 本仓库的价值在调度器、分页 KV 内存管理与资源不变量，不在计算 kernel。
->
-> **开发已结束**（v0.2.0 冻结）：本仓库进入**低优先级维护状态**，后续重心在
-> [tiny-llm](https://github.com/AICL-Lab/tiny-llm)（分页 KV kernel）与
-> [cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)。
+> **当前定位**：Serving 控制面的**架构练习作品**（v0.2.0，`phase-2-e` 冻结）。
+> 计算后端双路径：默认 CPU 参考执行器（CI/确定性）；`tiny-llm` feature 下接入
+> 真实 CUDA 后端，**分页 KV 策略 1（block_tables）默认启用**。本仓库的价值在
+> 调度器、分页 KV 内存管理与资源不变量，不在计算 kernel。
 
 ## 已完成（v0.1.0）
 
@@ -47,14 +44,16 @@
 **选项 A：与 tiny-llm 对接（推荐，形成 mini-vLLM 故事）**
 - [x] 定义 EngineBackend trait，把 tiny-llm 作为真实执行后端接入
       （`GPUExecutorTrait` + `TinyLlmExecutor` 适配器，C ABI 经 `tiny_llm_ffi`）
-- [~] 真实模型的端到端 serving：分页 KV + 连续批处理 + 真实 token 生成
-      - 引擎驱动 + 真实后端的接入流程已验证（`cargo test --features tiny-llm`，
+- [x] 真实模型的端到端 serving：分页 KV + 连续批处理 + 真实 token 生成
+      - 引擎驱动 + 真实后端已验证（`cargo test --features tiny-llm`，
         3 并发请求、KV 生命周期、资源守恒、能力声明）
-      - tokenizer 词表对齐已完成：`--tokenizer <tokenizer.json>` 启用 HF tokenizer
-        （真实 BOS/EOS/PAD 探测），差分测试与 tiny-llm 权威 fixture 逐 id 对齐，
-        真实后端端到端与 llama.cpp 同 prompt greedy 输出逐 token 一致
+      - tokenizer 词表对齐：`--tokenizer <tokenizer.json>` 启用 HF tokenizer
+        （真实 BOS/EOS/PAD 探测），差分测试与 tiny-llm 权威 fixture 逐 id 对齐
         （`tests/tokenizer_real_diff.rs`、`tests/tiny_llm_text_e2e.rs`）
-      - 待完善：分页 KV（策略 1）暂未启用（当前策略 2 连续 KV）
+      - **分页 KV 策略 1 默认启用**（真实 `block_tables`）；
+        `PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV。请求 1 与 llama.cpp
+        greedy 全序列对齐；请求 2 因 W8A16 vs Q4_K_M 量化分歧，断言为
+        前缀一致 + EOS（见 `tiny_llm_text_e2e.rs`）
 - [x] 并发压测：资源守恒、尾延迟、失败传播
       （Mock/CPU 后端先行，真实 tiny-llm 后端接入后直接切换 executor 复用场景：
       `tests/concurrency_stress.rs` 断言 + `benches/concurrency_benchmark.rs` 性能基线）
@@ -70,10 +69,10 @@
 - 不实现 chunked prefill
 - 不实现 prefix caching
 - 不实现生产级 CUDA kernel（真实 kernel 在 tiny-llm 仓库）
-- 不在没有真实执行后端前声称任何 serving 性能数字
+- 不声称生产级 serving 吞吐数字（tiny-llm 后端用于正确性与资源守恒，不是压测旗舰）
 - 不重复实现 vLLM 已有的完整功能栈
 
-后续工作指向：
+后续工作指向（冻结期内只记不做）：
 
-- tiny-llm：分页 KV（策略 1）C ABI 与 kernel（本仓库 `tiny_llm_ffi` 已预留契约）
-- cuflash-attn：attention kernel 深度投入
+- tiny-llm：paged decode 直接读 pool、分页路径接 CUDA Graphs（Phase 4 候选）
+- 上游：把调度练习转化为 vLLM / SGLang 小 PR（选项 B）
