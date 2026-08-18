@@ -24,6 +24,7 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
 | **PagedAttention KV Cache** | 基于块的内存管理；文献背景中常见 <5% 的浪费水平 | ✅ |
+| **优先级调度** | `GenerationParams::priority` 高优先级先调度（同级 FCFS） | ✅ |
 | **连续批处理** | 动态 prefill/decode 调度 | ✅ |
 | **内存压力感知** | 可配置的 OOM 防护 | ✅ |
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |

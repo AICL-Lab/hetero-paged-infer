@@ -1435,6 +1435,7 @@ fn generation_params(
         top_p: top_p.unwrap_or(1.0),
         stop,
         logprobs,
+        priority: 0,
     };
     params
         .validate()

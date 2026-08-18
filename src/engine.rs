@@ -891,6 +891,7 @@ mod tests {
             top_p: 1.0,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         let result = engine.submit_request("Hello", sampled);
         assert!(
@@ -905,6 +906,7 @@ mod tests {
             top_p: 0.9,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         let result = engine.submit_request("Hello", top_p);
         assert!(
@@ -919,6 +921,7 @@ mod tests {
             top_p: 1.0,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(engine.submit_request("Hello", greedy).is_ok());
     }

@@ -43,6 +43,12 @@ pub struct GenerationParams {
     /// `Some(k)`：为每个生成 token 返回其对数概率及前 k 个候选
     /// （`k <= 5`，OpenAI 上限）；`None` 表示不返回 logprobs。
     pub logprobs: Option<usize>,
+
+    /// 调度优先级（PINF-112）：数值越大越优先调度，0 为默认。
+    ///
+    /// 仅影响调度顺序（prefill 启动与在途 prefill 的批次组合），
+    /// 不改变采样、能力声明或后端行为。同级优先级保持 FCFS（先提交先调度）。
+    pub priority: u8,
 }
 
 impl Default for GenerationParams {
@@ -54,6 +60,7 @@ impl Default for GenerationParams {
             top_p: 1.0,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         }
     }
 }
@@ -208,6 +215,7 @@ mod tests {
             top_p: 0.9,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(valid.validate().is_ok());
         assert!(valid.validate().is_ok());
@@ -218,6 +226,7 @@ mod tests {
             top_p: 0.9,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(invalid_max_tokens.validate().is_err());
         assert!(invalid_max_tokens.validate().is_err());
@@ -228,6 +237,7 @@ mod tests {
             top_p: 0.9,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(invalid_temp.validate().is_err());
 
@@ -238,6 +248,7 @@ mod tests {
             top_p: 0.9,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(greedy.validate().is_ok());
 
@@ -247,6 +258,7 @@ mod tests {
             top_p: 1.5,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(invalid_top_p.validate().is_err());
     }
@@ -260,6 +272,7 @@ mod tests {
             top_p: 1.0,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(matches!(
             nan_temp.validate(),
@@ -272,6 +285,7 @@ mod tests {
             top_p: 1.0,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(matches!(
             inf_temp.validate(),
@@ -284,6 +298,7 @@ mod tests {
             top_p: f32::NAN,
             stop: Vec::new(),
             logprobs: None,
+            priority: 0,
         };
         assert!(matches!(
             nan_top_p.validate(),
@@ -302,6 +317,7 @@ mod tests {
                 top_p: 1.0,
                 stop: Vec::new(),
                 logprobs: None,
+                priority: 0,
             },
         );
 
@@ -345,8 +361,8 @@ mod property_tests {
                 temperature,
                 top_p,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
 
             let validation_result = params.validate();
 
@@ -372,8 +388,8 @@ mod property_tests {
                 temperature: 2.0,
                 top_p: 0.5,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_temp_boundary.validate().is_ok());
 
             let params_top_p_boundary = GenerationParams {
@@ -381,8 +397,8 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 1.0,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_top_p_boundary.validate().is_ok());
 
             let params_temp_over = GenerationParams {
@@ -390,8 +406,8 @@ mod property_tests {
                 temperature: 2.001,
                 top_p: 0.5,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_temp_over.validate().is_err());
 
             let params_top_p_over = GenerationParams {
@@ -399,8 +415,8 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 1.001,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_top_p_over.validate().is_err());
 
             // temperature == 0.0 表示贪心解码，是合法值
@@ -409,8 +425,8 @@ mod property_tests {
                 temperature: 0.0,
                 top_p: 0.5,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_greedy_temp.validate().is_ok());
 
             let params_negative_temp = GenerationParams {
@@ -418,8 +434,8 @@ mod property_tests {
                 temperature: -0.1,
                 top_p: 0.5,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_negative_temp.validate().is_err());
 
             let params_zero_top_p = GenerationParams {
@@ -427,8 +443,8 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 0.0,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_zero_top_p.validate().is_err());
 
             let params_zero_max_tokens = GenerationParams {
@@ -436,8 +452,8 @@ mod property_tests {
                 temperature: 1.0,
                 top_p: 0.5,
                 stop: Vec::new(),
-                logprobs: None,
-            };
+                logprobs: None, priority: 0,
+        };
             prop_assert!(params_zero_max_tokens.validate().is_err());
         }
     }

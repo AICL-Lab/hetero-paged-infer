@@ -7,6 +7,8 @@
 //! - **Decode 优先调度** - 优先调度 decode 请求以降低延迟
 //! - **内存压力感知** - 内存超阈值时拒绝新 prefill
 //! - **连续批处理** - 动态组合 prefill 和 decode 请求
+//! - **优先级调度（PINF-112）** - `GenerationParams::priority` 越大越先调度
+//!   （prefill 启动与在途 prefill 组合均生效）；同级保持 FCFS，默认优先级 0
 //!
 //! # 状态机
 //!
@@ -130,8 +132,18 @@ impl Scheduler {
             }
         }
 
-        // Priority 2: Schedule prefill sequences
-        for seq_id in self.prefill_seq_ids() {
+        // Priority 2: Schedule prefill sequences（PINF-112：高优先级先，
+        // 同级保持 seq_id 顺序 = FCFS）
+        let mut prefill_candidates: Vec<SeqId> = self.prefill_seq_ids();
+        prefill_candidates.sort_by_key(|&sid| {
+            let prio = self
+                .prefill_sequences
+                .get(&sid)
+                .map(|sq| sq.request.params.priority)
+                .unwrap_or(0);
+            (std::cmp::Reverse(prio), sid)
+        });
+        for seq_id in prefill_candidates {
             if num_sequences >= self.config.max_batch_size {
                 break;
             }
@@ -176,6 +188,12 @@ impl Scheduler {
 
         // Priority 3: Start new prefills from pending queue (if not under memory pressure)
         if !self.under_memory_pressure {
+            // PINF-112：先按优先级稳定排序（高优先级在前，同级保持 FCFS），
+            // 再做一轮扫描。
+            let mut pending_vec: Vec<PendingRequest> = self.pending_queue.drain(..).collect();
+            pending_vec.sort_by_key(|p| (std::cmp::Reverse(p.request.params.priority), p.seq_id));
+            self.pending_queue = pending_vec.into();
+
             // 只扫描"进入本步时"的队列长度一轮：装不下的请求 push_back 留到后续步骤，
             // 而不是 push_front + break——否则一个大 prefill 会永久挡住后面的小 prefill。
             // 这也让内存预算不足的候选能被跳过，尝试后面的小请求。
@@ -620,6 +638,7 @@ mod tests {
     use crate::test_utils::{
         create_test_config, create_test_request, create_test_request_with_params,
     };
+    use crate::types::GenerationParams;
 
     #[test]
     fn test_add_request() {
@@ -814,6 +833,64 @@ mod tests {
         assert_eq!(scheduled.prefill_sequences.len(), 0);
         assert_eq!(scheduled.decode_sequences[0].seq_id, decode_seq_id);
         assert!(scheduler.has_pending_request(pending_seq_id));
+    }
+
+    #[test]
+    fn test_priority_higher_prefill_starts_first() {
+        // PINF-112：预算只够一个 prefill 时，高优先级请求先被调度启动，
+        // 即使它后提交。
+        let mut config = create_test_config();
+        config.max_total_tokens = 40; // 只够一个 32-token prefill
+        let mut scheduler = Scheduler::new(config);
+
+        scheduler
+            .add_request(Request::new(1, vec![1; 32], GenerationParams::default()))
+            .unwrap();
+        let high_params = GenerationParams {
+            priority: 5,
+            ..GenerationParams::default()
+        };
+        scheduler
+            .add_request(Request::new(2, vec![1; 32], high_params))
+            .unwrap();
+
+        let output = scheduler.schedule();
+        assert_eq!(output.prefill_sequences.len(), 1, "budget fits one prefill");
+        assert_eq!(
+            output.prefill_sequences[0].seq_id, 2,
+            "high priority scheduled first"
+        );
+        assert!(scheduler.has_pending_work(), "low priority still pending");
+    }
+
+    #[test]
+    fn test_priority_same_level_keeps_fcfs() {
+        // PINF-112：同级优先级保持 FCFS（先提交先调度）。
+        let mut config = create_test_config();
+        config.max_total_tokens = 40;
+        let mut scheduler = Scheduler::new(config);
+
+        scheduler
+            .add_request(Request::new(1, vec![1; 32], GenerationParams::default()))
+            .unwrap();
+        scheduler
+            .add_request(Request::new(2, vec![1; 32], GenerationParams::default()))
+            .unwrap();
+
+        let output = scheduler.schedule();
+        assert_eq!(output.prefill_sequences.len(), 1);
+        assert_eq!(output.prefill_sequences[0].seq_id, 1, "FCFS preserved");
+    }
+
+    #[test]
+    fn test_priority_field_defaults_to_zero_and_validates() {
+        let params = GenerationParams::default();
+        assert_eq!(params.priority, 0);
+        assert!(params.validate().is_ok());
+
+        let mut p = params.clone();
+        p.priority = 200; // 调度提示不设上限，validate 只做采样参数校验
+        assert!(p.validate().is_ok());
     }
 
     #[test]
