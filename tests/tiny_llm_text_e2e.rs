@@ -152,8 +152,15 @@ fn qwen2_chat_prompt_matches_llama_cpp() {
 }
 
 /// D4：3 并发分页请求端到端。
-/// 请求 1（Hello）与 llama.cpp 参考逐 token 严格一致；请求 2（无 llama.cpp
-/// fixture，禁止伪造）与请求 3（短 prompt）只断言 success/非空/正常终止。
+/// 请求 1（Hello）与 llama.cpp 参考逐 token 严格一致；请求 2（What is 2+2?）
+/// 与 llama.cpp 参考存在已记录在案的量化分歧（见下），只断言公共前缀 + EOS
+/// 终止 + 非空，不伪装全序列一致；请求 3（短 prompt）只断言 success/非空/正常终止。
+/// 请求 2 分歧记录（llama-cli `-st` greedy，同模型同 prompt）：
+///   llama.cpp 参考： [17, 10, 17, 16819, 220, 19, 13, 151645] ("2+2 equals 4.")
+///   tiny-llm 当前：  [17, 10, 17, 374, 220, 19, 13, 151645] ("2+2 is 4.")
+///   第 4 个 token 是 W8A16（tiny-llm）vs Q4_K_M（llama.cpp）的 argmax 边界翻转
+///   （量化精度分歧），与 tiny-llm README 记录的"同 prompt 前 N token 一致、
+///   后续因量化方案分歧"结论一致，非 bug。
 /// 运行结束后资源守恒：active_sequences == 0、KV 利用率回到基线。
 #[test]
 fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
@@ -261,6 +268,17 @@ fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
         c1.output_text,
         "Hello! I'm just a computer program, so I don't have feelings. How can I assist you today?"
     );
+
+    // 请求 2：llama.cpp 参考 [17, 10, 17, 16819, 220, 19, 13, 151645] ("2+2 equals 4.")
+    // tiny-llm 当前 [17, 10, 17, 374, 220, 19, 13, 151645] ("2+2 is 4.")。
+    // 第 4 个 token 是 W8A16 vs Q4_K_M 的 argmax 边界翻转（量化分歧），
+    // 因此只断言公共前缀 + EOS 终止，不伪装全序列一致。
+    let c2 = by_id.get(&id2).expect("request2 完成记录");
+    let out2 = &c2.output_tokens;
+    assert!(c2.success, "request2 失败: {:?}", c2.error);
+    assert_eq!(&out2[..3], &[17, 10, 17], "公共前缀应与 llama.cpp 一致");
+    assert_eq!(out2.last(), Some(&151645), "应以 EOS 终止");
+    assert!(!c2.output_text.is_empty(), "request2 输出文本不应为空");
 
     // 资源守恒：无活跃序列、KV 利用率回到基线
     let metrics = engine.get_metrics();
