@@ -3,12 +3,18 @@
 //! 实现 [`GPUExecutorTrait`]：把引擎调度的 [`ExecutionBatch`] 经 C ABI
 //! （[`crate::tiny_llm_ffi`]）交给 tiny-llm 步进执行。
 //!
-//! # 边界（策略 2：连续 KV）
-//! - `block_tables` 忽略，KV 位置由 tiny-llm 内部跟踪；
+//! # 边界（策略 1：分页 KV，默认）
+//! - `block_tables` / `num_blocks` 真实上传给 tiny-llm，tiny-llm 侧按块表
+//!   scatter/gather 写入分页 KV 池（max_num_blocks 由 [`EngineConfig`] 配置，
+//!   默认 1024，即默认启用策略 1）；
 //! - 每序列首次出现时分配 KV（context_len + 512 预留 token），
 //!   decode 超出预留会失败（调用方应限制 `max_tokens`）；
 //! - 仅支持 greedy 采样（[`ExecutorCapabilities::GREEDY_ONLY`]）；
 //! - tokenizer 必须与 tiny-llm 加载的模型词表一致。
+//!
+//! # 策略 2（连续 KV）fallback
+//! 设置环境变量 `PAGED_INFER_TINY_LLM_STRATEGY=2` 时强制 `max_num_blocks=0`，
+//! tiny-llm 走连续 KV，`block_tables` / `num_blocks` 传 null（行为同 D1b）。
 //!
 //! 仅在 `tiny-llm` cargo feature 下编译，且需 `TINY_LLM_DIR` 指向
 //! 已构建的 tiny-llm 静态库（见 build.rs）。
@@ -30,17 +36,28 @@ const DECODE_RESERVE: i32 = 512;
 /// 适配器把最大并发序列 clamp 到此值，避免 KV pool 超出显存。
 const MAX_CONCURRENT_SEQS: i32 = 4;
 
+/// 连续 KV（策略 2）fallback 开关：`PAGED_INFER_TINY_LLM_STRATEGY=2`。
+const STRATEGY2_ENV: &str = "PAGED_INFER_TINY_LLM_STRATEGY";
+
 /// tiny-llm 真实执行后端。
 pub struct TinyLlmExecutor {
     handle: *mut TinyLlmHandle,
     allocated: HashSet<c_int>,
+    /// 是否走策略 1（分页 KV）。false = 策略 2 fallback（块表传 null）。
+    paged: bool,
 }
 
 impl TinyLlmExecutor {
     /// 加载模型并构建后端（失败返回 [`EngineError::BackendError`]）。
     pub fn new(model_path: &str, config: EngineConfig) -> Result<Self, EngineError> {
-        // 维度字段由 GGUF 提取，仅 block_size / max_batch_size 生效；
-        // max_batch_size clamp 到显存可承受范围。
+        // 维度字段由 GGUF 提取，仅 block_size / max_batch_size / max_num_blocks
+        // 生效；max_batch_size clamp 到显存可承受范围。
+        // 策略 1（分页 KV）为默认：max_num_blocks = config（默认 1024）。
+        // `PAGED_INFER_TINY_LLM_STRATEGY=2` 强制策略 2（连续 KV，max_num_blocks=0）。
+        let force_strategy2 = std::env::var(STRATEGY2_ENV)
+            .map(|v| v == "2")
+            .unwrap_or(false);
+        let paged = !force_strategy2;
         let ccfg = TinyLlmConfig {
             hidden_dim: 0,
             num_layers: 0,
@@ -50,7 +67,11 @@ impl TinyLlmExecutor {
             vocab_size: 0,
             block_size: config.block_size as c_int,
             max_batch_size: (config.max_num_seqs as c_int).min(MAX_CONCURRENT_SEQS),
-            max_num_blocks: 0, // 本任务仍策略 2（连续 KV），D3 再接入真实块表
+            max_num_blocks: if paged {
+                config.max_num_blocks as c_int
+            } else {
+                0
+            },
         };
         let path = CString::new(model_path)
             .map_err(|_| EngineError::BackendError("model path contains NUL".into()))?;
@@ -76,6 +97,7 @@ impl TinyLlmExecutor {
         Ok(Self {
             handle,
             allocated: HashSet::new(),
+            paged,
         })
     }
 
@@ -126,6 +148,30 @@ impl GPUExecutorTrait for TinyLlmExecutor {
         let is_prefill: Vec<u8> = batch.is_prefill.iter().map(|&b| b as u8).collect();
         let mut next_tokens = vec![0i32; n];
 
+        // 策略 1：把每序列的块表扁平化，num_blocks 给出每序列块数。
+        // 策略 2 fallback：两者都传 null。
+        let mut block_tables_flat: Vec<c_int> = Vec::new();
+        let mut num_blocks: Vec<c_int> = Vec::with_capacity(n);
+        if self.paged {
+            for bt in &batch.block_tables {
+                if bt.is_empty() {
+                    return Err(EngineError::BackendError("empty block table".into()));
+                }
+                num_blocks.push(bt.len() as c_int);
+                block_tables_flat.extend(bt.iter().map(|&b| b as c_int));
+            }
+        }
+        let bt_ptr = if self.paged {
+            block_tables_flat.as_ptr()
+        } else {
+            std::ptr::null()
+        };
+        let nb_ptr = if self.paged {
+            num_blocks.as_ptr()
+        } else {
+            std::ptr::null()
+        };
+
         let rc = unsafe {
             symbols::tinyllm_step(
                 self.handle,
@@ -133,8 +179,8 @@ impl GPUExecutorTrait for TinyLlmExecutor {
                 input_tokens.as_ptr(),
                 positions.as_ptr(),
                 seq_lens.as_ptr(),
-                std::ptr::null(), // 策略 2：连续 KV，忽略 block_tables
-                std::ptr::null(), // 策略 2：连续 KV，忽略 num_blocks（D3 接入真实块表）
+                bt_ptr,
+                nb_ptr,
                 is_prefill.as_ptr(),
                 n as c_int,
                 next_tokens.as_mut_ptr(),
