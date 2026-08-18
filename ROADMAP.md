@@ -32,7 +32,7 @@
 
 - [x] T9：Chat Completions 应用真实 chat template（Qwen2 `<|im_start|>`，HF tokenizer）
 - [x] T10：引擎指标 /metrics + CB on/off benchmark
-- [ ] T11：tiny-llm 策略 1（分页 KV C ABI，跨仓库，不阻塞冻结）
+- [x] T11：tiny-llm 策略 1（分页 KV C ABI，跨仓库）——ABI v2 + 真实块表，默认策略 1；llama.cpp 逐 token 对齐 + 3 并发 e2e 通过（2026-08-18）
 - [x] T12：明确降级（选项 A）——保留 `BufferedDecoder`，文档明确 HF tokenizer
   流式为"请求结束时的一个完整文本 chunk"，"token-level streaming" 表述限定
   `SimpleTokenizer`（T8 已完成）

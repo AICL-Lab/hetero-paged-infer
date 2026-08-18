@@ -589,9 +589,12 @@ cargo bench --bench concurrency_benchmark -- --test   # smoke
 
 ---
 
-### T11：tiny-llm 策略 1：分页 KV C ABI 与适配器
+### T11：tiny-llm 策略 1：分页 KV C ABI 与适配器 ✅（2026-08-18，Batch D）
 
-> 本任务依赖 `tiny-llm` 仓库同步修改，属于跨仓库任务。若 tiny-llm 不可用，本任务不阻塞 paged-infer 冻结。
+> 已完成：ABI v2（9 int config + `num_blocks`）、`TinyLlmExecutor` 默认策略 1
+> （真实块表扁平化上传）、`PAGED_INFER_TINY_LLM_STRATEGY=2` 回退策略 2。
+> llama.cpp 逐 token 对齐与 3 并发 e2e（`qwen2_three_concurrent_paged_requests_match_llama_cpp`）
+> 通过；tiny-llm 侧实现见其仓库 Batch D 提交。
 
 **背景**
 当前策略 2 连续 KV，`block_tables` 传 NULL。要形成完整 PagedAttention 故事，需要策略 1。
@@ -713,6 +716,6 @@ cargo bench --bench engine_benchmark -- --test
 | T8 | [x] | 46c63e7 | doc/build/test 通过；grep Hetero 为空 |
 | T9 | [x] | 2455a41 | server 单测 + server_integration 通过 |
 | T10 | [x] | c527960 | server_integration metrics + bench smoke 通过 |
-| T11 | [x] | — | 跨仓库任务，未实施（不阻塞冻结） |
+| T11 | [x] | 9e8f6c7 | 分页 KV（策略 1）接入：ABI v2 + 真实块表；llama.cpp 逐 token 对齐、3 并发 e2e 与资源守恒通过 |
 | T12 | [x] | 61f3bd0 | 文档明确降级（选项 A），随 T8/T13 完成 |
 | T13 | [x] | (本 commit) | 最终验收全部通过，v0.2.0 |

@@ -7,9 +7,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
-**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎脚手架（CPU 参考执行器）**
+**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎（CPU 参考执行器 + tiny-llm 真实后端）**
 
-> ⚠️ **开发状态**：本项目已完成 v0.2.0 并进入低优先级维护状态。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）。生产级 CUDA kernel 为后续工作（见 tiny-llm）。
+> **开发状态**：控制面（分页 KV / continuous batching / 调度 / API）已冻结 v0.2.0；
+> 计算后端双路径：默认 CPU 参考执行器（确定性，供测试/CI），`tiny-llm` cargo feature
+> 下接入 [tiny-llm](https://github.com/AICL-Lab/tiny-llm) 真实 CUDA 后端，并已启用
+> **分页 KV（策略 1：block_tables 真实上传）**——3 并发 e2e 与 llama.cpp greedy
+> 逐 token 对齐、资源守恒成立。
 
 **[文档](#文档) | [更新日志](CHANGELOG.md)**
 
@@ -19,7 +23,7 @@
 
 ## 项目概述
 
-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端为 CPU 参考执行器（随机初始化小型 Transformer，确定性输出），生产级 CUDA kernel 为后续工作。
+Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端默认是 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）；`tiny-llm` feature 下接入真实 CUDA 后端并把每序列 `block_tables` 真实上传到 tiny-llm 的分页 KV 池（策略 1）。
 
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
@@ -30,6 +34,7 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎脚手架，以模块
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **自动化验证** | unit、integration、server integration 与 property tests | ✅ |
+| **tiny-llm 真实后端** | `tiny-llm` feature 下接入 CUDA 后端，分页 KV（策略 1）默认启用，`PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV | ✅ |
 
 在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-foundations/LEARNING_PATH.md`](https://github.com/AICL-Lab/cuda-foundations/blob/master/LEARNING_PATH.md)。
 
