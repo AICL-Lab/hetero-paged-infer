@@ -50,6 +50,7 @@ impl TinyLlmExecutor {
             vocab_size: 0,
             block_size: config.block_size as c_int,
             max_batch_size: (config.max_num_seqs as c_int).min(MAX_CONCURRENT_SEQS),
+            max_num_blocks: 0, // 本任务仍策略 2（连续 KV），D3 再接入真实块表
         };
         let path = CString::new(model_path)
             .map_err(|_| EngineError::BackendError("model path contains NUL".into()))?;
@@ -133,6 +134,7 @@ impl GPUExecutorTrait for TinyLlmExecutor {
                 positions.as_ptr(),
                 seq_lens.as_ptr(),
                 std::ptr::null(), // 策略 2：连续 KV，忽略 block_tables
+                std::ptr::null(), // 策略 2：连续 KV，忽略 num_blocks（D3 接入真实块表）
                 is_prefill.as_ptr(),
                 n as c_int,
                 next_tokens.as_mut_ptr(),

@@ -9,7 +9,7 @@
 //! 而 paged-infer 的引擎需要"每步执行一个 batch"（[`GPUExecutorTrait`]）。
 //! 因此 tiny-llm 侧必须导出步进式 C ABI，paged-infer 侧经本模块调用。
 //!
-//! # C ABI 契约（tiny-llm 侧待实现）
+//! # C ABI 契约（ABI v2，tiny-llm 侧已实现）
 //!
 //! ```c
 //! typedef struct TinyLlmHandle TinyLlmHandle;
@@ -21,9 +21,11 @@
 //!
 //! // 单步执行一个 batch（prefill/decode 混合），逐序列输出下一 token 与 logprobs。
 //! // 返回 0 成功，非 0 错误码。
+//! // num_blocks[i] = 第 i 个序列的 block_tables 长度；扁平化 block_tables 的
+//! // 总长为 sum(num_blocks)。策略 2 下二者忽略（传 nullptr）。
 //! int tinyllm_step(TinyLlmHandle* handle,
 //!                  const int* seq_ids, const int* input_tokens, const int* positions,
-//!                  const int* seq_lens, const int* block_tables,
+//!                  const int* seq_lens, const int* block_tables, const int* num_blocks,
 //!                  const unsigned char* is_prefill, int num_sequences,
 //!                  int* next_tokens, float* logprobs, int logprobs_k);
 //!
@@ -40,7 +42,7 @@
 //!   支持任意 id 的序列混批；
 //! - `input_tokens` / `positions` 是扁平化数组（`seq_lens` 描述每序列切分，
 //!   与 `seq_ids` 对齐）；
-//! - `block_tables` 是 `num_sequences × 每序列块数` 的扁平化物理块索引，
+//! - `block_tables` 是扁平化物理块索引；`num_blocks` 给出每序列块数，
 //!   对齐 paged-infer 的 [`ExecutionBatch::block_tables`]（策略 2 下忽略）；
 //! - `logprobs_k == 0` 表示不输出 logprobs；否则 `logprobs` 为
 //!   `num_sequences × logprobs_k` 的 `(token_id, logprob)` 交错数组。
@@ -49,8 +51,8 @@
 //!
 //! - **策略 1（推荐）**：tiny-llm 侧实现分页 KV，按 `block_tables` 间接访问，
 //!   与 paged-infer 的 BlockPool 完全对齐，形成完整 PagedAttention 故事。
-//! - **策略 2**：tiny-llm 保留连续 KV，`block_tables` 参数忽略；paged-infer
-//!   侧用一个"连续 KV"后端包装（块表全 0），代价是失去分页共享能力。
+//! - **策略 2**：tiny-llm 保留连续 KV，`block_tables` / `num_blocks` 忽略；
+//!   paged-infer 侧用一个"连续 KV"后端包装（块表全 0），代价是失去分页共享能力。
 //!
 //! # 接入前置条件（里程碑）
 //!
@@ -72,6 +74,9 @@ pub struct TinyLlmConfig {
     /// 分页块大小（paged-infer 侧，策略 1 时后端按此对齐）。
     pub block_size: i32,
     pub max_batch_size: i32,
+    /// 分页 KV 池的物理块总数；0 = 策略 2（连续 KV）。
+    /// 该字段使 `TinyLlmConfig` 变为 9 个 int 的 repr(C) 布局（ABI v2）。
+    pub max_num_blocks: i32,
 }
 
 /// 不透明句柄：tiny-llm 侧分配的模型实例。
@@ -106,6 +111,7 @@ pub mod symbols {
             positions: *const c_int,
             seq_lens: *const c_int,
             block_tables: *const c_int,
+            num_blocks: *const c_int,
             is_prefill: *const u8,
             num_sequences: c_int,
             next_tokens: *mut c_int,
@@ -132,10 +138,10 @@ mod tests {
     use std::mem::{align_of, size_of};
 
     /// C ABI 布局守卫：Rust 侧 `repr(C)` 布局不得漂移，否则与 tiny-llm 侧
-    /// 的 `TinyLlmConfig` 错位。字段全为 `i32`，期望 8 字段 × 4 字节。
+    /// 的 `TinyLlmConfig` 错位。字段全为 `i32`，期望 9 字段 × 4 字节（ABI v2）。
     #[test]
     fn tiny_llm_config_layout_is_stable() {
-        assert_eq!(size_of::<TinyLlmConfig>(), 8 * 4);
+        assert_eq!(size_of::<TinyLlmConfig>(), 9 * 4);
         assert_eq!(align_of::<TinyLlmConfig>(), 4);
     }
 
@@ -151,6 +157,7 @@ mod tests {
             vocab_size: 128,
             block_size: 16,
             max_batch_size: 8,
+            max_num_blocks: 0,
         };
         assert_eq!(config.vocab_size, 128);
         assert_eq!(config.block_size, 16);
