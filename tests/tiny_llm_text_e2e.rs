@@ -34,7 +34,7 @@ fn build_engine(model: &str, tok_path: &str) -> InferenceEngine {
     config.max_model_len = 256;
     config.max_total_tokens = 1024;
 
-    let executor = TinyLlmExecutor::new(model, config.clone()).expect("tinyllm_load failed");
+    let executor = TinyLlmExecutor::new(&model, config.clone()).expect("tinyllm_load failed");
     InferenceEngine::with_components(
         config.clone(),
         Box::new(tokenizer),
@@ -148,5 +148,130 @@ fn qwen2_chat_prompt_matches_llama_cpp() {
     assert_eq!(
         c.output_text,
         "Hello! I'm just a computer program, so I don't have feelings. How can I assist you today?"
+    );
+}
+
+/// D4：3 并发分页请求端到端。
+/// 请求 1（Hello）与 llama.cpp 参考逐 token 严格一致；请求 2（无 llama.cpp
+/// fixture，禁止伪造）与请求 3（短 prompt）只断言 success/非空/正常终止。
+/// 运行结束后资源守恒：active_sequences == 0、KV 利用率回到基线。
+#[test]
+fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
+    let Some(model) = model_path() else {
+        eprintln!("skip: set TINY_LLM_MODEL to a GGUF file to enable");
+        return;
+    };
+    let Some(tok_path) = tokenizer_path() else {
+        eprintln!("skip: set PINF_TOKENIZER_JSON to tokenizer.json to enable");
+        return;
+    };
+
+    let tokenizer =
+        HuggingFaceTokenizer::from_file(Path::new(&tok_path)).expect("load tokenizer.json");
+    assert_eq!(tokenizer.eos_token_id(), 151645, "EOS 应为真实模型值");
+
+    let mut config = EngineConfig::default();
+    config.max_num_blocks = 256;
+    config.block_size = 16;
+    config.max_model_len = 256;
+    config.max_num_seqs = 4;
+    config.max_batch_size = 4;
+
+    let executor = TinyLlmExecutor::new(&model, config.clone()).expect("tinyllm_load failed");
+    let mut engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(tokenizer),
+        Scheduler::new(config),
+        Box::new(executor),
+    )
+    .unwrap();
+
+    // 3 个并发请求
+    let prompt1 = "<|im_start|>user\nHello, how are you?<|im_end|>\n<|im_start|>assistant\n";
+    let prompt2 = "<|im_start|>user\nWhat is 2+2?<|im_end|>\n<|im_start|>assistant\n";
+    let prompt3 = "Hello";
+
+    let (id1, _) = engine
+        .submit_request(
+            prompt1,
+            GenerationParams {
+                max_tokens: 64,
+                ..GenerationParams::default()
+            },
+        )
+        .unwrap();
+    let (id2, _) = engine
+        .submit_request(
+            prompt2,
+            GenerationParams {
+                max_tokens: 64,
+                ..GenerationParams::default()
+            },
+        )
+        .unwrap();
+    let (id3, _) = engine
+        .submit_request(
+            prompt3,
+            GenerationParams {
+                max_tokens: 32,
+                ..GenerationParams::default()
+            },
+        )
+        .unwrap();
+
+    let completed = engine.run();
+    assert_eq!(completed.len(), 3, "3 个请求应全部完成");
+
+    let by_id: std::collections::HashMap<_, _> =
+        completed.iter().map(|c| (c.request_id, c)).collect();
+
+    for (label, id) in [("request1", id1), ("request2", id2), ("request3", id3)] {
+        let c = by_id
+            .get(&id)
+            .unwrap_or_else(|| panic!("{label} 缺完成记录"));
+        assert!(c.success, "{label} 失败: {:?}", c.error);
+        assert!(!c.output_text.is_empty(), "{label} 输出文本不应为空");
+        assert!(!c.output_tokens.is_empty(), "{label} 应生成至少 1 个 token");
+        assert!(
+            matches!(
+                c.finish_reason,
+                Some(paged_infer::types::FinishReason::Stop)
+                    | Some(paged_infer::types::FinishReason::Length)
+            ),
+            "{label} finish_reason 应为 Stop/Length，实际 {:?}",
+            c.finish_reason
+        );
+        eprintln!(
+            "{label}: id={id} tokens={:?} text={:?}",
+            c.output_tokens, c.output_text
+        );
+    }
+
+    // 请求 1：与 llama.cpp greedy 参考逐 token 严格一致
+    let c1 = by_id.get(&id1).expect("request1 完成记录");
+    let reference: &[u32] = &[
+        9707, 0, 358, 2776, 1101, 264, 6366, 2025, 11, 773, 358, 1513, 944, 614, 15650, 13, 2585,
+        646, 358, 7789, 498, 3351, 30, 151645,
+    ];
+    assert_eq!(
+        c1.output_tokens, reference,
+        "并发下请求 1 与 llama.cpp 生成序列不一致"
+    );
+    assert_eq!(
+        c1.output_text,
+        "Hello! I'm just a computer program, so I don't have feelings. How can I assist you today?"
+    );
+
+    // 资源守恒：无活跃序列、KV 利用率回到基线
+    let metrics = engine.get_metrics();
+    eprintln!(
+        "metrics: active_sequences={} memory_utilization={:.3}",
+        metrics.active_sequences, metrics.memory_utilization
+    );
+    assert_eq!(metrics.active_sequences, 0, "运行结束后不应有活跃序列");
+    assert!(
+        (metrics.memory_utilization - 0.0).abs() < 1e-6,
+        "KV 利用率应回到基线 0，实际 {}",
+        metrics.memory_utilization
     );
 }
