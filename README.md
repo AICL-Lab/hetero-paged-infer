@@ -4,7 +4,7 @@
 
 <div align="center">
 
-[![CI](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/AICL-Lab/paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/aicl-lab/paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/aicl-lab/paged-infer/actions/workflows/ci.yml)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
@@ -13,7 +13,7 @@
 
 > **开发状态**：控制面（分页 KV / continuous batching / 调度 / API）已冻结 v0.2.0；
 > 计算后端双路径：默认 CPU 参考执行器（确定性，供测试/CI），`tiny-llm` cargo feature
-> 下接入 [tiny-llm](https://github.com/AICL-Lab/tiny-llm) 真实 CUDA 后端，并已启用
+> 下接入 [tiny-llm](https://github.com/aicl-lab/tiny-llm) 真实 CUDA 后端，并已启用
 > **分页 KV（策略 1：block_tables 真实上传）**——3 并发 e2e 与 llama.cpp greedy
 > 逐 token 对齐、资源守恒成立。
 
@@ -38,41 +38,40 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，以模块化、可
 | **自动化验证** | unit、integration、server integration 与 property tests | ✅ |
 | **tiny-llm 真实后端** | `tiny-llm` feature 下接入 CUDA 后端，分页 KV（策略 1）默认启用，`PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV | ✅ |
 
-在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-foundations/LEARNING_PATH.md`](https://github.com/AICL-Lab/cuda-foundations/blob/master/LEARNING_PATH.md)。
+在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-foundations/LEARNING_PATH.md`](https://github.com/aicl-lab/cuda-foundations/blob/master/LEARNING_PATH.md)。
 
 ## 项目边界（IN / OUT）
 
 **IN（本仓库负责）**：
-- Paged KV（分页块内存管理）
+- Paged KV 控制面（BlockPool / 页表 / 资源不变量）
 - continuous batching（动态 prefill/decode 调度）
 - 准入控制 / 内存水位线 / 队头阻塞处理
 - OpenAI 兼容 API（/v1/completions、/v1/chat/completions、SSE）
+- HTTP 边界的 tokenizer **适配器**（默认 `SimpleTokenizer`；`--tokenizer` 走 HF `tokenizer.json`）
 - 属性测试与资源不变量验证
 
 **OUT（明确不做，见对应仓库）**：
-- 计算 kernel（GEMM/attention/RoPE/W8A16）→ [tiny-llm](https://github.com/AICL-Lab/tiny-llm)
-- 模型加载与 tokenizer → [tiny-llm](https://github.com/AICL-Lab/tiny-llm)
-- FlashAttention 深挖 → [cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)
+- 计算 kernel（GEMM/attention/RoPE/W8A16）→ [tiny-llm](https://github.com/aicl-lab/tiny-llm)
+- 模型加载、词表与 BPE 算法权威 → [tiny-llm](https://github.com/aicl-lab/tiny-llm)（本仓不重新实现 GGUF tokenizer；HF 路径必须与 tiny-llm fixture 逐 id 对齐）
+- FlashAttention 深挖 → [cuflash-attn](https://github.com/aicl-lab/cuflash-attn)
 
 ## 系统架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        InferenceEngine (CPU)                          │
+│                     InferenceEngine（控制面）                          │
 ├──────────────────────────────────────────────────────────────────────┤
-│  ┌────────────┐  ┌────────────┐  ┌────────────────────────────────┐  │
-│  │  Tokenizer │  │ Scheduler  │  │      KV Cache Manager          │  │
-│  │  分词器    │  │  调度器    │  │   BlockPool + PageTable        │  │
-│  └─────┬──────┘  └─────┬──────┘  └───────────────┬────────────────┘  │
-│        │               │                         │                    │
-├────────┼───────────────┼─────────────────────────────────────────────┤
-│        │        ┌──────▼──────┐                                       │
-│        │        │ CPUExecutor │  (参考)                        │
-│        │        │ GPU 执行器  │                                       │
-│        │        └──────┬──────┘                                       │
-│        │        ┌──────▼──────┐                                       │
-│        └───────►│  KV Cache   │  (GPU Memory)                         │
-│                 └─────────────┘                                       │
+│  Tokenizer 适配器     Scheduler              KV Cache Manager          │
+│  Simple / HF JSON     状态机 + 准入          BlockPool + PageTable    │
+│         │                  │                         │                │
+│         └────────┬─────────┴─────────────────────────┘                │
+│                  ▼                                                    │
+│         GPUExecutorTrait                                              │
+│           ├─ CPUExecutor          默认：确定性参考，CI / 单测            │
+│           └─ TinyLlmExecutor      feature tiny-llm：策略 1 分页 KV     │
+│                  │                （block_tables 经 C ABI 上传）        │
+│                  ▼                                                    │
+│         tiny-llm 数据面（GGUF / W8A16 / 分页 KV 池）                   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -154,7 +153,7 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，以模块化、可
 
 ```bash
 # 克隆仓库
-git clone https://github.com/AICL-Lab/paged-infer.git
+git clone https://github.com/aicl-lab/paged-infer.git
 cd paged-infer
 
 # 以 release 模式构建
@@ -379,8 +378,8 @@ cargo test && cargo fmt --check && cargo clippy
 - **无生产 CUDA kernel**（真实 kernel 在 tiny-llm 仓库）
 - 性能数字均为 Mock/CPU 参考后端的调度开销，不声称 GPU 吞吐
 
-后续重心转向 [tiny-llm](https://github.com/AICL-Lab/tiny-llm) 与
-[cuflash-attn](https://github.com/AICL-Lab/cuflash-attn)。
+后续重心转向 [tiny-llm](https://github.com/aicl-lab/tiny-llm) 与
+[cuflash-attn](https://github.com/aicl-lab/cuflash-attn)。
 
 ## 许可证
 

@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（当前无未发布变更。全部 P0/P1 已完成项见 [0.2.0]。）
+### Changed
+- README IN/OUT：tokenizer 改为 HTTP 边界适配器；词表/BPE 权威仍在 tiny-llm
+- 架构图改为控制面 + CPU 参考 / tiny-llm 策略 1 双后端
+- 面向用户的 GitHub 链接统一为 `github.com/aicl-lab/...`
 
 ## [0.2.0] - 2026-08-17
 
@@ -145,5 +148,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
-[0.2.0]: https://github.com/AICL-Lab/paged-infer/releases/tag/v0.2.0
-[0.1.0]: https://github.com/AICL-Lab/paged-infer/releases/tag/v0.1.0
+[0.2.0]: https://github.com/aicl-lab/paged-infer/releases/tag/v0.2.0
+[0.1.0]: https://github.com/aicl-lab/paged-infer/releases/tag/v0.1.0

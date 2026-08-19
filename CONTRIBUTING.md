@@ -5,7 +5,7 @@
 ## 开发环境
 
 ```bash
-git clone https://github.com/AICL-Lab/paged-infer.git
+git clone https://github.com/aicl-lab/paged-infer.git
 cd paged-infer
 cargo build
 ```
