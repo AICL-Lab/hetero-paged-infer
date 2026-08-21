@@ -8,7 +8,8 @@
 //! - **内存压力感知** - 内存超阈值时拒绝新 prefill
 //! - **连续批处理** - 动态组合 prefill 和 decode 请求
 //! - **优先级调度（PINF-112）** - `GenerationParams::priority` 越大越先调度
-//!   （prefill 启动与在途 prefill 组合均生效）；同级保持 FCFS，默认优先级 0
+//!   （prefill 启动、在途 prefill 组合与 decode 内部排序均生效）；
+//!   同级保持 FCFS，默认优先级 0
 //!
 //! # 状态机
 //!
@@ -623,8 +624,19 @@ impl Scheduler {
         }
     }
 
+    /// decode 序列按 priority 降序（同级保持 seq_id 顺序 = FCFS），
+    /// 与 prefill 的优先级语义一致，避免高优先级在途请求的尾延迟被同级排队掩盖。
     fn decode_seq_ids(&self) -> Vec<SeqId> {
-        self.decode_sequences.keys().copied().collect()
+        let mut ids: Vec<SeqId> = self.decode_sequences.keys().copied().collect();
+        ids.sort_by_key(|&sid| {
+            let prio = self
+                .decode_sequences
+                .get(&sid)
+                .map(|sq| sq.request.params.priority)
+                .unwrap_or(0);
+            (std::cmp::Reverse(prio), sid)
+        });
+        ids
     }
 
     fn prefill_seq_ids(&self) -> Vec<SeqId> {

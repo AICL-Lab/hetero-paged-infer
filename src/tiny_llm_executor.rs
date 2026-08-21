@@ -25,7 +25,7 @@ use crate::gpu_executor::{ExecutorCapabilities, GPUExecutorTrait};
 use crate::tiny_llm_ffi::symbols;
 use crate::tiny_llm_ffi::{TinyLlmConfig, TinyLlmHandle};
 use crate::types::{ExecutionBatch, ExecutionOutput, SeqId, TokenId};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::c_int;
 
@@ -42,7 +42,8 @@ const STRATEGY2_ENV: &str = "PAGED_INFER_TINY_LLM_STRATEGY";
 /// tiny-llm 真实执行后端。
 pub struct TinyLlmExecutor {
     handle: *mut TinyLlmHandle,
-    allocated: HashSet<c_int>,
+    /// seq_id -> 已分配的 KV token 容量（用于 decode 越界前置检查）。
+    allocated: HashMap<c_int, i32>,
     /// 是否走策略 1（分页 KV）。false = 策略 2 fallback（块表传 null）。
     paged: bool,
 }
@@ -66,7 +67,9 @@ impl TinyLlmExecutor {
             head_dim: 0,
             vocab_size: 0,
             block_size: config.block_size as c_int,
-            max_batch_size: (config.max_num_seqs as c_int).min(MAX_CONCURRENT_SEQS),
+            // 后端 batch 上限应来自调度器侧的单次调度上限（config.max_batch_size），
+            // 而非全局并发上限 max_num_seqs；再 clamp 到显存可承受范围。
+            max_batch_size: (config.max_batch_size as c_int).min(MAX_CONCURRENT_SEQS),
             max_num_blocks: if paged {
                 config.max_num_blocks as c_int
             } else {
@@ -96,13 +99,13 @@ impl TinyLlmExecutor {
         }
         Ok(Self {
             handle,
-            allocated: HashSet::new(),
+            allocated: HashMap::new(),
             paged,
         })
     }
 
     fn ensure_allocated(&mut self, seq_id: c_int, context_len: usize) -> Result<(), EngineError> {
-        if self.allocated.contains(&seq_id) {
+        if self.allocated.contains_key(&seq_id) {
             return Ok(());
         }
         let alloc_tokens = (context_len as i32 + DECODE_RESERVE).max(64);
@@ -112,7 +115,7 @@ impl TinyLlmExecutor {
                 "tinyllm_allocate_sequence({seq_id}) failed"
             )));
         }
-        self.allocated.insert(seq_id);
+        self.allocated.insert(seq_id, alloc_tokens);
         Ok(())
     }
 }
@@ -133,12 +136,31 @@ impl GPUExecutorTrait for TinyLlmExecutor {
         }
         let n = batch.num_sequences();
 
+        // batch 超限在调度前就明确报错，避免 tinyllm_step 以 rc!=0 返回时
+        // 无法与后端错误/OOM 区分（语义与 CpuReferenceExecutor 一致）。
+        if n > self.config.max_batch_size as usize {
+            return Err(EngineError::KernelLaunchFailed(format!(
+                "Batch size {} exceeds max {}",
+                n, self.config.max_batch_size
+            )));
+        }
+
         // 首次出现的序列分配 KV（用 context_len 预估）
         let mut seq_ids: Vec<c_int> = Vec::with_capacity(n);
         for (i, &sid) in batch.seq_ids.iter().enumerate() {
             let sid_i = sid as c_int;
             let ctx = batch.context_lens.get(i).copied().unwrap_or(0) as usize;
             self.ensure_allocated(sid_i, ctx)?;
+            // 前置检查：decode 将超出 tiny-llm 预留 KV 容量（context + DECODE_RESERVE）
+            // 时给出明确错误，而不是等 tinyllm_step 以 rc!=0 返回后无从归因。
+            if let Some(&capacity) = self.allocated.get(&sid_i) {
+                if ctx as i32 + 1 > capacity {
+                    return Err(EngineError::BackendError(format!(
+                        "sequence {sid} 生成将超出 tiny-llm 预留 KV 容量 \
+                         (context+{DECODE_RESERVE}，容量 {capacity})，请调小 max_tokens"
+                    )));
+                }
+            }
             seq_ids.push(sid_i);
         }
 
@@ -208,7 +230,7 @@ impl GPUExecutorTrait for TinyLlmExecutor {
     fn sequences_finished(&mut self, seq_ids: &[SeqId]) {
         for &sid in seq_ids {
             let sid_i = sid as c_int;
-            if self.allocated.remove(&sid_i) {
+            if self.allocated.remove(&sid_i).is_some() {
                 let rc = unsafe { symbols::tinyllm_free_sequence(self.handle, sid_i) };
                 if rc != 0 {
                     log::warn!("tinyllm_free_sequence({sid}) failed rc={rc}");

@@ -90,6 +90,10 @@ pub enum ConfigError {
     /// 无效的模型名称
     #[error("无效的模型名称: 不能为空")]
     InvalidModelName,
+
+    /// max_batch_size 大于 max_num_seqs
+    #[error("max_batch_size ({0}) 大于 max_num_seqs ({1})，配置不一致")]
+    BatchSizeExceedNumSeqs(u32, u32),
 }
 
 /// 引擎运行时错误（扁平化，覆盖内存 / 验证 / 执行 / 调度 / 分词）

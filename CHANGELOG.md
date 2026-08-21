@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- 分页 KV 策略 1 默认启用（**T11 完成**，`9e8f6c7`）：tiny-llm 后端经 C ABI 真实
+  上传 `block_tables`/`num_blocks`（ABI v2），默认启用；`PAGED_INFER_TINY_LLM_STRATEGY=2`
+  可回退连续 KV。同步更新 README / ROADMAP / DEVELOPMENT_PLAN（0.2.0 发布时的
+  CHANGELOG 仍写 T11 未实施，此处订正）。
+
 ### Changed
 - README IN/OUT：tokenizer 改为 HTTP 边界适配器；词表/BPE 权威仍在 tiny-llm
 - 架构图改为控制面 + CPU 参考 / tiny-llm 策略 1 双后端
@@ -126,8 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **T12（选项 A）** 明确流式降级：保留 `BufferedDecoder`，文档明确 HF tokenizer
   流式为"请求结束时的一个完整文本 chunk"，"token-level streaming" 表述限定
   `SimpleTokenizer`（随 T8 完成）。
-- **T11** 未实施：需要 tiny-llm 仓库同步改造（分页 KV C ABI），跨仓库任务，
-  不阻塞 paged-infer 冻结。
+- **T11** 在 0.2.0 发布时未实施（需 tiny-llm 仓库同步改造分页 KV C ABI）；
+  已于 2026-08-18 完成并默认启用（策略 1），详见 [Unreleased]。
 
 ## [0.1.0] - 2026-04-16
 

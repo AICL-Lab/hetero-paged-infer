@@ -97,12 +97,10 @@ impl BlockPool {
         }
 
         let block = &mut self.blocks[block_idx as usize];
-        debug_assert!(
-            block.ref_count > 0,
-            "block {block_idx} freed more times than it was allocated"
-        );
+        // double-free 幂等（ref_count 已为 0 时直接返回）在 debug/release 下行为一致。
+        // 该幂等是显式设计：调度侧可能因取消竞态对同一块重复调用 free。
         if block.ref_count == 0 {
-            return Ok(()); // Already free, idempotent in release builds
+            return Ok(()); // Already free, idempotent
         }
 
         block.ref_count -= 1;

@@ -193,6 +193,18 @@ impl EngineConfig {
         if self.serving.model_name.trim().is_empty() {
             return Err(ConfigError::InvalidModelName);
         }
+
+        // 关系校验（B17）：拦截明显不一致的组合配置。
+        // 单批次大小不可能超过系统并发上限，这种组合直接判定为配置错误。
+        // 注意：不校验 max_total_tokens / max_model_len 与 KV 容量的关系——
+        // 池容量小于配置上限是「资源紧张」的正常场景（调度器会拒绝/排队），
+        // 并非配置错误，测试与内存压力路径均依赖该行为。
+        if self.max_batch_size > self.max_num_seqs {
+            return Err(ConfigError::BatchSizeExceedNumSeqs(
+                self.max_batch_size,
+                self.max_num_seqs,
+            ));
+        }
         Ok(())
     }
 
@@ -448,6 +460,7 @@ mod property_tests {
                 && max_num_seqs > 0
                 && max_model_len > 0
                 && max_total_tokens > 0
+                && max_batch_size <= max_num_seqs
                 && memory_threshold > 0.0
                 && memory_threshold <= 1.0;
 

@@ -102,7 +102,9 @@ impl SharedEngineMetrics {
 }
 
 /// RAII guard：保证 inflight gauge 在任何退出路径（含提前返回）都会递减。
-#[derive(Clone)]
+/// 注意：不能派生 `Clone`——clone 只复制 Arc 而不 `fetch_add`，Drop 却必
+/// `fetch_sub`，会造成计数下溢（`AtomicU64` 绕回）。guard 应始终通过
+/// `InflightGuard::new` 构造并保持单一实例。
 struct InflightGuard {
     metrics: Arc<ServerMetrics>,
 }
@@ -406,6 +408,18 @@ fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
     if p.suffix.as_ref().is_some_and(|s| !s.is_empty()) {
         return unsupported("suffix");
     }
+    // NaN 会绕过 `!= 0.0` 的「未启用」判断而被误当成 unsupported，这里先显式拒绝，
+    // 给出明确的非法参数错误而非误导性的「不支持」。
+    if p.frequency_penalty.is_some_and(|v| !v.is_finite()) {
+        return Err(ApiError::BadRequest(
+            "frequency_penalty must be a finite number".to_string(),
+        ));
+    }
+    if p.presence_penalty.is_some_and(|v| !v.is_finite()) {
+        return Err(ApiError::BadRequest(
+            "presence_penalty must be a finite number".to_string(),
+        ));
+    }
     if p.frequency_penalty.is_some_and(|v| v != 0.0) {
         return unsupported("frequency_penalty");
     }
@@ -447,6 +461,8 @@ struct CompletionRequest {
     stop: Option<StopSequence>,
     n: Option<u32>,
     logprobs: Option<LogprobsParam>,
+    /// 调度优先级（PINF-112）：数值越大越先调度，缺省 0。
+    priority: Option<u8>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -462,6 +478,8 @@ struct ChatCompletionRequest {
     stop: Option<StopSequence>,
     n: Option<u32>,
     logprobs: Option<LogprobsParam>,
+    /// 调度优先级（PINF-112）：数值越大越先调度，缺省 0。
+    priority: Option<u8>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
 }
@@ -519,7 +537,9 @@ struct LogprobsOutput {
     token_logprobs: Vec<f32>,
     /// 每位置前 k 个候选（token 文本 → logprob）
     top_logprobs: Vec<serde_json::Map<String, serde_json::Value>>,
-    /// 每 token 在输出文本中的起始字符偏移
+    /// 每 token 在输出文本中的起始字节偏移
+    /// （字节口径与引擎侧 [`crate::engine::tokens_before_char`] 的 stop 截断一致，
+    /// 多字节 UTF-8（中文/emoji）下按字节累计才与 OpenAI 规范对齐）
     text_offset: Vec<usize>,
 }
 
@@ -540,7 +560,8 @@ fn logprobs_output(
 
     for lp in logprobs {
         let token_text = tokenizer.try_decode(&[lp.token]).unwrap_or_default();
-        let token_len = token_text.chars().count();
+        // 字节长度（str::len），与引擎 stop 截断的字节偏移口径一致。
+        let token_len = token_text.len();
         let token_label = if token_text.is_empty() {
             format!("<token_id={}>", lp.token)
         } else {
@@ -1317,6 +1338,7 @@ fn prepare_completion_request(
             request.top_p,
             stop_sequences(request.stop),
             logprobs_param(request.logprobs)?,
+            request.priority,
         )?,
         stream: request.stream.unwrap_or(false),
         n: candidate_count(request.n)?,
@@ -1356,6 +1378,7 @@ fn prepare_chat_request(
             request.top_p,
             stop_sequences(request.stop),
             logprobs_param(request.logprobs)?,
+            request.priority,
         )?,
         stream: request.stream.unwrap_or(false),
         n: candidate_count(request.n)?,
@@ -1426,6 +1449,7 @@ fn generation_params(
     top_p: Option<f32>,
     stop: Vec<String>,
     logprobs: Option<usize>,
+    priority: Option<u8>,
 ) -> Result<GenerationParams, ApiError> {
     // 缺省值即 greedy（后端当前唯一支持的生成模式）；显式传入其他
     // 采样参数的请求会在 submit 阶段以 400 拒绝，而非静默降级。
@@ -1435,7 +1459,8 @@ fn generation_params(
         top_p: top_p.unwrap_or(1.0),
         stop,
         logprobs,
-        priority: 0,
+        // priority 直接透传（PINF-112），缺省 0。
+        priority: priority.unwrap_or(0),
     };
     params
         .validate()
@@ -1492,8 +1517,14 @@ async fn generate_many(
     while let Some(result) = set.join_next().await {
         match result {
             Ok(Ok(g)) => generated.push(g),
-            Ok(Err(err)) => return Err(err),
+            Ok(Err(err)) => {
+                // 任一候选失败即整体失败：显式取消剩余候选，避免它们继续占用
+                // 调度器序列槽位与 KV，直到自然完成。
+                set.abort_all();
+                return Err(err);
+            }
             Err(join_err) => {
+                set.abort_all();
                 return Err(ApiError::internal(format!(
                     "candidate task failed: {join_err}"
                 )));

@@ -599,8 +599,10 @@ impl GPUExecutorTrait for SlowExecutor {
 async fn test_completions_returns_429_when_overloaded() {
     // max_num_seqs=1 + 慢执行器：第一个请求独占序列槽位期间，
     // 第二个请求必须收到 429（而非 500），并带 Retry-After。
+    // max_batch_size 同步收紧为 1（单批上限不得超过并发上限，满足 validate 关系校验）。
     let config = EngineConfig {
         max_num_seqs: 1,
+        max_batch_size: 1,
         serving: ServingConfig {
             model_name: "test-model".to_string(),
             ..Default::default()

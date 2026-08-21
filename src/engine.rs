@@ -294,11 +294,12 @@ impl InferenceEngine {
 
         // 创建请求（使用实例级 ID）
         let request_id = self.next_request_id;
-        self.next_request_id += 1;
         let request = Request::new(request_id, input_tokens, params);
 
-        // 添加到调度器
+        // 添加到调度器；成功后才推进 request_id，避免 add_request 失败
+        // （如 MemoryPressure）时产生 id 空洞、metrics 与外层 request_id 不连续。
         self.scheduler.add_request(request)?;
+        self.next_request_id += 1;
         self.total_requests += 1;
         self.decoders
             .insert(request_id, self.tokenizer.create_decoder());
@@ -552,13 +553,34 @@ impl InferenceEngine {
         // 非流式调用方不需要增量片段，丢弃 tail chunks（完整文本在 output_text）。
         let (mut all_completed, _) = self.collect_completed_requests();
 
+        // 防死循环（B12）：pending 因 KV 预算/块不足而永远无法启动时，
+        // has_pending_work() 恒真但每步空转（无序列执行、无完成排出、无在途序列）。
+        // 连续 STALL_LIMIT 步无任何进展即判定卡死：记录错误并退出，而非无限自旋。
+        const STALL_LIMIT: u32 = 100;
+        let mut idle_steps: u32 = 0;
+
         while self.scheduler.has_pending_work() {
+            let completed_before = all_completed.len();
             match self.step() {
                 Ok(completed) => {
                     all_completed.extend(completed);
                 }
                 Err(e) => {
                     log::error!("推理步骤失败: {e}");
+                }
+            }
+            let progressed = all_completed.len() != completed_before
+                || self.scheduler.num_active_sequences() > 0;
+            if progressed {
+                idle_steps = 0;
+            } else {
+                idle_steps += 1;
+                if idle_steps >= STALL_LIMIT {
+                    log::error!(
+                        "引擎连续 {STALL_LIMIT} 步无进展：pending 请求因 KV 预算/块不足 \
+                         永远无法启动，提前结束 run()（避免死循环）"
+                    );
+                    break;
                 }
             }
         }

@@ -16,7 +16,7 @@
 use crate::config::EngineConfig;
 use crate::error::EngineError;
 use crate::gpu_executor::GPUExecutorTrait;
-use crate::types::{BlockIdx, ExecutionBatch, ExecutionOutput, TokenId, TokenLogprobs};
+use crate::types::{BlockIdx, ExecutionBatch, ExecutionOutput, SeqId, TokenId, TokenLogprobs};
 use std::collections::HashMap;
 
 // --- 模型超参数（固定小型配置） ---
@@ -162,6 +162,8 @@ pub struct CpuReferenceExecutor {
     vocab_size: u32,
     model: CpuModel,
     kv_cache: HashMap<(usize, BlockIdx), KvBlock>,
+    /// seq_id -> 最近一次 execute 的 block_table，用于序列结束时回收其 KV 块。
+    seq_block_tables: HashMap<SeqId, Vec<BlockIdx>>,
 }
 
 impl std::fmt::Debug for CpuReferenceExecutor {
@@ -183,6 +185,7 @@ impl CpuReferenceExecutor {
             vocab_size,
             model,
             kv_cache: HashMap::new(),
+            seq_block_tables: HashMap::new(),
         }
     }
 
@@ -220,7 +223,14 @@ impl CpuReferenceExecutor {
                 apply_rope(&mut k, pos, NUM_KV_HEADS, HEAD_DIM);
 
                 // 写入 K/V 到 paged cache (layer-aware key)
-                let block_idx = block_table[pos / bs];
+                let block_idx = *block_table.get(pos / bs).ok_or_else(|| {
+                    EngineError::BackendError(format!(
+                        "block_table too short: need index {} for pos {}, len {}",
+                        pos / bs,
+                        pos,
+                        block_table.len()
+                    ))
+                })?;
                 let offset = pos % bs;
                 let start = offset * KV_DIM;
                 let block = self
@@ -311,7 +321,14 @@ impl CpuReferenceExecutor {
             // 计算注意力分数（causal: 只看 0..=pos）
             let mut scores = Vec::with_capacity(pos + 1);
             for i in 0..=pos {
-                let block_idx = block_table[i / bs];
+                let block_idx = *block_table.get(i / bs).ok_or_else(|| {
+                    EngineError::BackendError(format!(
+                        "block_table too short: need index {} for pos {}, len {}",
+                        i / bs,
+                        i,
+                        block_table.len()
+                    ))
+                })?;
                 let offset = i % bs;
                 let k_start = offset * KV_DIM + kv_h * HEAD_DIM;
                 let block = self.kv_cache.get(&(layer_idx, block_idx)).ok_or_else(|| {
@@ -335,8 +352,15 @@ impl CpuReferenceExecutor {
             }
 
             // 加权求和 V
-            for i in 0..=pos {
-                let block_idx = block_table[i / bs];
+            for (i, &score) in scores.iter().enumerate() {
+                let block_idx = *block_table.get(i / bs).ok_or_else(|| {
+                    EngineError::BackendError(format!(
+                        "block_table too short: need index {} for pos {}, len {}",
+                        i / bs,
+                        i,
+                        block_table.len()
+                    ))
+                })?;
                 let offset = i % bs;
                 let v_start = offset * KV_DIM + kv_h * HEAD_DIM;
                 let block = self.kv_cache.get(&(layer_idx, block_idx)).ok_or_else(|| {
@@ -346,7 +370,7 @@ impl CpuReferenceExecutor {
                 })?;
                 let v_h = &block.v[v_start..v_start + HEAD_DIM];
                 for d in 0..HEAD_DIM {
-                    output[h * HEAD_DIM + d] += scores[i] * v_h[d];
+                    output[h * HEAD_DIM + d] += score * v_h[d];
                 }
             }
         }
@@ -394,6 +418,10 @@ impl GPUExecutorTrait for CpuReferenceExecutor {
             let block_table = &batch.block_tables[seq_idx];
             token_offset += seq_len;
 
+            // 记录该序列的块表，供序列结束时回收其 KV 块。
+            self.seq_block_tables
+                .insert(batch.seq_ids[seq_idx], block_table.to_vec());
+
             let (next_token, token_logprobs) = self.forward_seq(tokens, positions, block_table)?;
             next_tokens.push(next_token);
             logprobs.push(Some(token_logprobs));
@@ -404,6 +432,20 @@ impl GPUExecutorTrait for CpuReferenceExecutor {
             seq_ids: batch.seq_ids.clone(),
             logprobs,
         })
+    }
+
+    fn sequences_finished(&mut self, seq_ids: &[SeqId]) {
+        for &sid in seq_ids {
+            // 回收该序列占用的全部 KV 块（物理块在调度器侧是排他的：
+            // 同一时刻只属于一个序列，故删除是安全的）。
+            if let Some(block_table) = self.seq_block_tables.remove(&sid) {
+                for block_idx in block_table {
+                    for layer_idx in 0..NUM_LAYERS {
+                        self.kv_cache.remove(&(layer_idx, block_idx));
+                    }
+                }
+            }
+        }
     }
 }
 
