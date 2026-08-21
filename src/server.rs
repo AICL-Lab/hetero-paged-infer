@@ -1605,4 +1605,44 @@ mod tests {
             "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant"
         );
     }
+
+    /// B4 回归：HTTP 请求中的 `priority` 字段必须被解析并透传到
+    /// `GenerationParams`，而不是被静默丢弃。
+    #[test]
+    fn test_completion_request_parses_priority_field() {
+        let body: CompletionRequest =
+            serde_json::from_str(r#"{"prompt":"hi","priority":7}"#).unwrap();
+        assert_eq!(body.priority, Some(7), "priority 字段应被解析");
+
+        // 缺省时 priority 为 None（后续在 generation_params 中落为 0）
+        let no_prio: CompletionRequest = serde_json::from_str(r#"{"prompt":"hi"}"#).unwrap();
+        assert_eq!(no_prio.priority, None);
+    }
+
+    #[test]
+    fn test_chat_request_parses_priority_field() {
+        let body: ChatCompletionRequest =
+            serde_json::from_str(r#"{"messages":[{"role":"user","content":"hi"}],"priority":3}"#)
+                .unwrap();
+        assert_eq!(body.priority, Some(3));
+    }
+
+    #[test]
+    fn test_generation_params_passes_priority() {
+        // greedy 参数必然合法，直接解构（ApiError 不派生 Debug/Display）
+        let params =
+            match generation_params(Some(8), Some(0.0), Some(1.0), Vec::new(), None, Some(7)) {
+                Ok(p) => p,
+                Err(_) => panic!("greedy 参数应通过校验"),
+            };
+        assert_eq!(params.priority, 7, "priority 应原样透传");
+
+        // 缺省落为 0（调度器的默认优先级）
+        let params = match generation_params(Some(8), Some(0.0), Some(1.0), Vec::new(), None, None)
+        {
+            Ok(p) => p,
+            Err(_) => panic!("greedy 参数应通过校验"),
+        };
+        assert_eq!(params.priority, 0, "缺省 priority 应为 0");
+    }
 }

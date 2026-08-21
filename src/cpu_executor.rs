@@ -569,6 +569,70 @@ mod tests {
         assert_eq!(output.next_tokens.len(), 2);
         assert!(output.next_tokens.iter().all(|&t| t < 128));
     }
+
+    /// B2 回归：序列结束后 `sequences_finished` 必须回收其占用的全部 KV 块
+    /// （跨所有层），且清除 block table 记录，避免 KV 泄漏。
+    #[test]
+    fn test_sequences_finished_reclaims_kv_blocks() {
+        let config = create_test_config();
+        let mut executor = CpuReferenceExecutor::new(config, 128);
+
+        // 用 20 个 token 触发跨块访问（block_size=16 → 2 个物理块）
+        let tokens: Vec<TokenId> = (0..20).collect();
+        let batch = make_batch(&tokens, vec![0, 1]);
+        executor.execute(&batch).unwrap();
+
+        // prefill 后：KV 缓存非空，且该序列的块表已记录
+        assert!(!executor.kv_cache.is_empty(), "prefill 后应有 KV 缓存");
+        assert_eq!(
+            executor.seq_block_tables.get(&1),
+            Some(&vec![0, 1]),
+            "应记录序列 1 的块表"
+        );
+
+        // 序列结束：回收全部 KV 块
+        executor.sequences_finished(&[1]);
+
+        assert!(
+            executor.kv_cache.is_empty(),
+            "sequences_finished 后 KV 缓存应清空（当前 {} 块）",
+            executor.kv_cache.len()
+        );
+        assert!(
+            !executor.seq_block_tables.contains_key(&1),
+            "块表记录也应清除"
+        );
+    }
+
+    /// B2 回归：多波次执行下，每波结束后 KV 必须归还，
+    /// 否则小 KV 池会被泄漏的块耗尽。
+    #[test]
+    fn test_kv_cache_bounded_across_waves() {
+        let config = create_test_config();
+        let mut executor = CpuReferenceExecutor::new(config, 128);
+
+        for wave in 0..5u64 {
+            // 每波用不同 seq_id，模拟新请求复用同一 executor
+            let batch = ExecutionBatch {
+                input_tokens: vec![1, 2, 3, 4],
+                positions: vec![0, 1, 2, 3],
+                seq_lens: vec![4],
+                block_tables: vec![vec![wave as BlockIdx]],
+                is_prefill: vec![true],
+                seq_ids: vec![wave],
+                context_lens: vec![4],
+            };
+            executor.execute(&batch).unwrap();
+            assert!(!executor.kv_cache.is_empty(), "第 {wave} 波应有 KV 缓存");
+
+            executor.sequences_finished(&[wave]);
+            assert!(
+                executor.kv_cache.is_empty(),
+                "第 {wave} 波结束后 KV 应全部归还（剩余 {} 块）",
+                executor.kv_cache.len()
+            );
+        }
+    }
 }
 
 #[cfg(test)]

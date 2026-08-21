@@ -107,3 +107,57 @@ fn tiny_llm_backend_end_to_end() {
     assert_eq!(m2.completed_requests, 6);
     assert_eq!(m2.failed_requests, 0);
 }
+
+/// B15 回归：decode 越过 tiny-llm 预留 KV 容量（context + DECODE_RESERVE）时，
+/// 请求必须携带清晰的越界错误失败（而非后端 rc 神秘报错或挂起）。
+///
+/// 触发方式：短 prompt + 大 max_tokens，使总长度越过 submit 的
+/// TotalLengthTooLong 校验上限，但解码步数超过首次分配的 KV 容量。
+#[test]
+fn tiny_llm_backend_decode_overrun_reports_clear_error() {
+    let Some(path) = model_path() else {
+        eprintln!("skip: set TINY_LLM_MODEL to a GGUF file to enable");
+        return;
+    };
+
+    let mut config = create_test_config();
+    // max_model_len 需容纳 prompt + 超过 DECODE_RESERVE(512) 的 max_tokens，
+    // 才能让 decode 实际越过预留容量；KV 池与总额同步放大。
+    config.max_num_blocks = 256;
+    config.max_model_len = 1024;
+    config.max_total_tokens = 1024;
+
+    let executor = TinyLlmExecutor::new(&path, config.clone()).expect("tinyllm_load failed");
+    let mut engine = InferenceEngine::with_components(
+        config.clone(),
+        Box::new(SimpleTokenizer::new()),
+        Scheduler::new(config),
+        Box::new(executor),
+    )
+    .unwrap();
+
+    // 短 prompt + 远超预留容量的 max_tokens（1 + 900 <= max_model_len）
+    let params = GenerationParams {
+        max_tokens: 900,
+        ..GenerationParams::default()
+    };
+    engine.submit_request("hi", params).unwrap();
+
+    let completed = engine.run();
+    assert_eq!(completed.len(), 1, "请求应到达终态而非挂起");
+    let c = &completed[0];
+    assert!(!c.success, "越界请求应失败");
+    let err = c.error.as_ref().expect("失败请求应有错误信息");
+    assert!(
+        err.contains("超出 tiny-llm 预留 KV 容量"),
+        "应返回清晰的越界错误，实际: {err}"
+    );
+
+    // 资源守恒：失败后 KV 也应归还
+    let util = engine.memory_utilization();
+    assert!(util < 0.05, "失败后 tiny-llm KV 未归还: {util}");
+
+    let m = engine.get_metrics();
+    assert_eq!(m.completed_requests, 0);
+    assert_eq!(m.failed_requests, 1);
+}

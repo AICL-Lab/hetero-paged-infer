@@ -46,6 +46,9 @@ pub struct TinyLlmExecutor {
     allocated: HashMap<c_int, i32>,
     /// 是否走策略 1（分页 KV）。false = 策略 2 fallback（块表传 null）。
     paged: bool,
+    /// 后端 batch 上限（config.max_batch_size clamp 到显存可承受范围），
+    /// 用于 `execute` 的 batch 超限前置检查（B1）。
+    max_batch_size: i32,
 }
 
 impl TinyLlmExecutor {
@@ -59,6 +62,10 @@ impl TinyLlmExecutor {
             .map(|v| v == "2")
             .unwrap_or(false);
         let paged = !force_strategy2;
+        // 后端 batch 上限应来自调度器侧的单次调度上限（config.max_batch_size），
+        // 而非全局并发上限 max_num_seqs；再 clamp 到显存可承受范围。
+        // 同时保存到结构体，供 execute 前置检查使用。
+        let max_batch_size = (config.max_batch_size as c_int).min(MAX_CONCURRENT_SEQS);
         let ccfg = TinyLlmConfig {
             hidden_dim: 0,
             num_layers: 0,
@@ -67,9 +74,7 @@ impl TinyLlmExecutor {
             head_dim: 0,
             vocab_size: 0,
             block_size: config.block_size as c_int,
-            // 后端 batch 上限应来自调度器侧的单次调度上限（config.max_batch_size），
-            // 而非全局并发上限 max_num_seqs；再 clamp 到显存可承受范围。
-            max_batch_size: (config.max_batch_size as c_int).min(MAX_CONCURRENT_SEQS),
+            max_batch_size,
             max_num_blocks: if paged {
                 config.max_num_blocks as c_int
             } else {
@@ -101,14 +106,21 @@ impl TinyLlmExecutor {
             handle,
             allocated: HashMap::new(),
             paged,
+            max_batch_size,
         })
+    }
+
+    /// 单序列首次分配的 KV token 容量：context_len + DECODE_RESERVE（下限 64）。
+    /// 独立成纯函数以便单元测试锁定该契约（B15）。
+    fn alloc_tokens_for(context_len: usize) -> i32 {
+        (context_len as i32 + DECODE_RESERVE).max(64)
     }
 
     fn ensure_allocated(&mut self, seq_id: c_int, context_len: usize) -> Result<(), EngineError> {
         if self.allocated.contains_key(&seq_id) {
             return Ok(());
         }
-        let alloc_tokens = (context_len as i32 + DECODE_RESERVE).max(64);
+        let alloc_tokens = Self::alloc_tokens_for(context_len);
         let rc = unsafe { symbols::tinyllm_allocate_sequence(self.handle, seq_id, alloc_tokens) };
         if rc != 0 {
             return Err(EngineError::BackendError(format!(
@@ -138,10 +150,10 @@ impl GPUExecutorTrait for TinyLlmExecutor {
 
         // batch 超限在调度前就明确报错，避免 tinyllm_step 以 rc!=0 返回时
         // 无法与后端错误/OOM 区分（语义与 CpuReferenceExecutor 一致）。
-        if n > self.config.max_batch_size as usize {
+        if n > self.max_batch_size as usize {
             return Err(EngineError::KernelLaunchFailed(format!(
                 "Batch size {} exceeds max {}",
-                n, self.config.max_batch_size
+                n, self.max_batch_size
             )));
         }
 
@@ -237,5 +249,39 @@ impl GPUExecutorTrait for TinyLlmExecutor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_alloc_tokens_for_capacity_formula() {
+        // B15 回归：分配容量 = context_len + DECODE_RESERVE，下限 64。
+        // 这是 decode 越界检查的容量来源——锁定契约，防止公式再次漂移。
+        assert_eq!(TinyLlmExecutor::alloc_tokens_for(0), 64);
+        assert_eq!(TinyLlmExecutor::alloc_tokens_for(10), 64);
+        assert_eq!(TinyLlmExecutor::alloc_tokens_for(100), 100 + DECODE_RESERVE);
+        assert_eq!(
+            TinyLlmExecutor::alloc_tokens_for(2048),
+            2048 + DECODE_RESERVE
+        );
+    }
+
+    #[test]
+    fn test_decode_budget_overrun_condition() {
+        // execute 的越界判定：context_len + 1 > capacity 即返回明确错误。
+        // 用分配公式构造容量，验证边界（capacity-1 不越界，capacity 处越界）。
+        let context_len = 100usize;
+        let capacity = TinyLlmExecutor::alloc_tokens_for(context_len);
+
+        // 恰好留在预留内：context 增长到 context+DECODE_RESERVE-1 仍合法
+        let ctx_at_edge = context_len + DECODE_RESERVE as usize - 1;
+        assert!(ctx_at_edge as i32 + 1 <= capacity, "预留边界内不应越界");
+
+        // 下一 token 即越界：context = context+DECODE_RESERVE
+        let ctx_over = context_len + DECODE_RESERVE as usize;
+        assert!(ctx_over as i32 + 1 > capacity, "超出预留时应判定越界");
     }
 }
