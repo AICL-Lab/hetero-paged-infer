@@ -11,7 +11,7 @@
 
 **基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎（CPU 参考执行器 + tiny-llm 真实后端）**
 
-> **开发状态**：控制面（分页 KV / continuous batching / 调度 / API）已冻结 v0.2.0；
+> **开发状态**：**active**（正确性修复与回归测试持续进行）；控制面（分页 KV / continuous batching / 调度 / API）v0.2.0 已发布；
 > 计算后端双路径：默认 CPU 参考执行器（确定性，供测试/CI），`tiny-llm` cargo feature
 > 下接入 [tiny-llm](https://github.com/open-infra-ai/tiny-llm) 真实 CUDA 后端，并已启用
 > **分页 KV（策略 1：block_tables 真实上传）**——3 并发 e2e 与 llama.cpp greedy
@@ -38,7 +38,7 @@ Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，以模块化、可
 | **自动化验证** | unit、integration、server integration 与 property tests | ✅ |
 | **tiny-llm 真实后端** | `tiny-llm` feature 下接入 CUDA 后端，分页 KV（策略 1）默认启用，`PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV | ✅ |
 
-在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`cuda-foundations/LEARNING_PATH.md`](https://github.com/open-infra-ai/cuda-foundations/blob/master/LEARNING_PATH.md)。
+在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`LEARNING_PATH.md`](https://github.com/open-infra-ai/open-infra-ai/blob/master/LEARNING_PATH.md)（meta 仓）。
 
 ## 项目边界（IN / OUT）
 
