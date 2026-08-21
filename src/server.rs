@@ -151,6 +151,18 @@ enum RequestEvent {
     Done(CompletedRequest),
 }
 
+/// 把到达终态的请求路由给其等待者（Done 事件）；对端已断开时静默丢弃。
+fn dispatch_completed(
+    waiters: &mut HashMap<RequestId, mpsc::UnboundedSender<RequestEvent>>,
+    completed: Vec<CompletedRequest>,
+) {
+    for completed in completed {
+        if let Some(tx) = waiters.remove(&completed.request_id) {
+            let _ = tx.send(RequestEvent::Done(completed));
+        }
+    }
+}
+
 struct AppState {
     config: EngineConfig,
     submit_tx: mpsc::Sender<Submission>,
@@ -678,6 +690,14 @@ async fn engine_loop(
     // request_id → 事件发送端，用于路由每请求事件
     let mut waiters: HashMap<RequestId, mpsc::UnboundedSender<RequestEvent>> = HashMap::new();
 
+    // 防死循环（B12 服务层）：pending 因 KV 预算/块不足而永远无法启动时，
+    // has_pending_work() 恒真但每步空转（无序列执行、无完成排出、无在途序列）。
+    // 连续 STALL_LIMIT 步无任何进展即判定卡死：把卡住的 pending 请求标记失败
+    // 并排出（客户端拿到明确错误），而不是 100% CPU 忙等阻塞整个服务。
+    // 与 InferenceEngine::run 的 STALL_LIMIT 语义一致（run 侧会同时兜底）。
+    const STALL_LIMIT: u32 = 100;
+    let mut idle_steps: u32 = 0;
+
     loop {
         // 空闲时阻塞等待首个提交，避免忙等。
         if !engine.has_pending_work() {
@@ -692,8 +712,11 @@ async fn engine_loop(
             admit_submission(&mut engine, submission, &mut waiters);
         }
 
+        let mut progressed = false;
         match engine.step_events() {
             Ok(events) => {
+                let completed_len = events.completed.len();
+                let chunks_len = events.chunks.len();
                 let mut disconnected: Vec<RequestId> = Vec::new();
                 for (request_id, chunk, logprobs) in events.chunks {
                     if let Some(tx) = waiters.get(&request_id) {
@@ -707,16 +730,38 @@ async fn engine_loop(
                     waiters.remove(&request_id);
                     engine.cancel_request(request_id);
                 }
-                for completed in events.completed {
-                    if let Some(tx) = waiters.remove(&completed.request_id) {
-                        let _ = tx.send(RequestEvent::Done(completed));
-                    }
-                }
+                dispatch_completed(&mut waiters, events.completed);
+                // 有请求到达终态、生成过 token 片段、或仍有序列在途（执行中）
+                // 即视为有进展（后两者覆盖"解码 token 落到空文本"的边界）
+                progressed = completed_len > 0
+                    || chunks_len > 0
+                    || engine.get_metrics().active_sequences > 0;
             }
             Err(err) => {
                 // 可归属的序列已在 step_events 内被标记失败并经 Done 事件上报；
                 // 此处仅记录无法归属的步骤级错误。
                 log::error!("engine step failed: {err}");
+            }
+        }
+
+        // 防死循环（B12 服务层）：连续 STALL_LIMIT 步无进展即判定卡死。
+        // 把无法启动的 pending 请求标记失败并排出（客户端拿到明确错误），
+        // 而不是无限忙等阻塞整个服务。
+        if progressed {
+            idle_steps = 0;
+        } else {
+            idle_steps += 1;
+            if idle_steps >= STALL_LIMIT {
+                log::error!(
+                    "服务引擎连续 {STALL_LIMIT} 步无进展：pending 请求因 KV 预算/块不足 \
+                     永远无法启动，将其标记失败并排出（避免忙等阻塞服务）"
+                );
+                engine.fail_pending_requests("request 因 KV 预算/块不足永远无法启动");
+                // 立即把失败终态排出并路由：若留到下一轮，循环会在
+                // has_pending_work()==false 时阻塞在 recv()，Done 事件将滞留。
+                let (stalled, _) = engine.collect_completed_requests();
+                dispatch_completed(&mut waiters, stalled);
+                idle_steps = 0;
             }
         }
 

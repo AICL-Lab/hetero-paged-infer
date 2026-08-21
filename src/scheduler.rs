@@ -239,8 +239,28 @@ impl Scheduler {
                     continue;
                 }
 
+                // 永久不可调度：所需块数超过内存水位线上限，池子即使完全空闲
+                // 也无法容纳（has_prefill_budget 会永远返回 false）。若放回
+                // pending_queue，has_pending_work() 恒真而每步零进展，服务层
+                // 的 engine_loop 将无限空转（B12 服务层）。因此直接失败并给出
+                // 明确错误，而不是反复重试。
+                let stats = self.kv_cache.get_memory_stats();
+                let watermark_blocks =
+                    (stats.total_blocks as f32 * self.config.memory_threshold).floor() as u32;
+                if blocks_needed > watermark_blocks {
+                    let mut failed_request = request;
+                    failed_request.state = RequestState::Failed(format!(
+                        "Required blocks {blocks_needed} exceed memory watermark \
+                         {watermark_blocks} (max_num_blocks {}, threshold {}); \
+                         this prompt can never be scheduled",
+                        self.config.max_num_blocks, self.config.memory_threshold
+                    ));
+                    self.completed_requests.push((seq_id, failed_request));
+                    continue;
+                }
+
                 // 内存水位线 + decode 增长预留：预算不足的候选延后，而不是把池子打满
-                // 或让下一步 decode 增长时 OOM。
+                // 或让下一步 decode 增长时 OOM。（此处仅剩"其他序列占用中"的临时等待。）
                 if !self.has_prefill_budget(blocks_needed, prefill_tokens) {
                     self.pending_queue
                         .push_back(PendingRequest { seq_id, request });
@@ -446,6 +466,23 @@ impl Scheduler {
             }
             None => false,
         }
+    }
+
+    /// 把等待队列中的全部请求标记为失败（stall 兜底）。
+    ///
+    /// 服务层检测到连续空转（无完成排出、无活跃序列，pending 却非空）时调用：
+    /// 此时 pending 请求因 KV 预算/块不足而永远无法启动，若不主动失败，
+    /// `has_pending_work()` 恒真而每步零进展，engine_loop 会无限忙等。
+    /// 返回被失败处理的请求数。
+    pub fn fail_pending_requests(&mut self, reason: &str) -> usize {
+        let mut failed = 0;
+        for pending in self.pending_queue.drain(..) {
+            let mut request = pending.request;
+            request.state = RequestState::Failed(format!("{reason}（request {}）", request.id));
+            self.completed_requests.push((pending.seq_id, request));
+            failed += 1;
+        }
+        failed
     }
 
     #[cfg(test)]
@@ -903,6 +940,102 @@ mod tests {
         let mut p = params.clone();
         p.priority = 200; // 调度提示不设上限，validate 只做采样参数校验
         assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn test_decode_seq_ids_orders_by_priority_desc() {
+        // PINF-112 回归：decode 序列按 priority 降序（同级 FCFS）。
+        // 已有 test_decode_priority 只断言非空；此处直接锁定排序契约。
+        let config = create_test_config();
+        let mut scheduler = Scheduler::new(config);
+
+        // 请求 1（低优先级）先进 decode
+        let mut low = create_test_request(1, 16);
+        low.params.priority = 1;
+        scheduler.add_request(low).unwrap();
+        let out = scheduler.schedule();
+        let low_seq = out.prefill_sequences[0].seq_id;
+        scheduler.update_sequences(
+            &ExecutionOutput {
+                next_tokens: vec![100],
+                seq_ids: vec![low_seq],
+                logprobs: Vec::new(),
+            },
+            0,
+        );
+
+        // 请求 2（高优先级）后进 decode
+        let mut high = create_test_request(2, 16);
+        high.params.priority = 9;
+        scheduler.add_request(high).unwrap();
+        let out = scheduler.schedule();
+        let high_seq = out.prefill_sequences[0].seq_id;
+        scheduler.update_sequences(
+            &ExecutionOutput {
+                next_tokens: vec![101],
+                seq_ids: vec![high_seq],
+                logprobs: Vec::new(),
+            },
+            0,
+        );
+
+        assert_eq!(
+            scheduler.decode_seq_ids(),
+            vec![high_seq, low_seq],
+            "decode 应按 priority 降序"
+        );
+    }
+
+    #[test]
+    fn test_oversized_prompt_fails_instead_of_wedging_pending() {
+        // B12 回归：所需块数超过内存水位线的请求必须立即失败并排出，
+        // 而不是放回 pending_queue 造成 has_pending_work() 恒真的空转死循环。
+        // 1000 tokens → ceil(1000/16)=63 块 > floor(64*0.9)=57 水位线。
+        let mut config = create_test_config();
+        config.max_num_blocks = 64;
+        config.max_total_tokens = 1024;
+        let mut scheduler = Scheduler::new(config);
+
+        scheduler.add_request(create_test_request(1, 1000)).unwrap();
+
+        let output = scheduler.schedule();
+        assert!(output.prefill_sequences.is_empty(), "不应启动该 prefill");
+
+        // 关键断言：请求不留在 pending（否则引擎将永远空转），而是已失败排出
+        assert!(
+            !scheduler.has_pending_work(),
+            "永久不可调度的请求不应滞留 pending"
+        );
+        let completed = scheduler.get_completed();
+        assert_eq!(completed.len(), 1, "请求应被失败并排出");
+        assert!(matches!(
+            completed[0].state,
+            RequestState::Failed(ref msg) if msg.contains("watermark")
+        ));
+    }
+
+    #[test]
+    fn test_fail_pending_requests_drains_and_reports() {
+        // stall 兜底 API：把等待队列全部标记失败并排出（run()/engine_loop 使用）。
+        let config = create_test_config();
+        let mut scheduler = Scheduler::new(config);
+
+        scheduler.add_request(create_test_request(1, 16)).unwrap();
+        scheduler.add_request(create_test_request(2, 16)).unwrap();
+        assert!(scheduler.has_pending_work());
+
+        let failed = scheduler.fail_pending_requests("test stall");
+        assert_eq!(failed, 2);
+        assert!(!scheduler.has_pending_work(), "pending 应被清空");
+
+        let completed = scheduler.get_completed();
+        assert_eq!(completed.len(), 2);
+        assert!(
+            completed
+                .iter()
+                .all(|r| matches!(r.state, RequestState::Failed(_))),
+            "全部应标记失败"
+        );
     }
 
     #[test]

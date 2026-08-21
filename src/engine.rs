@@ -437,7 +437,7 @@ impl InferenceEngine {
     /// 对成功完成的请求调用 `finish()` 冲刷末尾文本，作为本步附加片段返回
     /// （保证在 Done 事件之前送达）；失败/取消的请求直接丢弃解码器状态。
     /// 到达终态的序列会先通知后端释放物理 KV 资源（[`GPUExecutorTrait::sequences_finished`]）。
-    fn collect_completed_requests(&mut self) -> (Vec<CompletedRequest>, Vec<StepChunk>) {
+    pub(crate) fn collect_completed_requests(&mut self) -> (Vec<CompletedRequest>, Vec<StepChunk>) {
         let completed_requests = self.scheduler.take_completed_with_seq_ids();
         if completed_requests.is_empty() {
             return (Vec::new(), Vec::new());
@@ -578,12 +578,20 @@ impl InferenceEngine {
                 if idle_steps >= STALL_LIMIT {
                     log::error!(
                         "引擎连续 {STALL_LIMIT} 步无进展：pending 请求因 KV 预算/块不足 \
-                         永远无法启动，提前结束 run()（避免死循环）"
+                         永远无法启动，将其标记失败后结束 run()（避免死循环）"
                     );
+                    // 不遗留：把卡死的 pending 请求标记失败并排出，
+                    // 调用方必须能拿到每个提交请求的终态。
+                    self.scheduler
+                        .fail_pending_requests("request 因 KV 预算/块不足永远无法启动");
                     break;
                 }
             }
         }
+
+        // 循环可能因 break 提前退出，补收一次终态（含 fail_pending_requests 排出的失败请求）。
+        let (final_completed, _) = self.collect_completed_requests();
+        all_completed.extend(final_completed);
 
         all_completed
     }
@@ -605,6 +613,15 @@ impl InferenceEngine {
     /// 检查是否有待处理的工作
     pub fn has_pending_work(&self) -> bool {
         self.scheduler.has_pending_work()
+    }
+
+    /// 把等待队列中的全部请求标记为失败（stall 兜底）。
+    ///
+    /// 连续空转（无完成、无活跃序列、pending 非空）意味着这些请求因
+    /// KV 预算/块不足而永远无法启动；主动失败并排出，避免调用方
+    /// （服务层 engine_loop / run()）无限忙等。返回被失败处理的请求数。
+    pub fn fail_pending_requests(&mut self, reason: &str) -> usize {
+        self.scheduler.fail_pending_requests(reason)
     }
 
     /// 获取内存利用率
@@ -1075,6 +1092,41 @@ mod tests {
         assert_eq!(completed.len(), 1, "the submitted request must complete");
         assert!(completed[0].success);
         assert!(!engine.has_pending_work());
+    }
+
+    #[test]
+    fn test_run_oversized_prompt_fails_not_stranded() {
+        // B12 回归：所需 KV 块数超过内存水位线的长 prompt 会被调度器
+        // 立即失败并排出——run() 必须返回该请求的失败终态，而不是遗留
+        // 在 pending（调用方拿不到结果）。
+        // 1000 字符 → 1002 tokens（BOS/EOS）→ ceil(1002/16)=63 块
+        // > floor(64*0.9)=57 水位线，永久不可调度。
+        let config = EngineConfig {
+            max_num_blocks: 64,
+            max_total_tokens: 1024,
+            ..create_test_config()
+        };
+        let mut engine = InferenceEngine::new(config).unwrap();
+
+        engine
+            .submit_request(
+                &"a".repeat(1000),
+                GenerationParams {
+                    max_tokens: 4,
+                    ..GenerationParams::default()
+                },
+            )
+            .unwrap();
+
+        let completed = engine.run();
+        assert_eq!(completed.len(), 1, "请求不能被遗留，必须返回失败终态");
+        assert!(!completed[0].success, "超预算请求应失败");
+        let err = completed[0].error.as_ref().expect("失败请求应有错误信息");
+        assert!(
+            err.contains("watermark"),
+            "错误应说明水位线限制，实际: {err}"
+        );
+        assert!(!engine.has_pending_work(), "run() 后不应残留 pending");
     }
 
     #[test]

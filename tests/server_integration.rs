@@ -1646,3 +1646,75 @@ async fn test_completions_rejects_logprobs_above_limit() {
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"]["type"], "invalid_request_error");
 }
+
+#[tokio::test]
+async fn test_oversized_prompt_gets_error_and_server_stays_responsive() {
+    // B12 服务层回归：所需 KV 块数超过内存水位线的长 prompt 必须及时得到
+    // 明确错误响应（而非 engine_loop 无限空转导致请求挂起、服务阻塞），
+    // 且后续请求仍能正常服务。
+    // 1000 字符 → 1002 tokens（BOS/EOS）→ ceil(1002/16)=63 块
+    // > floor(64*0.9)=57 水位线，永久不可调度。
+    let config = EngineConfig {
+        max_num_blocks: 64,
+        max_total_tokens: 1024,
+        max_model_len: 1024,
+        serving: ServingConfig {
+            model_name: "test-model".to_string(),
+            ..Default::default()
+        },
+        ..create_test_config()
+    };
+    let app = create_router(config).unwrap();
+
+    let big_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "model": "test-model",
+                "prompt": "a".repeat(1000),
+                "max_tokens": 4
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    // 必须及时返回错误而非挂起：用超时把"回归死循环"暴露为测试失败
+    let response = tokio::time::timeout(Duration::from_secs(5), app.clone().oneshot(big_request))
+        .await
+        .expect("超预算长 prompt 请求不应挂起（engine_loop 死循环回归）")
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "永久不可调度的请求应返回 500"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("watermark"),
+        "错误应说明水位线限制，实际: {}",
+        json["error"]["message"]
+    );
+
+    // 服务仍可用：后续普通请求正常完成
+    let ok_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "model": "test-model",
+                "prompt": "hi",
+                "max_tokens": 4
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(ok_request).await.expect("服务应保持可用");
+    assert_eq!(response.status(), StatusCode::OK);
+}
