@@ -108,7 +108,7 @@ fn tiny_llm_backend_end_to_end() {
     assert_eq!(m2.failed_requests, 0);
 }
 
-/// B15 回归：decode 越过 tiny-llm 预留 KV 容量（context + DECODE_RESERVE）时，
+/// B15 回归：decode 越过 tiny-llm 预留 KV 容量（context + decode 预留，默认 512）时，
 /// 请求必须携带清晰的越界错误失败（而非后端 rc 神秘报错或挂起）。
 ///
 /// 触发方式：短 prompt + 大 max_tokens，使总长度越过 submit 的
@@ -121,7 +121,7 @@ fn tiny_llm_backend_decode_overrun_reports_clear_error() {
     };
 
     let mut config = create_test_config();
-    // max_model_len 需容纳 prompt + 超过 DECODE_RESERVE(512) 的 max_tokens，
+    // max_model_len 需容纳 prompt + 超过 decode 预留默认值(512) 的 max_tokens，
     // 才能让 decode 实际越过预留容量；KV 池与总额同步放大。
     config.max_num_blocks = 256;
     config.max_model_len = 1024;

@@ -8,10 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- tiny-llm 后端容量调节环境变量：`PAGED_INFER_TINY_LLM_MAX_SEQS`（最大并发序列，
+  默认 4，下限 1）与 `PAGED_INFER_TINY_LLM_DECODE_RESERVE`（decode 预留 token，
+  默认 512，下限 0）；原硬编码常量改为默认值，非法值记警告并回退默认。
+  动机：6GB 卡跑 0.5B 模型时 KV 池仅 ~300MB，并发 8 可容纳，压测不再被
+  保守上限挡住；长生成场景可按 `max_tokens` 上调预留。README 能力表同步。
 - 分页 KV 策略 1 默认启用（**T11 完成**，`9e8f6c7`）：tiny-llm 后端经 C ABI 真实
   上传 `block_tables`/`num_blocks`（ABI v2），默认启用；`PAGED_INFER_TINY_LLM_STRATEGY=2`
   可回退连续 KV。同步更新 README / ROADMAP / DEVELOPMENT_PLAN（0.2.0 发布时的
   CHANGELOG 仍写 T11 未实施，此处订正）。
+
+### Fixed
+- `tiny_llm_executor` 门控单测 `test_alloc_tokens_for_capacity_formula` 的陈旧断言：
+  原断言小 context 时容量恒为 64，与公式 `(context + reserve).max(64)` 矛盾
+  （该测试在默认 CI 不启用 tiny-llm feature，长期未执行）。现断言与公式及
+  B15 越界回归一致，并补下限生效边界与 reserve 可配置用例。
 
 ### Changed
 - README IN/OUT：tokenizer 改为 HTTP 边界适配器；词表/BPE 权威仍在 tiny-llm
