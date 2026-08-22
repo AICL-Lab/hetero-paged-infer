@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Serving 压测客户端 `loadgen`**（`src/bin/loadgen.rs`，W1 评测地基）：
+  对 OpenAI 兼容 `/v1/completions` SSE 端点做可复现负载实验；闭环饱和
+  （`--mode closed`）与开环泊松（`--mode poisson`）双负载模型；指标口径
+  TTFT（首个非空文本 chunk）/ ITL / 逐请求 TPOT / 失败归类（timeout /
+  http_429 / http_4xx / http_5xx / connection / stream_error / no_done）；
+  同一二进制零改动覆盖 paged-infer / llama-server / vLLM，保证横向可比；
+  输出 per_request.jsonl + stdout 分位汇总。冒烟数据集
+  `benchmarks/serving/datasets/synth/smoke.jsonl`。CPU 后端双模式端到端验证通过。
 - tiny-llm 后端容量调节环境变量：`PAGED_INFER_TINY_LLM_MAX_SEQS`（最大并发序列，
   默认 4，下限 1）与 `PAGED_INFER_TINY_LLM_DECODE_RESERVE`（decode 预留 token，
   默认 512，下限 0）；原硬编码常量改为默认值，非法值记警告并回退默认。

@@ -16,6 +16,11 @@ tokenizers = "0.19"
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 async-stream = "0.3"
+# loadgen 压测客户端依赖（src/bin/loadgen.rs）：
+# rustls 避免对系统 OpenSSL 的依赖，保证 WSL/CI 可复现。
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+rand = "0.8"
 
 [dev-dependencies]
 paged-infer = { path = ".", features = ["test-utils"] }
