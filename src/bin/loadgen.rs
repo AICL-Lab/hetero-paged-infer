@@ -11,17 +11,21 @@
 //!   并发。测 SLO 曲线（TTFT p95 vs 到达率）。
 //!
 //! # 指标口径（客户端侧）
-//! - TTFT：响应头就绪（请求体发送完成）→ 首个**非空文本** chunk 的墙钟。
-//!   空文本 chunk（如部分服务器的前导帧）不计，避免扭曲首 token 语义。
-//! - ITL：相邻非空文本 chunk 的到达间隔（首 chunk 除外）。
-//! - completion_tokens：优先取最终帧 `usage.completion_tokens`；缺失时回退
-//!   非空 chunk 计数（记录中标记 `tokens_source="chunks"`）。
+//! - TTFT：请求开始发送 → 首个**非空文本** SSE chunk 的墙钟。空文本 chunk
+//!   （如部分服务器的前导帧）不计，口径是用户可观察到的首段文本延迟。
+//! - inter-chunk latency：相邻非空文本 chunk 的到达间隔。SSE chunk 不保证
+//!   一一对应 token，因此该指标不会冒充 ITL；没有 token 级时间戳时 ITL 不可得。
+//! - completion_tokens：优先取最终帧 `usage.completion_tokens`；缺失且显式提供
+//!   `--tokenizer` 时，按完整输出文本重新分词（记录为 `tokenizer_text`）。绝不以
+//!   chunk 数冒充 token 数。
 //! - 失败归类：timeout / http_429 / http_4xx / http_5xx / connection /
-//!   stream_error（SSE 内 error 载荷）/ no_done（流提前结束）。
+//!   stream_error（SSE 读取或服务端 error）/ protocol_error（非法 SSE/JSON）/
+//!   no_done（流提前结束）。
 //!
 //! # 输出
 //! - `--out` 指定 per_request.jsonl（每行一条请求记录）；
-//! - stdout 打印汇总（成功率、TTFT/ITL/TPOT 分位、吞吐）。
+//! - 与逐请求文件同目录写 `summary.json`，它是墙钟窗口、分位和吞吐的权威汇总；
+//! - stdout 打印同口径的人类可读摘要。
 //!
 //! # 示例
 //! ```bash
@@ -36,9 +40,12 @@ use clap::Parser;
 use futures_util::StreamExt;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokenizers::Tokenizer;
 
 #[derive(Parser)]
 #[command(about = "OpenAI 兼容 serving 端点压测客户端（闭环/泊松双模式）")]
@@ -83,6 +90,18 @@ struct Args {
     #[arg(long, default_value = "per_request.jsonl")]
     out: String,
 
+    /// summary.json 输出路径；缺省时写到 --out 同目录
+    #[arg(long)]
+    summary_out: Option<String>,
+
+    /// 可选 tokenizer.json；仅在服务端未返回 usage 时统计完整输出文本 token 数
+    #[arg(long)]
+    tokenizer: Option<String>,
+
+    /// 被测引擎标签，只写入 summary.json，不参与请求路由
+    #[arg(long, default_value = "unknown")]
+    engine: String,
+
     /// model 字段（透传给 API，不影响路由）
     #[arg(long, default_value = "paged-infer")]
     model: String,
@@ -106,15 +125,136 @@ struct RequestRecord {
     /// 错误详情（stream_error 的服务端消息等；聚合统计仍用 error_class）
     error_detail: Option<String>,
     ttft_ms: Option<f64>,
-    itl_ms: Vec<f64>,
+    /// 相邻非空 SSE 文本 chunk 的到达间隔；不是 token 级 ITL。
+    inter_chunk_latency_ms: Vec<f64>,
     duration_ms: f64,
     /// 非空文本 chunk 数
     chunks: u32,
     completion_tokens: Option<u32>,
-    /// completion_tokens 来源："usage" | "chunks"（回退）
+    /// completion_tokens 来源："usage" | "tokenizer_text"
     tokens_source: Option<String>,
     finish_reason: Option<String>,
     prompt_tokens_meta: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct MetricSummary {
+    samples: usize,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    p99: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct RequestSummary {
+    total: usize,
+    success: usize,
+    failed: usize,
+    success_rate_pct: f64,
+}
+
+#[derive(Serialize)]
+struct TokenSummary {
+    known_requests: usize,
+    successful_requests: usize,
+    coverage_pct: f64,
+    total: u64,
+    source_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Serialize)]
+struct ThroughputSummary {
+    output_tokens_per_second: Option<f64>,
+    successful_requests_per_second: f64,
+}
+
+#[derive(Serialize)]
+struct RunConfigSummary {
+    engine: String,
+    mode: String,
+    base_url: String,
+    model: String,
+    dataset: String,
+    requests: usize,
+    concurrency: Option<usize>,
+    rate: Option<f64>,
+    max_tokens: u32,
+    warmup_secs: u64,
+    timeout_secs: u64,
+    tokenizer: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RunSummary {
+    schema_version: u32,
+    config: RunConfigSummary,
+    measurement_wall_secs: f64,
+    requests: RequestSummary,
+    ttft_ms: MetricSummary,
+    inter_chunk_latency_ms: MetricSummary,
+    /// 标准 ITL 需要 token 级时间戳；普通 OpenAI SSE 不提供该信息。
+    itl_ms: Option<MetricSummary>,
+    tpot_ms: MetricSummary,
+    completion_tokens: TokenSummary,
+    throughput: ThroughputSummary,
+    errors: BTreeMap<String, usize>,
+}
+
+fn failure_record(
+    request_id: usize,
+    measured_index: Option<usize>,
+    error_class: &str,
+    error_detail: Option<String>,
+    started_at: Instant,
+    prompt_tokens_meta: Option<u32>,
+) -> RequestRecord {
+    RequestRecord {
+        request_id,
+        measured_index,
+        ok: false,
+        error_class: Some(error_class.to_string()),
+        error_detail,
+        ttft_ms: None,
+        inter_chunk_latency_ms: Vec::new(),
+        duration_ms: started_at.elapsed().as_secs_f64() * 1000.0,
+        chunks: 0,
+        completion_tokens: None,
+        tokens_source: None,
+        finish_reason: None,
+        prompt_tokens_meta,
+    }
+}
+
+/// 从字节缓冲区取出一个完整 SSE event 的 data 载荷。
+///
+/// 同时支持 LF 与 CRLF 分隔，并在完整 event 到齐后才做 UTF-8 解码，避免网络
+/// chunk 恰好切在多字节字符中间时产生替换字符。
+fn take_sse_data(buffer: &mut Vec<u8>) -> Result<Option<String>, std::str::Utf8Error> {
+    let lf = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|pos| (pos, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|pos| (pos, 4));
+    let Some((pos, delimiter_len)) = [lf, crlf].into_iter().flatten().min_by_key(|(pos, _)| *pos)
+    else {
+        return Ok(None);
+    };
+
+    let consumed: Vec<u8> = buffer.drain(..pos + delimiter_len).collect();
+    let event = std::str::from_utf8(&consumed[..pos])?;
+    let data = event
+        .lines()
+        .filter_map(|line| {
+            line.trim_end_matches('\r')
+                .strip_prefix("data:")
+                .map(str::trim_start)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Some(data))
 }
 
 /// 单请求执行：发送流式 completions 请求，逐 chunk 打时间戳。
@@ -124,6 +264,7 @@ async fn run_request(
     request_id: usize,
     measured_index: Option<usize>,
     entry: &DatasetEntry,
+    output_tokenizer: Option<&Tokenizer>,
 ) -> RequestRecord {
     let body = serde_json::json!({
         "model": args.model,
@@ -135,7 +276,10 @@ async fn run_request(
 
     let t_start = Instant::now();
     let resp = client
-        .post(format!("{}/v1/completions", args.base_url))
+        .post(format!(
+            "{}/v1/completions",
+            args.base_url.trim_end_matches('/')
+        ))
         .json(&body)
         .timeout(Duration::from_secs(args.timeout_secs))
         .send()
@@ -144,22 +288,19 @@ async fn run_request(
     let resp = match resp {
         Ok(r) => r,
         Err(e) => {
-            let class = if e.is_timeout() { "timeout" } else { "connection" };
-            return RequestRecord {
+            let class = if e.is_timeout() {
+                "timeout"
+            } else {
+                "connection"
+            };
+            return failure_record(
                 request_id,
                 measured_index,
-                ok: false,
-                error_class: Some(class.to_string()),
-                error_detail: Some(e.to_string()),
-                ttft_ms: None,
-                itl_ms: Vec::new(),
-                duration_ms: t_start.elapsed().as_secs_f64() * 1000.0,
-                chunks: 0,
-                completion_tokens: None,
-                tokens_source: None,
-                finish_reason: None,
-                prompt_tokens_meta: entry.prompt_tokens,
-            };
+                class,
+                Some(e.to_string()),
+                t_start,
+                entry.prompt_tokens,
+            );
         }
     };
 
@@ -170,123 +311,133 @@ async fn run_request(
             400..=499 => "http_4xx",
             _ => "http_5xx",
         };
-        return RequestRecord {
+        return failure_record(
             request_id,
             measured_index,
-            ok: false,
-            error_class: Some(class.to_string()),
-            error_detail: Some(format!("HTTP {status}")),
-            ttft_ms: None,
-            itl_ms: Vec::new(),
-            duration_ms: t_start.elapsed().as_secs_f64() * 1000.0,
-            chunks: 0,
-            completion_tokens: None,
-            tokens_source: None,
-            finish_reason: None,
-            prompt_tokens_meta: entry.prompt_tokens,
-        };
+            class,
+            Some(format!("HTTP {status}")),
+            t_start,
+            entry.prompt_tokens,
+        );
     }
 
-    // TTFT 起点：响应头就绪（请求体已发送完成）。
-    let t_headers = Instant::now();
     let mut stream = resp.bytes_stream();
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     let mut chunk_times: Vec<Instant> = Vec::new();
+    let mut output_text = String::new();
     let mut completion_tokens: Option<u32> = None;
     let mut finish_reason: Option<String> = None;
-    let mut stream_error: Option<String> = None;
+    let mut stream_failure: Option<(String, String)> = None;
     let mut saw_done = false;
 
     'outer: while let Some(item) = stream.next().await {
         let bytes = match item {
             Ok(b) => b,
             Err(e) => {
-                stream_error = Some(format!("stream read error: {e}"));
+                stream_failure = Some((
+                    "stream_error".to_string(),
+                    format!("stream read error: {e}"),
+                ));
                 break;
             }
         };
-        buf.push_str(&String::from_utf8_lossy(&bytes));
+        buf.extend_from_slice(&bytes);
 
-        // SSE 事件以空行分隔；逐块解析已完整的事件。
-        while let Some(pos) = buf.find("\n\n") {
-            let event = buf[..pos].to_string();
-            buf.drain(..pos + 2);
-
-            for line in event.lines() {
-                let Some(payload) = line.strip_prefix("data:") else {
-                    continue; // 忽略 event:/id:/注释行
-                };
-                let payload = payload.trim();
-                if payload == "[DONE]" {
-                    saw_done = true;
+        // SSE event 可能跨多个网络 chunk；仅解析已完整到达的 event。
+        loop {
+            let payload = match take_sse_data(&mut buf) {
+                Ok(Some(payload)) => payload,
+                Ok(None) => break,
+                Err(e) => {
+                    stream_failure = Some((
+                        "protocol_error".to_string(),
+                        format!("SSE event is not valid UTF-8: {e}"),
+                    ));
                     break 'outer;
                 }
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
-                    continue;
-                };
-                if let Some(err) = v.get("error") {
-                    stream_error = Some(
-                        err.get("message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("unknown stream error")
-                            .to_string(),
-                    );
+            };
+            if payload.is_empty() {
+                continue;
+            }
+            if payload == "[DONE]" {
+                saw_done = true;
+                break 'outer;
+            }
+            let v = match serde_json::from_str::<serde_json::Value>(&payload) {
+                Ok(value) => value,
+                Err(e) => {
+                    stream_failure = Some((
+                        "protocol_error".to_string(),
+                        format!("invalid JSON in SSE data: {e}"),
+                    ));
                     break 'outer;
                 }
-                // 最终帧：usage / finish_reason（text 通常为空）
-                if let Some(usage) = v.get("usage") {
-                    if let Some(ct) = usage.get("completion_tokens").and_then(|c| c.as_u64()) {
-                        completion_tokens = Some(ct as u32);
+            };
+            if let Some(err) = v.get("error") {
+                stream_failure = Some((
+                    "stream_error".to_string(),
+                    err.get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("unknown stream error")
+                        .to_string(),
+                ));
+                break 'outer;
+            }
+            // 最终帧：usage / finish_reason（text 通常为空）
+            if let Some(usage) = v.get("usage") {
+                if let Some(ct) = usage
+                    .get("completion_tokens")
+                    .and_then(|c| c.as_u64())
+                    .and_then(|ct| u32::try_from(ct).ok())
+                {
+                    completion_tokens = Some(ct);
+                }
+            }
+            if let Some(choice) = v.get("choices").and_then(|c| c.get(0)) {
+                if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+                    if !fr.is_empty() {
+                        finish_reason = Some(fr.to_string());
                     }
                 }
-                if let Some(choice) = v.get("choices").and_then(|c| c.get(0)) {
-                    if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
-                        if !fr.is_empty() {
-                            finish_reason = Some(fr.to_string());
-                        }
-                    }
-                    let text = choice
-                        .get("text")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or_default();
-                    if !text.is_empty() {
-                        chunk_times.push(Instant::now());
-                    }
+                let text = choice
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    chunk_times.push(Instant::now());
+                    output_text.push_str(text);
                 }
             }
         }
     }
 
-    let duration_ms = t_headers.elapsed().as_secs_f64() * 1000.0;
+    let duration_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
     // 失败归类：流内 error > 无 [DONE]（即使已收到部分 chunk 也判失败，
     // 成功率口径不掺水）> 正常
-    let (ok, error_class, error_detail) = if let Some(msg) = &stream_error {
-        (
-            false,
-            Some("stream_error".to_string()),
-            Some(msg.clone()),
-        )
+    let (ok, error_class, error_detail) = if let Some((class, message)) = &stream_failure {
+        (false, Some(class.clone()), Some(message.clone()))
     } else if !saw_done {
         (false, Some("no_done".to_string()), None)
     } else {
         (true, None, None)
     };
 
-    let ttft_ms = chunk_times.first().map(|t| {
-        (t.duration_since(t_headers)).as_secs_f64() * 1000.0
-    });
-    let itl_ms: Vec<f64> = chunk_times
+    let ttft_ms = chunk_times
+        .first()
+        .map(|t| t.duration_since(t_start).as_secs_f64() * 1000.0);
+    let inter_chunk_latency_ms: Vec<f64> = chunk_times
         .windows(2)
         .map(|w| (w[1].duration_since(w[0])).as_secs_f64() * 1000.0)
         .collect();
 
     let (tokens, tokens_source) = match completion_tokens {
         Some(ct) => (Some(ct), Some("usage".to_string())),
-        None if !chunk_times.is_empty() => {
-            (Some(chunk_times.len() as u32), Some("chunks".to_string()))
-        }
-        _ => (None, None),
+        None => output_tokenizer
+            .and_then(|tokenizer| tokenizer.encode(output_text.as_str(), false).ok())
+            .and_then(|encoding| u32::try_from(encoding.len()).ok())
+            .map(|count| (Some(count), Some("tokenizer_text".to_string())))
+            .unwrap_or((None, None)),
     };
 
     RequestRecord {
@@ -296,7 +447,7 @@ async fn run_request(
         error_class,
         error_detail,
         ttft_ms,
-        itl_ms,
+        inter_chunk_latency_ms,
         duration_ms,
         chunks: chunk_times.len() as u32,
         completion_tokens: tokens,
@@ -333,86 +484,198 @@ fn percentile(sorted: &[f64], p: f64) -> Option<f64> {
     Some(sorted[idx.min(sorted.len() - 1)])
 }
 
-fn print_summary(records: &[RequestRecord], wall_secs: f64, args: &Args) {
+fn metric_summary(mut values: Vec<f64>) -> MetricSummary {
+    values.sort_by(f64::total_cmp);
+    MetricSummary {
+        samples: values.len(),
+        p50: percentile(&values, 50.0),
+        p95: percentile(&values, 95.0),
+        p99: percentile(&values, 99.0),
+    }
+}
+
+fn build_summary(records: &[RequestRecord], wall_secs: f64, args: &Args) -> RunSummary {
     let total = records.len();
     let ok_records: Vec<&RequestRecord> = records.iter().filter(|r| r.ok).collect();
     let ok = ok_records.len();
 
-    let mut ttfts: Vec<f64> = ok_records.iter().filter_map(|r| r.ttft_ms).collect();
-    ttfts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mut itls: Vec<f64> = ok_records.iter().flat_map(|r| r.itl_ms.clone()).collect();
-    itls.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let ttfts = ok_records.iter().filter_map(|r| r.ttft_ms).collect();
+    let inter_chunk_latencies = ok_records
+        .iter()
+        .flat_map(|r| r.inter_chunk_latency_ms.iter().copied())
+        .collect();
     // 逐请求 TPOT：(duration - ttft) / (tokens - 1)
-    let mut tpots: Vec<f64> = ok_records
+    let tpots = ok_records
         .iter()
         .filter_map(|r| {
             let tokens = r.completion_tokens.unwrap_or(0);
             match (r.ttft_ms, tokens > 1) {
-                (Some(ttft), true) => {
-                    Some((r.duration_ms - ttft) / (tokens as f64 - 1.0))
-                }
+                (Some(ttft), true) => Some((r.duration_ms - ttft) / (tokens as f64 - 1.0)),
                 _ => None,
             }
         })
         .collect();
-    tpots.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    let total_tokens: u64 = ok_records
+    let known_token_records: Vec<&RequestRecord> = ok_records
         .iter()
-        .map(|r| r.completion_tokens.unwrap_or(0) as u64)
+        .copied()
+        .filter(|r| r.completion_tokens.is_some())
+        .collect();
+    let total_tokens: u64 = known_token_records
+        .iter()
+        .map(|r| u64::from(r.completion_tokens.unwrap_or(0)))
         .sum();
+    let mut source_counts = BTreeMap::new();
+    for record in &known_token_records {
+        if let Some(source) = &record.tokens_source {
+            *source_counts.entry(source.clone()).or_insert(0) += 1;
+        }
+    }
 
     // 失败归类计数
-    let mut error_counts: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut error_counts: BTreeMap<String, usize> = Default::default();
     for r in records.iter().filter(|r| !r.ok) {
         *error_counts
             .entry(r.error_class.clone().unwrap_or_else(|| "unknown".into()))
             .or_insert(0) += 1;
     }
 
+    let token_coverage_pct = if ok > 0 {
+        100.0 * known_token_records.len() as f64 / ok as f64
+    } else {
+        0.0
+    };
+    let output_tokens_per_second = if wall_secs > 0.0 && ok > 0 && known_token_records.len() == ok {
+        Some(total_tokens as f64 / wall_secs)
+    } else {
+        None
+    };
+
+    RunSummary {
+        schema_version: 1,
+        config: RunConfigSummary {
+            engine: args.engine.clone(),
+            mode: args.mode.clone(),
+            base_url: args.base_url.clone(),
+            model: args.model.clone(),
+            dataset: args.dataset.clone(),
+            requests: args.requests,
+            concurrency: (args.mode == "closed").then_some(args.concurrency),
+            rate: (args.mode == "poisson").then_some(args.rate),
+            max_tokens: args.max_tokens,
+            warmup_secs: args.warmup_secs,
+            timeout_secs: args.timeout_secs,
+            tokenizer: args.tokenizer.clone(),
+        },
+        measurement_wall_secs: wall_secs,
+        requests: RequestSummary {
+            total,
+            success: ok,
+            failed: total - ok,
+            success_rate_pct: if total > 0 {
+                100.0 * ok as f64 / total as f64
+            } else {
+                0.0
+            },
+        },
+        ttft_ms: metric_summary(ttfts),
+        inter_chunk_latency_ms: metric_summary(inter_chunk_latencies),
+        itl_ms: None,
+        tpot_ms: metric_summary(tpots),
+        completion_tokens: TokenSummary {
+            known_requests: known_token_records.len(),
+            successful_requests: ok,
+            coverage_pct: token_coverage_pct,
+            total: total_tokens,
+            source_counts,
+        },
+        throughput: ThroughputSummary {
+            output_tokens_per_second,
+            successful_requests_per_second: if wall_secs > 0.0 {
+                ok as f64 / wall_secs
+            } else {
+                0.0
+            },
+        },
+        errors: error_counts,
+    }
+}
+
+fn print_summary(summary: &RunSummary) {
     let fmt = |v: Option<f64>| v.map(|x| format!("{x:.2}")).unwrap_or_else(|| "-".into());
+    let fmt_metric = |metric: &MetricSummary| {
+        format!(
+            "{} / {} / {}（n={}）",
+            fmt(metric.p50),
+            fmt(metric.p95),
+            fmt(metric.p99),
+            metric.samples
+        )
+    };
+
     println!("=== loadgen 汇总 ===");
-    println!("模式: {} | 目标: {}", args.mode, args.base_url);
     println!(
-        "请求: {total}（成功 {ok}，成功率 {:.2}%）| 测量窗口: {wall_secs:.1}s",
-        if total > 0 {
-            100.0 * ok as f64 / total as f64
-        } else {
-            0.0
-        }
+        "引擎: {} | 模式: {} | 目标: {}",
+        summary.config.engine, summary.config.mode, summary.config.base_url
     );
-    if !error_counts.is_empty() {
-        let errs: Vec<String> = error_counts
+    println!(
+        "请求: {}（成功 {}，成功率 {:.2}%）| 测量窗口: {:.3}s",
+        summary.requests.total,
+        summary.requests.success,
+        summary.requests.success_rate_pct,
+        summary.measurement_wall_secs
+    );
+    if !summary.errors.is_empty() {
+        let errs: Vec<String> = summary
+            .errors
             .iter()
             .map(|(k, v)| format!("{k}={v}"))
             .collect();
         println!("失败归类: {}", errs.join(", "));
     }
+    println!("TTFT ms p50/p95/p99: {}", fmt_metric(&summary.ttft_ms));
     println!(
-        "TTFT ms  p50/p95/p99: {} / {} / {}",
-        fmt(percentile(&ttfts, 50.0)),
-        fmt(percentile(&ttfts, 95.0)),
-        fmt(percentile(&ttfts, 99.0))
+        "chunk 间隔 ms p50/p95/p99: {}（不是 ITL）",
+        fmt_metric(&summary.inter_chunk_latency_ms)
     );
+    println!("ITL ms: -（协议未提供 token 级时间戳）");
+    println!("TPOT ms p50/p95/p99: {}", fmt_metric(&summary.tpot_ms));
     println!(
-        "ITL  ms  p50/p95/p99: {} / {} / {}",
-        fmt(percentile(&itls, 50.0)),
-        fmt(percentile(&itls, 95.0)),
-        fmt(percentile(&itls, 99.0))
+        "token 计数覆盖: {}/{}（{:.2}%）",
+        summary.completion_tokens.known_requests,
+        summary.completion_tokens.successful_requests,
+        summary.completion_tokens.coverage_pct
     );
-    println!(
-        "TPOT ms  p50/p95/p99: {} / {} / {}",
-        fmt(percentile(&tpots, 50.0)),
-        fmt(percentile(&tpots, 95.0)),
-        fmt(percentile(&tpots, 99.0))
-    );
-    if wall_secs > 0.0 {
-        println!(
-            "吞吐: {:.1} tok/s（客户端侧 Σ输出tokens/窗口时长）| {:.2} req/s",
-            total_tokens as f64 / wall_secs,
-            ok as f64 / wall_secs
-        );
+    match summary.throughput.output_tokens_per_second {
+        Some(tokens_per_second) => println!(
+            "吞吐: {tokens_per_second:.1} tok/s | {:.2} req/s",
+            summary.throughput.successful_requests_per_second
+        ),
+        None => println!(
+            "吞吐: tok/s 不可用（token 计数覆盖不足）| {:.2} req/s",
+            summary.throughput.successful_requests_per_second
+        ),
     }
+}
+
+fn default_summary_path(request_path: &str) -> PathBuf {
+    Path::new(request_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("summary.json")
+}
+
+fn write_summary(path: &Path, summary: &RunSummary) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut output = serde_json::to_string_pretty(summary)?;
+    output.push('\n');
+    std::fs::write(path, output)?;
+    println!("权威汇总已写入: {}", path.display());
+    Ok(())
 }
 
 #[tokio::main]
@@ -428,12 +691,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("closed 模式 --concurrency 必须 >= 1");
         std::process::exit(2);
     }
-    if args.mode == "poisson" && args.rate <= 0.0 {
-        eprintln!("poisson 模式 --rate 必须 > 0");
+    if args.mode == "poisson" && (!args.rate.is_finite() || args.rate <= 0.0) {
+        eprintln!("poisson 模式 --rate 必须是有限正数");
+        std::process::exit(2);
+    }
+    if args.requests == 0 {
+        eprintln!("--requests 必须 >= 1");
+        std::process::exit(2);
+    }
+    if args.max_tokens == 0 {
+        eprintln!("--max-tokens 必须 >= 1");
+        std::process::exit(2);
+    }
+    if args.timeout_secs == 0 {
+        eprintln!("--timeout-secs 必须 >= 1");
         std::process::exit(2);
     }
 
     let dataset = load_dataset(&args.dataset)?;
+    let output_tokenizer = match &args.tokenizer {
+        Some(path) => Some(Arc::new(Tokenizer::from_file(path).map_err(|e| {
+            std::io::Error::other(format!("加载 tokenizer 失败（{path}）: {e}"))
+        })?)),
+        None => None,
+    };
     println!(
         "数据集: {} 条 | 模式: {} | 并发/速率: {} | 测量请求数: {} | warmup: {}s",
         dataset.len(),
@@ -466,23 +747,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let measured_count = Arc::new(AtomicUsize::new(0));
 
-    if args.mode == "closed" {
+    let wall = if args.mode == "closed" {
         // warmup 阶段：闭环跑 warmup_secs，结果丢弃。
         if args.warmup_secs > 0 {
             let stop = Arc::new(AtomicBool::new(false));
             let mut warmup_handles = Vec::new();
             for _ in 0..args.concurrency {
-                let (client, args, dataset, next_id, stop) = (
+                let (client, args, dataset, next_id, stop, output_tokenizer) = (
                     client.clone(),
                     args.clone(),
                     dataset.clone(),
                     next_id.clone(),
                     stop.clone(),
+                    output_tokenizer.clone(),
                 );
                 warmup_handles.push(tokio::spawn(async move {
                     while !stop.load(Ordering::Relaxed) {
                         let (id, entry) = pick(&next_id, &dataset);
-                        let rec = run_request(&client, &args, id, None, &entry).await;
+                        let rec = run_request(
+                            &client,
+                            &args,
+                            id,
+                            None,
+                            &entry,
+                            output_tokenizer.as_deref(),
+                        )
+                        .await;
                         if !rec.ok {
                             log::warn!("warmup 请求 {id} 失败: {:?}", rec.error_class);
                         }
@@ -501,13 +791,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 测量阶段：闭环直到完成 args.requests 个请求。
         let mut handles = Vec::new();
         for _ in 0..args.concurrency {
-            let (client, args, dataset, next_id, records, measured_count) = (
+            let (client, args, dataset, next_id, records, measured_count, output_tokenizer) = (
                 client.clone(),
                 args.clone(),
                 dataset.clone(),
                 next_id.clone(),
                 records.clone(),
                 measured_count.clone(),
+                output_tokenizer.clone(),
             );
             handles.push(tokio::spawn(async move {
                 loop {
@@ -516,7 +807,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
                     let (id, entry) = pick(&next_id, &dataset);
-                    let rec = run_request(&client, &args, id, Some(idx), &entry).await;
+                    let rec = run_request(
+                        &client,
+                        &args,
+                        id,
+                        Some(idx),
+                        &entry,
+                        output_tokenizer.as_deref(),
+                    )
+                    .await;
                     records.lock().unwrap().push(rec);
                 }
             }));
@@ -524,10 +823,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for h in handles {
             let _ = h.await;
         }
-        let wall = measure_start.elapsed().as_secs_f64();
-        let recs = finalize_records(&records);
-        write_records(&args.out, &recs)?;
-        print_summary(&recs, wall, &args);
+        measure_start.elapsed().as_secs_f64()
     } else {
         // poisson 模式：指数间隔到达；warmup 期间同样到达但丢弃。
         let mut rng = rand::thread_rng();
@@ -542,9 +838,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let dt = -(1.0 - rng.gen::<f64>()).ln() / args.rate;
                 tokio::time::sleep(Duration::from_secs_f64(dt)).await;
                 let (id, entry) = pick(&next_id, &dataset);
-                let (client, args) = (client.clone(), args.clone());
+                let (client, args, output_tokenizer) =
+                    (client.clone(), args.clone(), output_tokenizer.clone());
                 warmup_handles.push(tokio::spawn(async move {
-                    run_request(&client, &args, id, None, &entry).await
+                    run_request(
+                        &client,
+                        &args,
+                        id,
+                        None,
+                        &entry,
+                        output_tokenizer.as_deref(),
+                    )
+                    .await
                 }));
             }
             for h in warmup_handles {
@@ -560,28 +865,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (id, entry) = pick(&next_id, &dataset);
             let idx = issued;
             issued += 1;
-            let (client, args, records) = (client.clone(), args.clone(), records.clone());
+            let (client, args, records, output_tokenizer) = (
+                client.clone(),
+                args.clone(),
+                records.clone(),
+                output_tokenizer.clone(),
+            );
             handles.push(tokio::spawn(async move {
-                let rec = run_request(&client, &args, id, Some(idx), &entry).await;
+                let rec = run_request(
+                    &client,
+                    &args,
+                    id,
+                    Some(idx),
+                    &entry,
+                    output_tokenizer.as_deref(),
+                )
+                .await;
                 records.lock().unwrap().push(rec);
             }));
         }
         for h in handles {
             let _ = h.await;
         }
-        let wall = measure_start.elapsed().as_secs_f64();
-        let recs = finalize_records(&records);
-        write_records(&args.out, &recs)?;
-        print_summary(&recs, wall, &args);
-    }
+        measure_start.elapsed().as_secs_f64()
+    };
+
+    let recs = finalize_records(&records);
+    write_records(&args.out, &recs)?;
+    let summary = build_summary(&recs, wall, &args);
+    let summary_path = args
+        .summary_out
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_summary_path(&args.out));
+    write_summary(&summary_path, &summary)?;
+    print_summary(&summary);
 
     Ok(())
 }
 
 /// 按测量窗口序号排序后取出全部记录。
-fn finalize_records(
-    records: &Arc<std::sync::Mutex<Vec<RequestRecord>>>,
-) -> Vec<RequestRecord> {
+fn finalize_records(records: &Arc<std::sync::Mutex<Vec<RequestRecord>>>) -> Vec<RequestRecord> {
     let mut g = records.lock().unwrap();
     g.sort_by_key(|r| r.measured_index);
     (*g).clone()
@@ -601,4 +925,103 @@ fn write_records(path: &str, records: &[RequestRecord]) -> Result<(), Box<dyn st
     std::fs::write(path, out)?;
     println!("逐请求记录已写入: {path}（{} 条）", records.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_args() -> Args {
+        Args {
+            base_url: "http://127.0.0.1:3000".to_string(),
+            mode: "closed".to_string(),
+            concurrency: 2,
+            rate: 1.0,
+            dataset: "smoke.jsonl".to_string(),
+            requests: 2,
+            warmup_secs: 0,
+            max_tokens: 8,
+            timeout_secs: 10,
+            out: "results/per_request.jsonl".to_string(),
+            summary_out: None,
+            tokenizer: None,
+            engine: "paged-infer".to_string(),
+            model: "test-model".to_string(),
+        }
+    }
+
+    fn successful_record(completion_tokens: Option<u32>) -> RequestRecord {
+        RequestRecord {
+            request_id: 0,
+            measured_index: Some(0),
+            ok: true,
+            error_class: None,
+            error_detail: None,
+            ttft_ms: Some(10.0),
+            inter_chunk_latency_ms: vec![2.0, 3.0],
+            duration_ms: 30.0,
+            chunks: 3,
+            completion_tokens,
+            tokens_source: completion_tokens.map(|_| "usage".to_string()),
+            finish_reason: Some("length".to_string()),
+            prompt_tokens_meta: Some(4),
+        }
+    }
+
+    #[test]
+    fn sse_parser_waits_for_complete_utf8_event_and_accepts_crlf() {
+        let event = "data: {\"text\":\"你\"}\r\n\r\n".as_bytes();
+        let split = event.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+        let mut buffer = event[..split].to_vec();
+        assert!(take_sse_data(&mut buffer).unwrap().is_none());
+
+        buffer.extend_from_slice(&event[split..]);
+        assert_eq!(
+            take_sse_data(&mut buffer).unwrap().as_deref(),
+            Some("{\"text\":\"你\"}")
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sse_parser_joins_multiple_data_lines() {
+        let mut buffer = b"event: message\ndata: first\ndata: second\n\n".to_vec();
+        assert_eq!(
+            take_sse_data(&mut buffer).unwrap().as_deref(),
+            Some("first\nsecond")
+        );
+    }
+
+    #[test]
+    fn token_throughput_requires_complete_successful_request_coverage() {
+        let args = test_args();
+        let partial = build_summary(
+            &[successful_record(Some(4)), successful_record(None)],
+            1.0,
+            &args,
+        );
+        assert_eq!(partial.completion_tokens.known_requests, 1);
+        assert_eq!(partial.completion_tokens.coverage_pct, 50.0);
+        assert!(partial.throughput.output_tokens_per_second.is_none());
+
+        let complete = build_summary(
+            &[successful_record(Some(4)), successful_record(Some(6))],
+            2.0,
+            &args,
+        );
+        assert_eq!(complete.throughput.output_tokens_per_second, Some(5.0));
+        assert_eq!(complete.tpot_ms.samples, 2);
+    }
+
+    #[test]
+    fn summary_defaults_to_request_record_directory() {
+        assert_eq!(
+            default_summary_path("results/run/per_request.jsonl"),
+            PathBuf::from("results/run/summary.json")
+        );
+        assert_eq!(
+            default_summary_path("per_request.jsonl"),
+            PathBuf::from("summary.json")
+        );
+    }
 }

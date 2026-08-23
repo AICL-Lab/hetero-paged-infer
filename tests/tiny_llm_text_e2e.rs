@@ -29,12 +29,14 @@ fn build_engine(model: &str, tok_path: &str) -> InferenceEngine {
         HuggingFaceTokenizer::from_file(Path::new(tok_path)).expect("load tokenizer.json");
     assert_eq!(tokenizer.eos_token_id(), 151645, "EOS 应为真实模型值");
 
-    let mut config = EngineConfig::default();
-    config.max_num_blocks = 256;
-    config.max_model_len = 256;
-    config.max_total_tokens = 1024;
+    let config = EngineConfig {
+        max_num_blocks: 256,
+        max_model_len: 256,
+        max_total_tokens: 1024,
+        ..EngineConfig::default()
+    };
 
-    let executor = TinyLlmExecutor::new(&model, config.clone()).expect("tinyllm_load failed");
+    let executor = TinyLlmExecutor::new(model, config.clone()).expect("tinyllm_load failed");
     InferenceEngine::with_components(
         config.clone(),
         Box::new(tokenizer),
@@ -177,12 +179,14 @@ fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
         HuggingFaceTokenizer::from_file(Path::new(&tok_path)).expect("load tokenizer.json");
     assert_eq!(tokenizer.eos_token_id(), 151645, "EOS 应为真实模型值");
 
-    let mut config = EngineConfig::default();
-    config.max_num_blocks = 256;
-    config.block_size = 16;
-    config.max_model_len = 256;
-    config.max_num_seqs = 4;
-    config.max_batch_size = 4;
+    let config = EngineConfig {
+        max_num_blocks: 256,
+        block_size: 16,
+        max_model_len: 256,
+        max_num_seqs: 4,
+        max_batch_size: 4,
+        ..EngineConfig::default()
+    };
 
     let executor = TinyLlmExecutor::new(&model, config.clone()).expect("tinyllm_load failed");
     let mut engine = InferenceEngine::with_components(

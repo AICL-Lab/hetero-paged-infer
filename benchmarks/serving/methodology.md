@@ -12,18 +12,21 @@
 
 | 指标 | 口径 | 分位 |
 |------|------|------|
-| **TTFT** | 响应头就绪（请求体发送完成）→ 首个**非空文本** SSE chunk 的墙钟。空文本前导帧不计，避免扭曲首 token 语义 | p50/p95/p99 |
-| **ITL** | 同一 SSE 流相邻非空文本 chunk 的到达间隔（首 chunk 除外） | p50/p95/p99 |
-| **TPOT** | 逐请求 `(总生成耗时 − TTFT) / (输出tokens − 1)`，取分布。与 ITL mean 双口径并列（对齐 vLLM 惯例） | p50/p95/p99 |
-| **生成吞吐** | 稳态窗口内 Σ输出tokens / Δt（客户端侧）；与引擎侧 `paged_engine_tokens_generated_total` 两次采样差并列报告，差额即客户/网络开销，如实列出 | 均值 |
+| **TTFT** | 客户端开始发送请求 → 首个**非空文本** SSE chunk 的墙钟。包含连接、排队、prefill 与响应头时间；空文本前导帧不计，口径是用户可观察的首段文本延迟 | p50/p95/p99 |
+| **inter-chunk latency** | 同一 SSE 流相邻非空文本 chunk 的到达间隔。它只描述传输粒度，**不是 ITL** | p50/p95/p99 |
+| **ITL** | 相邻输出 token 的到达间隔。OpenAI SSE chunk 可能聚合多个 token，协议又不提供 token 级时间戳，因此当前跨引擎 loadgen 将其明确记为不可用，不从 chunk 猜测 | 当前不产出 |
+| **TPOT** | 逐请求 `(请求总耗时 − TTFT) / (输出 tokens − 1)`；仅统计具有可信 `completion_tokens` 且 tokens > 1 的成功请求，并报告样本覆盖 | p50/p95/p99 |
+| **生成吞吐** | 完整测量窗口内 Σ输出 tokens / Δt（客户端侧）。只有所有成功请求都有可信 token 计数时才产出，否则为 `null`，禁止用已知子集外推 | 均值 |
 | **请求吞吐** | 稳态窗口内 completed req/s | 均值 |
 | **成功率** | 完成（200 + `[DONE]`）/ 提交。失败归类：`timeout` / `http_429`（内存压力或并发上限的配置性拒绝，单独计数）/ `http_4xx` / `http_5xx` / `connection` / `stream_error`（SSE 内 error 载荷）/ `no_done`（流提前结束，即使已收到部分 chunk 也判失败——成功率不掺水） | 计数 |
-| **KV 利用率** | 稳态窗口 1s 采样 `/metrics` 的 `paged_engine_kv_utilization` | mean/max/p95 |
-| **调度延迟** | 双口径：(a) Criterion Mock 后端纯调度路径（`benches/`，隔离调度器开销与计算时间）；(b) `paged_engine_step_duration_us`（W5 引入） | 分布 |
+| **KV 利用率** | 计划从 `/metrics` 定时采样 `paged_engine_kv_utilization`；当前 sweep 尚未实现采样器，不能声称已有结果 | 待实现 |
+| **调度延迟** | Criterion Mock 后端纯调度路径已经存在；服务侧 step duration 指标尚未接入 | 分布 / 待实现 |
 
 **completion_tokens 来源**：优先最终帧 `usage.completion_tokens`
-（`tokens_source="usage"`）；缺失时回退非空 chunk 计数
-（`tokens_source="chunks"`，报表中必须标注）。
+（`tokens_source="usage"`）；缺失且显式传入 `--tokenizer <tokenizer.json>` 时，
+对完整输出文本重新分词（`tokens_source="tokenizer_text"`）。后者不包含未解码的
+EOS 等特殊 token，必须在报表中标注。未提供 tokenizer 时 token 数与 tok/s 留空，
+绝不以 chunk 数代替。
 
 ## 2. 负载模型（两种都必须在档）
 
@@ -50,11 +53,11 @@
 
 ## 4. 实验协议
 
-1. **三件套绑定**：每次 run 的 `metadata.json` 必须记录
-   双仓 `git rev-parse HEAD`（paged-infer + tiny-llm）、`nvidia-smi` 快照、
-   驱动/CUDA 版本、编译选项（`CMAKE_BUILD_TYPE`/CUDA arch）、模型文件路径、
-   完整负载参数。`run_sweep.sh` 默认拒绝 dirty worktree（`--allow-dirty`
-   显式放行并在 metadata 记录 `dirty: true`）。
+1. **三件套绑定**：实验根 `metadata.json` 记录 paged-infer/tiny-llm commit、
+   `nvidia-smi` 快照、驱动/CUDA 与构建口径；每次 run 的
+   `run_metadata.json` 记录被测引擎 commit、模型路径、量化格式和完整负载参数。
+   `run_sweep.sh` 默认拒绝 dirty worktree（`--allow-dirty` 显式放行并在根
+   metadata 记录 `dirty: true`）。
 2. **预热**：`--warmup-secs ≥ 30`（warmup 流量与测量窗口同负载形态，结果丢弃）。
 3. **重复与收敛**：每个 (并发, 分布) 组合跑 3 次，报告均值与 min/max 波动；
    run-to-run 偏差 >10% 视为未收敛，须排查（笔记本卡散热降频是常见原因，
@@ -73,9 +76,11 @@
 ```
 results/<date>-<gpu-slug>/
 ├── metadata.json        # 三件套 + 参数矩阵（schema 见下）
-├── <engine>_<mode>_c<N|rate>_<dataset>/
+├── <engine>_<mode>_c<N|rate>_<dataset>_r<N>/
+│   ├── run_metadata.json   # 本后端 commit、模型/量化、负载参数
 │   ├── per_request.jsonl   # loadgen 逐请求记录
-│   └── summary.json        # 分位汇总（loadgen stdout 同构）
+│   ├── summary.json        # 权威墙钟、分位、coverage 与吞吐
+│   └── stdout.log          # 人类可读运行日志
 ├── *.csv                # 跨组合汇总表（plots.py 生成）
 └── *.png                # 图表（每张带 commit+日期+硬件 caption）
 ```
@@ -84,22 +89,25 @@ results/<date>-<gpu-slug>/
 
 ```json
 {
+  "schema_version": 1,
   "date": "2026-08-30",
-  "hardware": {"gpu": "RTX 3060 Laptop", "vram_mib": 6144, "driver": "…", "cuda_toolkit": "12.0"},
+  "hardware": {"gpu": "RTX 3060 Laptop", "vram": "6144 MiB", "driver": "…"},
+  "software": {"cuda_toolkit": "Cuda compilation tools, release 12.0, …"},
   "commits": {"paged_infer": "sha", "tiny_llm": "sha", "dirty": false},
-  "build": {"profile": "Release", "cuda_archs": "…"},
-  "model": {"path": "…", "backend_quant": "W8A16|Q4_K_M|FP16"},
-  "matrix": [{"engine": "…", "mode": "closed|poisson", "concurrency": 4,
-              "rate": null, "dataset": "work", "max_tokens": 128,
-              "warmup_s": 30, "repeats": 3}]
+  "build": {"profile": "release", "cuda_archs": "86"}
 }
 ```
 
+后端、模型、量化和具体矩阵属于单次 run，写入各子目录的
+`run_metadata.json`；这样同一实验根目录可以安全容纳多个后端，根 metadata
+不会因第二次 sweep 被某个后端的 URL/模型覆盖。
+
 ## 6. 图表规范（plots.py）
 
-- TTFT/ITL p50/p95/p99 按并发分组条形图（对数轴）
-- 吞吐 vs 并发折线（三引擎叠图）
-- KV 利用率箱线
+- TTFT p95 vs 并发折线（三引擎/数据集分系列，阴影为重复 min/max）
+- 输出 token 吞吐 vs 并发折线（token coverage 100% 才绘制）
 - SLO 曲线：TTFT p95 vs λ（泊松档）
-- prefix 命中前后 TTFT 散点（W5）
 - 每张图 caption：`<engine> @ <commit>, <date>, <gpu>`
+
+KV 利用率和 prefix 命中图属于后续能力，只有采样器/功能真正实现并归档原始数据后
+才加入本规范。

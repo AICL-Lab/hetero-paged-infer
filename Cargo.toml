@@ -2,8 +2,15 @@
 name = "paged-infer"
 version = "0.2.0"
 edition = "2021"
-description = "Paged-memory, continuously-batched inference engine scaffold with a CPU reference compute backend"
-authors = ["Developer"]
+rust-version = "1.82"
+default-run = "paged-infer"
+description = "Learning-oriented LLM serving control plane with paged KV scheduling and continuous batching"
+authors = ["holtwood"]
+license = "MIT"
+repository = "https://github.com/open-infra-ai/paged-infer"
+homepage = "https://github.com/open-infra-ai/paged-infer"
+keywords = ["llm", "inference", "serving", "kv-cache", "scheduler"]
+categories = ["development-tools", "simulation"]
 
 [dependencies]
 thiserror = "2.0"

@@ -9,9 +9,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
 
-**基于 PagedAttention 分页内存与 Continuous Batching 的推理引擎（CPU 参考执行器 + tiny-llm 真实后端）**
+**面向学习与验证的 LLM Serving 控制面：Paged KV 调度、Continuous Batching 与 OpenAI API**
 
-> **开发状态**：**active**（正确性修复与回归测试持续进行）；控制面（分页 KV / continuous batching / 调度 / API）v0.2.0 已发布；
+> **开发状态**：**active**（Serving 评测口径与跨引擎验证持续进行）；控制面核心
+> （分页 KV / continuous batching / 调度 / API）v0.2.0 已稳定；
 > 计算后端双路径：默认 CPU 参考执行器（确定性，供测试/CI），`tiny-llm` cargo feature
 > 下接入 [tiny-llm](https://github.com/open-infra-ai/tiny-llm) 真实 CUDA 后端，并已启用
 > **分页 KV（策略 1：block_tables 真实上传）**——3 并发 e2e 与 llama.cpp greedy
@@ -25,11 +26,15 @@
 
 ## 项目概述
 
-Paged-Infer 是一个基于 Rust 构建的 LLM 推理引擎，以模块化、可测试的架构实现了 [vLLM](https://github.com/vllm-project/vllm) 的分页内存（PagedAttention 风格 KV Cache）与连续批处理调度。计算后端默认是 CPU 参考执行器（随机初始化小型 Transformer，确定性输出）；`tiny-llm` feature 下接入真实 CUDA 后端并把每序列 `block_tables` 真实上传到 tiny-llm 的分页 KV 池（策略 1）。
+Paged-Infer 是一个基于 Rust 构建的 LLM Serving 控制面，以模块化、可测试的架构
+练习分页 KV 内存管理与连续批处理调度。计算后端默认是 CPU 参考执行器（随机初始化
+小型 Transformer，确定性输出）；`tiny-llm` feature 下接入真实 CUDA Runtime，
+并把每序列 `block_tables` 上传到 tiny-llm 的分页 KV 池（策略 1）。本仓库不把
+控制面、参考执行器和外部 Runtime 的组合包装成生产级推理引擎。
 
 | 特性 | 说明 | 状态 |
 |------|------|:----:|
-| **PagedAttention KV Cache** | 基于块的内存管理；文献背景中常见 <5% 的浪费水平 | ✅ |
+| **Paged KV 控制面** | BlockPool、PageTable、块表上传与资源守恒；不宣称固定碎片率 | ✅ |
 | **优先级调度** | `GenerationParams::priority` 高优先级先调度（同级 FCFS） | ✅ |
 | **连续批处理** | 动态 prefill/decode 调度 | ✅ |
 | **内存压力感知** | 可配置的 OOM 防护 | ✅ |
@@ -356,7 +361,7 @@ cargo test -- --test-threads=1
 cargo test && cargo fmt --check && cargo clippy
 ```
 
-## 路线图
+## 当前路线
 
 - [x] PagedAttention KV Cache
 - [x] Continuous Batching 调度器
@@ -365,21 +370,23 @@ cargo test && cargo fmt --check && cargo clippy
 - [x] OpenAI 兼容 HTTP 服务
 - [x] CPU 参考执行器（paged KV cache + transformer 前向）
 - [x] HuggingFace Tokenizer 集成
-- [ ] 真实 CUDA Kernel
-- [ ] 异步 CPU/GPU 重叠
+- [ ] 完成可信的 closed-loop / Poisson 跨引擎评测与原始数据归档
+- [ ] 把调度、KV cache 与评测经验转化为上游社区贡献
 
-## 开发结束标准（v0.2.0 冻结）
+## 当前阶段：核心稳定，评测仍在推进
 
-本项目已完成 v0.2.0 发布并进入**低优先级维护状态**。P0 正确性修复（T0–T8）
-与部分 P1（T9、T10、T12）已全部完成并保持 CI 绿色。明确的冻结边界：
+本项目的 v0.2.0 控制面核心已经稳定，P0 正确性修复（T0–T8）与部分 P1
+（T9、T10、T12）已经完成；仓库保持 active，是因为 serving 评测工具和跨引擎
+证据仍在完善。以下功能边界继续冻结：
 
 - **无抢占**（无 swap / preempt-resume）
 - **无 chunked prefill**、**无 prefix caching**
 - **无生产 CUDA kernel**（真实 kernel 在 tiny-llm 仓库）
-- 性能数字均为 Mock/CPU 参考后端的调度开销，不声称 GPU 吞吐
+- 不发布缺少可信 token 计数、完整墙钟、硬件和 commit 绑定的吞吐数字
 
-后续重心转向 [tiny-llm](https://github.com/open-infra-ai/tiny-llm) 与
-[cuflash-attn](https://github.com/open-infra-ai/cuflash-attn)。
+推理加速主线位于 [tiny-llm](https://github.com/open-infra-ai/tiny-llm)；本仓库只负责
+把 Runtime 能力置于真实请求、调度和 KV 生命周期中验证。FlashAttention 的独立
+kernel 学习仍在 [cuflash-attn](https://github.com/open-infra-ai/cuflash-attn)。
 
 ## 许可证
 

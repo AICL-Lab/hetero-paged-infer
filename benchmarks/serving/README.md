@@ -15,9 +15,9 @@ benchmarks/serving/
 │       ├── gen_synth.py   # 三档合成分布生成器（固定种子）
 │       ├── smoke.jsonl    # 3 条冒烟 prompt
 │       └── {short,work,long}.jsonl   # gen_synth.py 产出
-├── run_sweep.sh           # 矩阵编排：dirty 检查 + metadata + loadgen
-├── plots.py               # 图表生成（规范见 methodology §6）
-└── results/<date>-<gpu>/  # 结果归档（metadata.json + 逐请求记录 + 图表）
+├── run_sweep.sh           # 矩阵编排：dirty 检查 + 双层 metadata + loadgen
+├── plots.py               # 只读取权威 summary.json 生成图表
+└── results/<date>-<gpu>/  # 原始请求 + run summary + 环境/模型 metadata + 图表
 ```
 
 压测客户端是 [`src/bin/loadgen.rs`](../../src/bin/loadgen.rs)（闭环饱和 /
@@ -47,13 +47,16 @@ python3 benchmarks/serving/datasets/synth/gen_synth.py \
 
 # 3. 冒烟（3 条 prompt，验证管线连通）
 ./target/release/loadgen --base-url http://127.0.0.1:3000 \
+    --engine paged-infer --model paged-infer \
     --mode closed --concurrency 2 \
     --dataset benchmarks/serving/datasets/synth/smoke.jsonl \
     --requests 4 --warmup-secs 0 --max-tokens 16 --out /tmp/smoke.jsonl
 
 # 4. 完整矩阵（默认闭环并发 1/2/4/8 × work 分布 × 3 次重复）
 cd benchmarks/serving
-./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-infer
+./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-infer \
+    --model paged-infer --model-path ../../../models/<model>.gguf \
+    --backend-quant W8A16 --tokenizer <tokenizer.json> --cuda-archs 86
 
 # 5. 图表
 python3 plots.py results/<date>-<gpu>/
@@ -69,6 +72,8 @@ python3 plots.py results/<date>-<gpu>/
 
 - 无实测不写数字；每个数字绑定双仓 commit + 硬件 + 复现命令
 - 失败归类不掺水：无 `[DONE]` 判失败；429 单独计数
+- TTFT 从请求发送前开始计时；SSE chunk 间隔不冒充 token 级 ITL
+- usage 缺失时必须提供 tokenizer；token coverage 不足则 tok/s 留空
 - 量化格式差异（W8A16 vs Q4_K_M vs FP16）必须在表头声明
 - 负结果归档（vLLM 跑不起来也是结果）
 - 笔记本卡散热/功耗墙写进口径，不外推

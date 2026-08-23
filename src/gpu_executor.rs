@@ -24,7 +24,7 @@
 //!
 //! # 内置后端
 //!
-//! - [`CpuReferenceExecutor`](crate::cpu_executor::CpuReferenceExecutor)：
+//! - [`CpuReferenceExecutor`]：
 //!   默认后端，CPU 上执行真实前向（随机权重小模型），greedy 采样，提供 logprobs。
 //! - [`MockGPUExecutor`]：测试用确定性占位后端。
 //! - tiny-llm（C++/CUDA）对接：见 [`crate::tiny_llm_ffi`]（FFI 骨架）。

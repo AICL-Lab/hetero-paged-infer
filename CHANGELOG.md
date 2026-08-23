@@ -27,15 +27,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CHANGELOG 仍写 T11 未实施，此处订正）。
 
 ### Fixed
+- 与 tiny-llm 同步澄清 `tinyllm_step` 的 logprobs 缓冲区契约：每个候选占两个
+  `f32`，总容量至少为 `num_sequences * logprobs_k * 2`；本次不改变 ABI 布局。
+- 修复 serving 评测的指标与产物契约：TTFT 从请求发送前开始计时，不再漏掉
+  连接、排队、prefill 与响应头耗时；SSE 解析同时支持 LF/CRLF，并在完整 event
+  到齐后解码 UTF-8；非法 SSE/JSON 明确归类为 `protocol_error`。取消用文本
+  chunk 数冒充 completion token 数，usage 缺失时仅允许显式 tokenizer 对完整
+  输出文本计数；token coverage 不足时 tok/s 留空。新增权威 `summary.json` 与
+  loadgen 回归测试，绘图只读取全局测量墙钟，不再用单请求最大时长高估吞吐，
+  并按引擎/数据集分系列，避免把不同后端平均到同一条曲线。
 - `tiny_llm_executor` 门控单测 `test_alloc_tokens_for_capacity_formula` 的陈旧断言：
   原断言小 context 时容量恒为 64，与公式 `(context + reserve).max(64)` 矛盾
   （该测试在默认 CI 不启用 tiny-llm feature，长期未执行）。现断言与公式及
   B15 越界回归一致，并补下限生效边界与 reserve 可配置用例。
+- 修复 all-features Clippy 门禁：文档列表续行缩进、测试配置初始化与边界断言
+  遵循当前 lint；并把 Rust 1.87 才稳定的 `is_multiple_of` 改为兼容声明 MSRV 1.82
+  的取模表达式。
 
 ### Changed
+- Serving 评测归档改为根环境 metadata + 每 run 模型/量化 metadata +
+  `per_request.jsonl` + `summary.json` + `stdout.log`；方法论明确 SSE chunk 间隔
+  不是 token 级 ITL，当前协议无法可靠测得 ITL 时必须显示不可用。README 与
+  ROADMAP 统一为“控制面核心稳定、可信评测与上游转化仍 active”，并明确
+  推理加速主线属于 tiny-llm。Cargo 包元数据改为真实维护者、仓库、许可证和
+  Rust 版本，并设置 `paged-infer` 为默认 binary，恢复 README 中
+  `cargo run -- --serve` 的可用性；FFI rustdoc 同步当前真实接入状态。
 - README IN/OUT：tokenizer 改为 HTTP 边界适配器；词表/BPE 权威仍在 tiny-llm
 - 架构图改为控制面 + CPU 参考 / tiny-llm 策略 1 双后端
-- 面向用户的 GitHub 链接统一为 `github.com/aicl-lab/...`
+- 面向用户的 GitHub 链接统一为 `github.com/open-infra-ai/...`
 
 ## [0.2.0] - 2026-08-17
 

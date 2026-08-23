@@ -23,7 +23,7 @@
 //!   更高并发的压测（如 6GB 卡跑 0.5B 模型时并发 8 可容纳）。
 //! - `PAGED_INFER_TINY_LLM_DECODE_RESERVE`：每序列 decode 预留 token 数
 //!   （默认 512）。长生成场景应不低于 `max_tokens`。
-//! 非法值（非整数）记录警告并回退默认值。
+//!   非法值（非整数）记录警告并回退默认值。
 //!
 //! 仅在 `tiny-llm` cargo feature 下编译，且需 `TINY_LLM_DIR` 指向
 //! 已构建的 tiny-llm 静态库（见 build.rs）。
@@ -329,7 +329,7 @@ mod tests {
 
         // 恰好留在预留内：context 增长到 context+reserve-1 仍合法
         let ctx_at_edge = context_len + reserve as usize - 1;
-        assert!(ctx_at_edge as i32 + 1 <= capacity, "预留边界内不应越界");
+        assert!((ctx_at_edge as i32) < capacity, "预留边界内不应越界");
 
         // 下一 token 即越界：context = context+reserve
         let ctx_over = context_len + reserve as usize;
