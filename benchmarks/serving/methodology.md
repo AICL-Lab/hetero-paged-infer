@@ -76,6 +76,7 @@ EOS 等特殊 token，必须在报表中标注。未提供 tokenizer 时 token �
 ```
 results/<date>-<gpu-slug>/
 ├── metadata.json        # 三件套 + 参数矩阵（schema 见下）
+├── report.md            # 人工结论、限制、负结果与完整复现命令（正式结果必需）
 ├── <engine>_<mode>_c<N|rate>_<dataset>_r<N>/
 │   ├── run_metadata.json   # 本后端 commit、模型/量化、负载参数
 │   ├── per_request.jsonl   # loadgen 逐请求记录
@@ -102,6 +103,14 @@ results/<date>-<gpu-slug>/
 `run_metadata.json`；这样同一实验根目录可以安全容纳多个后端，根 metadata
 不会因第二次 sweep 被某个后端的 URL/模型覆盖。
 
+`run_metadata.json` 的 `model.sha256` 是本地模型文件的 SHA-256；正式报告缺少该值时，
+不得用“同名模型”或远程 revision 替代。远程模型须先固定到本地文件并记录文件哈希，
+再进入正式对照。
+
+运行 `python3 validate_results.py <result-root>` 检查基础产物；发布前运行
+`python3 validate_results.py --formal <result-root>`。后者额外要求 `report.md`、汇总 CSV、
+图表和每个 run 的模型 SHA-256，但仍不判断数值是否“好看”。
+
 ## 6. 图表规范（plots.py）
 
 - TTFT p95 vs 并发折线（三引擎/数据集分系列，阴影为重复 min/max）
@@ -109,5 +118,5 @@ results/<date>-<gpu-slug>/
 - SLO 曲线：TTFT p95 vs λ（泊松档）
 - 每张图 caption：`<engine> @ <commit>, <date>, <gpu>`
 
-KV 利用率和 prefix 命中图属于后续能力，只有采样器/功能真正实现并归档原始数据后
-才加入本规范。
+CUDA Graph on/off 的配对 TPOT 图属于 tiny-llm 的 engine 层报告，不混入 serving 曲线。
+KV 利用率图属于后续能力，只有采样器真正实现并归档原始数据后才加入本规范。

@@ -291,7 +291,14 @@ for result in results {
 
 ## 性能边界
 
-当前计算后端为 CPU 参考执行器（随机权重小模型），因此仓库不宣称真实 token 吞吐或 GPU 利用率。现阶段 benchmark 只用于观察调度、KV 分页与服务控制面的相对开销；接入真实 CUDA kernel 后才能建立硬件性能基线。
+默认计算后端是 CPU 参考执行器（随机权重小模型），因此它只用于测试、CI 和协议/调度
+回归；不能产生真实 token 吞吐或 GPU 利用率结论。`tiny-llm` feature 已接入真实 CUDA
+后端与分页 KV（策略 1），目前 3 并发 e2e 只证明跨语言生命周期与 greedy 输出正确性。
+
+真实 CUDA Serving 的 closed-loop / Poisson 报告尚未发布。在完整矩阵通过正确性门控、绑定
+硬件与双仓 commit、归档 `summary.json` 和 `per_request.jsonl` 前，本仓库不宣称容量、QPS、
+GPU 利用率或生产成熟度。评测入口与产物要求见
+[`benchmarks/serving/README.md`](benchmarks/serving/README.md)。
 
 ### 流式（SSE）与分词器
 
@@ -381,7 +388,7 @@ cargo test && cargo fmt --check && cargo clippy
 
 - **无抢占**（无 swap / preempt-resume）
 - **无 chunked prefill**、**无 prefix caching**
-- **无生产 CUDA kernel**（真实 kernel 在 tiny-llm 仓库）
+- **不拥有 CUDA kernel**（真实 kernel 属于 tiny-llm；本仓只通过 C ABI 调度）
 - 不发布缺少可信 token 计数、完整墙钟、硬件和 commit 绑定的吞吐数字
 
 推理加速主线位于 [tiny-llm](https://github.com/open-infra-ai/tiny-llm)；本仓库只负责

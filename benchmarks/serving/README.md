@@ -17,6 +17,8 @@ benchmarks/serving/
 │       └── {short,work,long}.jsonl   # gen_synth.py 产出
 ├── run_sweep.sh           # 矩阵编排：dirty 检查 + 双层 metadata + loadgen
 ├── plots.py               # 只读取权威 summary.json 生成图表
+├── validate_results.py    # 检查正式结果的必需产物与 JSON schema
+├── RESULT_REPORT_TEMPLATE.md # 人工结论、限制与复现命令模板
 └── results/<date>-<gpu>/  # 原始请求 + run summary + 环境/模型 metadata + 图表
 ```
 
@@ -58,15 +60,31 @@ cd benchmarks/serving
     --model paged-infer --model-path ../../../models/<model>.gguf \
     --backend-quant W8A16 --tokenizer <tokenizer.json> --cuda-archs 86
 
-# 5. 图表
+# 5. 检查产物并生成图表
+python3 validate_results.py results/<date>-<gpu>/
 python3 plots.py results/<date>-<gpu>/
+
+# 6. 准备发布正式结果前（要求填写 report.md、模型 SHA-256 和汇总图表）
+cp RESULT_REPORT_TEMPLATE.md results/<date>-<gpu>/report.md
+python3 validate_results.py --formal results/<date>-<gpu>/
 ```
 
 ## 结果索引
 
 | 日期 | 硬件 | 内容 | 目录 |
 |------|------|------|------|
-| （W6 全功能复测后回填，先留空位不写假数字） | | | |
+| （尚无正式结果；空表是刻意状态，不以脚手架代替数据） | | | |
+
+首个正式报告必须同时覆盖：
+
+- 正确性 canary 后的真实 CUDA 后端；
+- closed-loop 并发 1/2/4/8 与 Poisson 到达率矩阵；
+- `paged-infer`、`llama-server`、可运行时的 vLLM 使用同一 loadgen、数据集与请求参数；
+- 每个数字绑定硬件、驱动、双仓 commit、模型 SHA-256、量化格式和原始请求数据；
+- 失败、OOM、429、无法启动的对照与 token coverage 不足均写进 `report.md`。
+
+`validate_results.py` 只检查产物完整性，不会把通过检查误写成性能结论；只有人工填写
+`report.md` 的结论和限制后，结果才可被 README、简历或面试材料引用。
 
 ## 纪律提醒（摘要，全文见 methodology.md）
 

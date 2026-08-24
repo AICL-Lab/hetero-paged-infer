@@ -23,6 +23,7 @@
 #   --model <name>          OpenAI API model 字段（默认 paged-infer）
 #   --tokenizer <path>      usage 缺失时用于统计完整输出文本 token 数
 #   --model-path <path>     被测模型路径（仅写入 run_metadata.json）
+#   --model-sha256 <hex>    模型文件 SHA-256；省略时对可访问的 --model-path 自动计算
 #   --backend-quant <name>  后端量化口径，如 W8A16/Q4_K_M/FP16
 #   --engine-dir <dir>      被测引擎 git 目录（记录 commit；默认仓库根目录）
 #   --cuda-archs <list>     构建 CUDA arch 口径（仅写 metadata）
@@ -36,7 +37,7 @@ cd "$(dirname "$0")"
 # ---------- 参数 ----------
 BASE_URL="" ENGINE="" MODES="closed" CONCS="1 2 4 8" RATES="0.5 1.0 2.0"
 DATASETS="work" REQUESTS=64 WARMUP=30 MAX_TOKENS=128 REPEATS=3
-API_MODEL="paged-infer" TOKENIZER="" MODEL_PATH="" BACKEND_QUANT="unspecified"
+API_MODEL="paged-infer" TOKENIZER="" MODEL_PATH="" MODEL_SHA256="" BACKEND_QUANT="unspecified"
 ENGINE_DIR="../.." CUDA_ARCHS="unspecified" RESULTS_DIR=""
 ENGINE_DIR_SET=0 ALLOW_DIRTY=0 TINY_LLM_DIR="../../../tiny-llm"
 
@@ -55,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --model) API_MODEL="$2"; shift 2;;
     --tokenizer) TOKENIZER="$2"; shift 2;;
     --model-path) MODEL_PATH="$2"; shift 2;;
+    --model-sha256) MODEL_SHA256="$2"; shift 2;;
     --backend-quant) BACKEND_QUANT="$2"; shift 2;;
     --engine-dir) ENGINE_DIR="$2"; ENGINE_DIR_SET=1; shift 2;;
     --cuda-archs) CUDA_ARCHS="$2"; shift 2;;
@@ -76,6 +78,12 @@ for mode in $MODES; do
 done
 if [[ -n "$TOKENIZER" && ! -f "$TOKENIZER" ]]; then
   echo "tokenizer 不存在: $TOKENIZER"; exit 2
+fi
+if [[ -n "$MODEL_SHA256" && ! "$MODEL_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+  echo "--model-sha256 必须是 64 位十六进制 SHA-256"; exit 2
+fi
+if [[ -z "$MODEL_SHA256" && -n "$MODEL_PATH" && -f "$MODEL_PATH" ]]; then
+  MODEL_SHA256=$(sha256sum "$MODEL_PATH" | awk '{print $1}')
 fi
 if [[ "$ENGINE" != "paged-infer" && "$ENGINE_DIR_SET" -eq 0 ]]; then
   echo "非 paged-infer 后端必须用 --engine-dir 指向其 git checkout，以记录真实 commit"
@@ -172,14 +180,14 @@ run_one() { # $1=mode $2=param(并发或速率) $3=dataset $4=repeat
   if [[ -n "$TOKENIZER" ]]; then tokenizer_args=(--tokenizer "$TOKENIZER"); fi
 
   python3 - "$dir/run_metadata.json" "$ENGINE" "$ENGINE_COMMIT" "$ENGINE_DIRTY" "$API_MODEL" \
-    "$MODEL_PATH" "$BACKEND_QUANT" "$TOKENIZER" "$mode" "$param" "$ds" \
+    "$MODEL_PATH" "$MODEL_SHA256" "$BACKEND_QUANT" "$TOKENIZER" "$mode" "$param" "$ds" \
     "$rep" "$REQUESTS" "$WARMUP" "$MAX_TOKENS" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 (
-    path, engine, commit, engine_dirty, api_model, model_path, quant, tokenizer, mode,
+    path, engine, commit, engine_dirty, api_model, model_path, model_sha256, quant, tokenizer, mode,
     parameter, dataset, repeat, requests, warmup, max_tokens,
 ) = sys.argv[1:]
 metadata = {
@@ -192,6 +200,7 @@ metadata = {
     "model": {
         "api_name": api_model,
         "path": model_path or None,
+        "sha256": model_sha256 or None,
         "backend_quant": quant,
         "tokenizer": tokenizer or None,
     },
@@ -232,4 +241,5 @@ done
 
 echo
 echo "=== sweep 完成：$OUTDIR ==="
+python3 validate_results.py "$OUTDIR"
 echo "下一步：python3 plots.py $OUTDIR 生成图表"
