@@ -44,7 +44,7 @@ pub struct GenerationParams {
     /// （`k <= 5`，OpenAI 上限）；`None` 表示不返回 logprobs。
     pub logprobs: Option<usize>,
 
-    /// 调度优先级（PINF-112）：数值越大越优先调度，0 为默认。
+    /// 调度优先级（PSERV-112）：数值越大越优先调度，0 为默认。
     ///
     /// 仅影响调度顺序（prefill 启动与在途 prefill 的批次组合），
     /// 不改变采样、能力声明或后端行为。同级优先级保持 FCFS（先提交先调度）。

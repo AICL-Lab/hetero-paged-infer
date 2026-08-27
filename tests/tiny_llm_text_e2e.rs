@@ -2,7 +2,7 @@
 //!
 //! 门控：
 //! - 编译期：`cargo test --features tiny-llm`
-//! - 运行期：`TINY_LLM_MODEL`（GGUF）、`PINF_TOKENIZER_JSON`（tokenizer.json）
+//! - 运行期：`TINY_LLM_MODEL`（GGUF）、`PSERV_TOKENIZER_JSON`（tokenizer.json）
 //!
 //! 与 `tiny_llm_backend.rs`（验证接入流程）不同，本测试验证**文本质量**：
 //! 使用 HuggingFaceTokenizer（词表与模型一致），提交真实 prompt，断言输出
@@ -21,7 +21,7 @@ fn model_path() -> Option<String> {
 }
 
 fn tokenizer_path() -> Option<String> {
-    std::env::var("PINF_TOKENIZER_JSON").ok()
+    std::env::var("PSERV_TOKENIZER_JSON").ok()
 }
 
 fn build_engine(model: &str, tok_path: &str) -> InferenceEngine {
@@ -53,7 +53,7 @@ fn qwen2_text_generation_end_to_end() {
         return;
     };
     let Some(tok_path) = tokenizer_path() else {
-        eprintln!("skip: set PINF_TOKENIZER_JSON to tokenizer.json to enable");
+        eprintln!("skip: set PSERV_TOKENIZER_JSON to tokenizer.json to enable");
         return;
     };
 
@@ -100,7 +100,7 @@ fn qwen2_chat_prompt_matches_llama_cpp() {
         return;
     };
     let Some(tok_path) = tokenizer_path() else {
-        eprintln!("skip: set PINF_TOKENIZER_JSON to tokenizer.json to enable");
+        eprintln!("skip: set PSERV_TOKENIZER_JSON to tokenizer.json to enable");
         return;
     };
 
@@ -171,7 +171,7 @@ fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
         return;
     };
     let Some(tok_path) = tokenizer_path() else {
-        eprintln!("skip: set PINF_TOKENIZER_JSON to tokenizer.json to enable");
+        eprintln!("skip: set PSERV_TOKENIZER_JSON to tokenizer.json to enable");
         return;
     };
 

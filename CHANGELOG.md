@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CLI 新增 `--tokenizer <path>`：启用 HuggingFace tokenizer（也可经
     `config.json` 的 `tokenizer.kind=huggingface` 配置）
   - 差分验证 `tests/tokenizer_real_diff.rs`：paged-serving(HF) 与 tiny-llm 权威
-    fixture 逐 id 对齐（30/30，`PINF_TOKENIZER_JSON` + `PINF_TOKENIZER_FIXTURE` 门控）
+    fixture 逐 id 对齐（30/30，`PSERV_TOKENIZER_JSON` + `PSERV_TOKENIZER_FIXTURE` 门控）
   - 文本质量端到端 `tests/tiny_llm_text_e2e.rs`：真实后端 + 真实 tokenizer，
     与 llama.cpp 同 prompt greedy 输出逐 token 完全一致（24/24），EOS 正确终止
 - 并发压测框架（ROADMAP 选项 A 第三项）：

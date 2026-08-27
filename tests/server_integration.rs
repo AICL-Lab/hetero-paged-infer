@@ -212,7 +212,7 @@ async fn test_completions_stream_returns_done_event() {
 
 #[tokio::test]
 async fn test_completions_rejects_non_greedy_sampling_params() {
-    // PINF-101：CPU 参考后端只有 greedy 一条路径；显式传入其他采样参数
+    // PSERV-101：CPU 参考后端只有 greedy 一条路径；显式传入其他采样参数
     // 必须在准入阶段返回 400，而不是在执行时被静默忽略。
     let app = create_router(create_test_config()).unwrap();
 
@@ -250,7 +250,7 @@ async fn test_completions_rejects_non_greedy_sampling_params() {
 
 #[tokio::test]
 async fn test_streaming_chunks_concat_equals_non_streaming_text() {
-    // PINF-102 端到端性质：SSE 片段拼接 == 同一请求非流式返回的完整文本。
+    // PSERV-102 端到端性质：SSE 片段拼接 == 同一请求非流式返回的完整文本。
     // CPU 执行器固定种子 → 两个全新引擎对同一 prompt 产生相同 token 序列。
     let stream_app = create_router(create_test_config()).unwrap();
     let unary_app = create_router(create_test_config()).unwrap();
@@ -749,7 +749,7 @@ async fn test_client_disconnect_cancels_generation() {
 
 #[tokio::test]
 async fn test_completions_reports_length_finish_reason_when_truncated() {
-    // PINF-103：CPU 执行器生成非 EOS token，达到 max_tokens 截断时，
+    // PSERV-103：CPU 执行器生成非 EOS token，达到 max_tokens 截断时，
     // 非流式响应必须报告 finish_reason="length"，而不是始终 "stop"。
     let app = create_router(create_test_config()).unwrap();
 
@@ -784,7 +784,7 @@ async fn test_completions_reports_length_finish_reason_when_truncated() {
 
 #[tokio::test]
 async fn test_completions_reports_stop_finish_reason_on_eos() {
-    // PINF-103：注入恒生成 EOS 的执行器，请求在首个 token 后自然停止，
+    // PSERV-103：注入恒生成 EOS 的执行器，请求在首个 token 后自然停止，
     // 非流式响应必须报告 finish_reason="stop"。
     let config = create_test_config();
     let eos = SimpleTokenizer::new().eos_token_id();
@@ -827,7 +827,7 @@ async fn test_completions_reports_stop_finish_reason_on_eos() {
 
 #[tokio::test]
 async fn test_streaming_reports_stop_finish_reason_on_eos() {
-    // PINF-103：流式场景下 EOS 自然停止，终止 chunk 的 finish_reason 必须是 "stop"。
+    // PSERV-103：流式场景下 EOS 自然停止，终止 chunk 的 finish_reason 必须是 "stop"。
     let config = create_test_config();
     let eos = SimpleTokenizer::new().eos_token_id();
     let engine = InferenceEngine::with_components(
@@ -886,12 +886,12 @@ async fn test_streaming_reports_stop_finish_reason_on_eos() {
 
 #[tokio::test]
 async fn test_completions_rejects_unsupported_params() {
-    // PINF-104：CPU 后端未实现的参数在准入阶段返回 400 + invalid_request_error，
+    // PSERV-104：CPU 后端未实现的参数在准入阶段返回 400 + invalid_request_error，
     // 消息带参数名——而不是被 serde 静默忽略。
     let app = create_router(create_test_config()).unwrap();
 
     let cases = [
-        // stop（PINF-105）、n（PINF-106）、logprobs（PINF-107）已支持，不再在此拒绝
+        // stop（PSERV-105）、n（PSERV-106）、logprobs（PSERV-107）已支持，不再在此拒绝
         (
             "seed",
             json!({"model":"test-model","prompt":"hi","max_tokens":2,"seed":42}),
@@ -966,7 +966,7 @@ async fn test_completions_rejects_unsupported_params() {
 
 #[tokio::test]
 async fn test_chat_completions_rejects_unsupported_params() {
-    // PINF-104：chat/completions 同样在准入阶段拒绝未支持参数。
+    // PSERV-104：chat/completions 同样在准入阶段拒绝未支持参数。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app
@@ -999,7 +999,7 @@ async fn test_chat_completions_rejects_unsupported_params() {
 
 #[tokio::test]
 async fn test_completions_accepts_unsupported_params_at_defaults() {
-    // PINF-104：未支持参数取默认值时（frequency_penalty=0、n=1、stop=null/[]、
+    // PSERV-104：未支持参数取默认值时（frequency_penalty=0、n=1、stop=null/[]、
     // echo=false、logprobs=false/0、best_of=1）语义无害，仍应放行；
     // 完全未知的字段（如 user）也应忽略而非拒绝。
     let app = create_router(create_test_config()).unwrap();
@@ -1041,7 +1041,7 @@ async fn test_completions_accepts_unsupported_params_at_defaults() {
 
 #[tokio::test]
 async fn test_completions_honors_stop_sequences() {
-    // PINF-105：stop 序列命中时，非流式响应移除 stop 序列并报告
+    // PSERV-105：stop 序列命中时，非流式响应移除 stop 序列并报告
     // finish_reason="stop"（而非 length）。
     let config = create_test_config();
     let engine = InferenceEngine::with_components(
@@ -1087,7 +1087,7 @@ async fn test_completions_honors_stop_sequences() {
 
 #[tokio::test]
 async fn test_streaming_honors_stop_sequences() {
-    // PINF-105：流式下 stop 命中后不再推送新内容，终止 chunk 报 "stop"；
+    // PSERV-105：流式下 stop 命中后不再推送新内容，终止 chunk 报 "stop"；
     // 拼接文本 == 非流式文本（单字符 stop 序列保证无跨 token 前缀残留）。
     let config = create_test_config();
     let make_app = || {
@@ -1185,7 +1185,7 @@ async fn test_streaming_honors_stop_sequences() {
 
 #[tokio::test]
 async fn test_completions_rejects_too_many_stop_sequences() {
-    // PINF-105：stop 超过 4 个（OpenAI 限制）在准入阶段返回 400。
+    // PSERV-105：stop 超过 4 个（OpenAI 限制）在准入阶段返回 400。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app
@@ -1216,7 +1216,7 @@ async fn test_completions_rejects_too_many_stop_sequences() {
 
 #[tokio::test]
 async fn test_chat_completions_honors_stop_sequences() {
-    // PINF-105：chat/completions 同样支持 stop 序列。
+    // PSERV-105：chat/completions 同样支持 stop 序列。
     let config = create_test_config();
     let engine = InferenceEngine::with_components(
         config.clone(),
@@ -1256,7 +1256,7 @@ async fn test_chat_completions_honors_stop_sequences() {
 
 #[tokio::test]
 async fn test_completions_returns_n_candidates() {
-    // PINF-106：非流式 n>1 返回 n 个 choices；usage.completion_tokens 为各
+    // PSERV-106：非流式 n>1 返回 n 个 choices；usage.completion_tokens 为各
     // 候选之和（prompt 只计一次）。greedy 后端所有候选内容相同。
     let config = create_test_config();
     let engine = InferenceEngine::with_components(
@@ -1308,7 +1308,7 @@ async fn test_completions_returns_n_candidates() {
 
 #[tokio::test]
 async fn test_streaming_merges_n_candidates() {
-    // PINF-106：流式 n=2 fan-in 为单一 SSE；中间 chunk 含 2 个 choice，
+    // PSERV-106：流式 n=2 fan-in 为单一 SSE；中间 chunk 含 2 个 choice，
     // 终止 chunk 带 2 个 finish_reason 与聚合 usage。
     let config = create_test_config();
     let engine = InferenceEngine::with_components(
@@ -1381,7 +1381,7 @@ async fn test_streaming_merges_n_candidates() {
 
 #[tokio::test]
 async fn test_chat_completions_returns_n_candidates() {
-    // PINF-106：chat/completions 同样支持 n。
+    // PSERV-106：chat/completions 同样支持 n。
     let config = create_test_config();
     let engine = InferenceEngine::with_components(
         config.clone(),
@@ -1423,7 +1423,7 @@ async fn test_chat_completions_returns_n_candidates() {
 
 #[tokio::test]
 async fn test_completions_rejects_invalid_n() {
-    // PINF-106：n=0 与超上限（16）在准入阶段返回 400。
+    // PSERV-106：n=0 与超上限（16）在准入阶段返回 400。
     let app = create_router(create_test_config()).unwrap();
 
     for body in [
@@ -1456,7 +1456,7 @@ async fn test_completions_rejects_invalid_n() {
 
 #[tokio::test]
 async fn test_completions_returns_logprobs() {
-    // PINF-107：logprobs=true 时每个 choice 携带 logprobs 块
+    // PSERV-107：logprobs=true 时每个 choice 携带 logprobs 块
     // （tokens / token_logprobs / top_logprobs / text_offset）。
     let app = create_router(create_test_config()).unwrap();
 
@@ -1501,7 +1501,7 @@ async fn test_completions_returns_logprobs() {
 
 #[tokio::test]
 async fn test_completions_omits_logprobs_by_default() {
-    // PINF-107：未请求 logprobs 时响应不携带该字段（而非空对象）。
+    // PSERV-107：未请求 logprobs 时响应不携带该字段（而非空对象）。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app
@@ -1529,7 +1529,7 @@ async fn test_completions_omits_logprobs_by_default() {
 
 #[tokio::test]
 async fn test_streaming_carries_logprobs() {
-    // PINF-107：流式每个携带内容的 chunk 同时携带该 token 的 logprobs。
+    // PSERV-107：流式每个携带内容的 chunk 同时携带该 token 的 logprobs。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app
@@ -1583,7 +1583,7 @@ async fn test_streaming_carries_logprobs() {
 
 #[tokio::test]
 async fn test_chat_completions_returns_logprobs() {
-    // PINF-107：chat/completions 同样支持 logprobs。
+    // PSERV-107：chat/completions 同样支持 logprobs。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app
@@ -1618,7 +1618,7 @@ async fn test_chat_completions_returns_logprobs() {
 
 #[tokio::test]
 async fn test_completions_rejects_logprobs_above_limit() {
-    // PINF-107：logprobs > 5（OpenAI 上限）在准入阶段返回 400。
+    // PSERV-107：logprobs > 5（OpenAI 上限）在准入阶段返回 400。
     let app = create_router(create_test_config()).unwrap();
 
     let response = app

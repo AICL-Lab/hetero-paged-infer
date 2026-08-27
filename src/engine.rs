@@ -369,7 +369,7 @@ impl InferenceEngine {
             }
         }
 
-        // PINF-105：stop 序列生成端检测（在 decoder push 之前，
+        // PSERV-105：stop 序列生成端检测（在 decoder push 之前，
         // 命中后触发 token 不会作为片段推送给客户端）。
         self.apply_stop_sequences(&generated);
 
@@ -404,7 +404,7 @@ impl InferenceEngine {
         Ok(StepEvents { completed, chunks })
     }
 
-    /// PINF-105：对本次生成过 token 且配置了 stop 序列的请求做生成端检测。
+    /// PSERV-105：对本次生成过 token 且配置了 stop 序列的请求做生成端检测。
     ///
     /// 一旦输出文本命中任一 stop 序列：把输出 token 截断到序列之前、
     /// 标记请求完成（`finish_reason="stop"`），并销毁其增量解码器——
@@ -1320,7 +1320,7 @@ mod tests {
 
     #[test]
     fn test_streaming_chunks_concat_equals_final_output() {
-        // PINF-102 核心性质：所有流式片段拼接 == 最终一次性 decode 文本
+        // PSERV-102 核心性质：所有流式片段拼接 == 最终一次性 decode 文本
         let config = create_test_config();
         let mut engine = InferenceEngine::new(config).unwrap();
 
@@ -1631,7 +1631,7 @@ mod tests {
 
     #[test]
     fn test_completed_request_reports_finish_reason() {
-        // PINF-103：成功完成的请求必须区分停止原因——
+        // PSERV-103：成功完成的请求必须区分停止原因——
         // 达到 max_tokens 截断 → Length，末 token 为 EOS → Stop。
         let config = create_test_config();
         // EOS 动态取自 tokenizer 而非硬编码，避免依赖默认 special token 配置。
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[test]
     fn test_stop_sequence_truncates_output_and_reports_stop() {
-        // PINF-105：输出文本命中 stop 序列时请求立即停止；stop 序列本身
+        // PSERV-105：输出文本命中 stop 序列时请求立即停止；stop 序列本身
         // 从输出中移除（保留此前缀），finish_reason 为 Stop。
         let config = create_test_config();
         let scheduler = Scheduler::new(config.clone());
@@ -1751,7 +1751,7 @@ mod tests {
 
     #[test]
     fn test_stop_sequence_unmatched_reports_length() {
-        // PINF-105：stop 序列未命中时，请求照常以 max_tokens 截断结束（Length）。
+        // PSERV-105：stop 序列未命中时，请求照常以 max_tokens 截断结束（Length）。
         let config = create_test_config();
         let scheduler = Scheduler::new(config.clone());
         let mut engine = InferenceEngine::with_components(

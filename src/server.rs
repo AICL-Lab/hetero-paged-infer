@@ -339,7 +339,7 @@ impl StopSequence {
         }
     }
 
-    /// 展开为字符串列表（PINF-105：stop 已支持，交给引擎生成端检测）。
+    /// 展开为字符串列表（PSERV-105：stop 已支持，交给引擎生成端检测）。
     fn to_vec(&self) -> Vec<String> {
         match self {
             StopSequence::Single(s) => vec![s.clone()],
@@ -371,9 +371,9 @@ fn logprobs_param(p: Option<LogprobsParam>) -> Result<Option<usize>, ApiError> {
     }
 }
 
-/// CPU 后端未实现的 OpenAI 兼容参数（PINF-104）。
+/// CPU 后端未实现的 OpenAI 兼容参数（PSERV-104）。
 ///
-/// 与 PINF-101 的原则一致：不支持的参数在准入阶段显式拒绝（400），
+/// 与 PSERV-101 的原则一致：不支持的参数在准入阶段显式拒绝（400），
 /// 而不是被 serde 静默忽略。仅"非默认值"被拒绝——默认值（例如
 /// `frequency_penalty=0`、`n=1`、`stop=null`/`[]`、`echo=false`）语义上
 /// 无害，直接放行。其余完全未知的字段（如 `user`）仍被忽略，不影响
@@ -401,7 +401,7 @@ fn is_empty_array(v: &serde_json::Value) -> bool {
     matches!(v, serde_json::Value::Array(a) if a.is_empty())
 }
 
-/// 拒绝未支持参数的非默认值（PINF-104）。
+/// 拒绝未支持参数的非默认值（PSERV-104）。
 ///
 /// 返回 400 + `invalid_request_error`，消息带参数名以便客户端定位。
 fn reject_unsupported_params(p: &UnsupportedParams) -> Result<(), ApiError> {
@@ -473,7 +473,7 @@ struct CompletionRequest {
     stop: Option<StopSequence>,
     n: Option<u32>,
     logprobs: Option<LogprobsParam>,
-    /// 调度优先级（PINF-112）：数值越大越先调度，缺省 0。
+    /// 调度优先级（PSERV-112）：数值越大越先调度，缺省 0。
     priority: Option<u8>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
@@ -490,7 +490,7 @@ struct ChatCompletionRequest {
     stop: Option<StopSequence>,
     n: Option<u32>,
     logprobs: Option<LogprobsParam>,
-    /// 调度优先级（PINF-112）：数值越大越先调度，缺省 0。
+    /// 调度优先级（PSERV-112）：数值越大越先调度，缺省 0。
     priority: Option<u8>,
     #[serde(flatten)]
     unsupported: UnsupportedParams,
@@ -1256,7 +1256,7 @@ fn stream_response(
     .into_response()
 }
 
-/// 流式 n>1：把 n 个候选事件流 fan-in 为单一 SSE 流（PINF-106）。
+/// 流式 n>1：把 n 个候选事件流 fan-in 为单一 SSE 流（PSERV-106）。
 ///
 /// 每个事件发出一个含 n 个 choice 的 chunk（仅事件来源 index 携带增量，
 /// 其余为空占位）；全部候选到达终态后发出终止 chunk（n 个 finish_reason
@@ -1504,7 +1504,7 @@ fn generation_params(
         top_p: top_p.unwrap_or(1.0),
         stop,
         logprobs,
-        // priority 直接透传（PINF-112），缺省 0。
+        // priority 直接透传（PSERV-112），缺省 0。
         priority: priority.unwrap_or(0),
     };
     params

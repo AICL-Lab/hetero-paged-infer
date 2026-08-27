@@ -640,7 +640,7 @@ mod layer_isolation_tests {
     use super::*;
     use crate::test_utils::create_test_config;
 
-    /// PINF-001 regression test: Two layers writing to the same physical block
+    /// PSERV-001 regression test: Two layers writing to the same physical block
     /// at the same position must not overwrite each other.
     ///
     /// With the old HashMap<BlockIdx, KvBlock> key, layer 1 would overwrite
@@ -690,7 +690,7 @@ mod layer_isolation_tests {
         assert!(v_differs, "layer 0 and layer 1 V data must differ");
     }
 
-    /// PINF-001: Multi-layer incremental decode should produce the same result
+    /// PSERV-001: Multi-layer incremental decode should produce the same result
     /// as a full recompute when given the same input tokens.
     ///
     /// Full prefill [5,10,15,20] should produce the same next token as

@@ -538,7 +538,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
-    /// PINF-102 流式等价性质：逐 token push 的片段拼接 + finish 输出
+    /// PSERV-102 流式等价性质：逐 token push 的片段拼接 + finish 输出
     /// 必须等于对同一 token 序列的一次性 decode。
     #[test]
     fn test_simple_decoder_streaming_equivalence() {

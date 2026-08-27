@@ -1,8 +1,8 @@
 //! Qwen2 真实 tokenizer 差分验证（paged-serving 侧）。
 //!
 //! 门控（与 `tiny_llm_backend.rs` 一致，运行时跳过）：
-//! - `PINF_TOKENIZER_JSON`：Qwen2.5 tokenizer.json 路径
-//! - `PINF_TOKENIZER_FIXTURE`：tiny-llm 的 `tokenizer_fixture.json`（HF 权威基准）
+//! - `PSERV_TOKENIZER_JSON`：Qwen2.5 tokenizer.json 路径
+//! - `PSERV_TOKENIZER_FIXTURE`：tiny-llm 的 `tokenizer_fixture.json`（HF 权威基准）
 //!
 //! 验证内容：
 //! - 编码与 HF 权威 fixture 逐 id 对齐（tiny-llm 自研 BPE 已与该 fixture 对齐，
@@ -13,19 +13,19 @@ use paged_serving::{HuggingFaceTokenizer, TokenizerTrait};
 use std::path::Path;
 
 fn tokenizer_path() -> Option<String> {
-    std::env::var("PINF_TOKENIZER_JSON").ok()
+    std::env::var("PSERV_TOKENIZER_JSON").ok()
 }
 
 #[test]
 fn qwen2_tokenizer_matches_tiny_llm_fixture() {
     let Some(path) = tokenizer_path() else {
-        eprintln!("skip: set PINF_TOKENIZER_JSON to a Qwen2.5 tokenizer.json to enable");
+        eprintln!("skip: set PSERV_TOKENIZER_JSON to a Qwen2.5 tokenizer.json to enable");
         return;
     };
     let tokenizer =
         HuggingFaceTokenizer::from_file(Path::new(&path)).expect("failed to load tokenizer.json");
 
-    let fixture_path = std::env::var("PINF_TOKENIZER_FIXTURE").expect("set PINF_TOKENIZER_FIXTURE");
+    let fixture_path = std::env::var("PSERV_TOKENIZER_FIXTURE").expect("set PSERV_TOKENIZER_FIXTURE");
     let raw = std::fs::read_to_string(&fixture_path).expect("read fixture");
     let fixture: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture");
 

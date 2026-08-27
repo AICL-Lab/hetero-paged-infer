@@ -7,7 +7,7 @@
 //! - **Decode 优先调度** - 优先调度 decode 请求以降低延迟
 //! - **内存压力感知** - 内存超阈值时拒绝新 prefill
 //! - **连续批处理** - 动态组合 prefill 和 decode 请求
-//! - **优先级调度（PINF-112）** - `GenerationParams::priority` 越大越先调度
+//! - **优先级调度（PSERV-112）** - `GenerationParams::priority` 越大越先调度
 //!   （prefill 启动、在途 prefill 组合与 decode 内部排序均生效）；
 //!   同级保持 FCFS，默认优先级 0
 //!
@@ -133,7 +133,7 @@ impl Scheduler {
             }
         }
 
-        // Priority 2: Schedule prefill sequences（PINF-112：高优先级先，
+        // Priority 2: Schedule prefill sequences（PSERV-112：高优先级先，
         // 同级保持 seq_id 顺序 = FCFS）
         let mut prefill_candidates: Vec<SeqId> = self.prefill_seq_ids();
         prefill_candidates.sort_by_key(|&sid| {
@@ -189,7 +189,7 @@ impl Scheduler {
 
         // Priority 3: Start new prefills from pending queue (if not under memory pressure)
         if !self.under_memory_pressure {
-            // PINF-112：先按优先级稳定排序（高优先级在前，同级保持 FCFS），
+            // PSERV-112：先按优先级稳定排序（高优先级在前，同级保持 FCFS），
             // 再做一轮扫描。
             let mut pending_vec: Vec<PendingRequest> = self.pending_queue.drain(..).collect();
             pending_vec.sort_by_key(|p| (std::cmp::Reverse(p.request.params.priority), p.seq_id));
@@ -376,7 +376,7 @@ impl Scheduler {
             })
     }
 
-    /// 因命中 stop 序列而终止请求（PINF-105）：
+    /// 因命中 stop 序列而终止请求（PSERV-105）：
     /// 把输出 token 截断到 stop 序列之前、标记 `stop_sequence_hit` 并完成。
     /// 仅可能命中已开始生成的 prefill/decode 请求（pending 无输出 token）。
     /// 返回是否找到了对应请求。
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn test_priority_higher_prefill_starts_first() {
-        // PINF-112：预算只够一个 prefill 时，高优先级请求先被调度启动，
+        // PSERV-112：预算只够一个 prefill 时，高优先级请求先被调度启动，
         // 即使它后提交。
         let mut config = create_test_config();
         config.max_total_tokens = 40; // 只够一个 32-token prefill
@@ -914,7 +914,7 @@ mod tests {
 
     #[test]
     fn test_priority_same_level_keeps_fcfs() {
-        // PINF-112：同级优先级保持 FCFS（先提交先调度）。
+        // PSERV-112：同级优先级保持 FCFS（先提交先调度）。
         let mut config = create_test_config();
         config.max_total_tokens = 40;
         let mut scheduler = Scheduler::new(config);
@@ -944,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_decode_seq_ids_orders_by_priority_desc() {
-        // PINF-112 回归：decode 序列按 priority 降序（同级 FCFS）。
+        // PSERV-112 回归：decode 序列按 priority 降序（同级 FCFS）。
         // 已有 test_decode_priority 只断言非空；此处直接锁定排序契约。
         let config = create_test_config();
         let mut scheduler = Scheduler::new(config);

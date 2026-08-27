@@ -542,7 +542,7 @@ grep -R "Hetero" -n src README.md || true   # src/README 当前描述中应为�
    - `test_qwen2_chat_prompt_without_system`；
    - 断言精确字符串。
 5. 在 README/T8 文档中写明：目前 chat template 硬编码 Qwen2，其他模型需扩展。
-6. 如有真实 `PINF_TOKENIZER_JSON`，可加门控集成测试，验证 `HuggingFaceTokenizer::try_encode(chat_prompt)` 编码后的首 token 为 `<|im_start|>` 对应 ID。
+6. 如有真实 `PSERV_TOKENIZER_JSON`，可加门控集成测试，验证 `HuggingFaceTokenizer::try_encode(chat_prompt)` 编码后的首 token 为 `<|im_start|>` 对应 ID。
 
 **验收**
 ```bash
@@ -637,7 +637,7 @@ cargo bench --bench concurrency_benchmark -- --test   # smoke
 **验收**
 - 真实环境运行：
   ```bash
-  TINY_LLM_DIR=... TINY_LLM_MODEL=... PINF_TOKENIZER_JSON=... \
+  TINY_LLM_DIR=... TINY_LLM_MODEL=... PSERV_TOKENIZER_JSON=... \
   cargo test --features tiny-llm --test tiny_llm_backend --test tiny_llm_text_e2e
   ```
 - 多波请求无 slot 泄漏；
