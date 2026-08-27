@@ -406,7 +406,7 @@ mod property_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        /// **Feature: paged-inference-system, Property 5: Block Count Invariant**
+        /// **Feature: paged-servingence-system, Property 5: Block Count Invariant**
         /// *For any* state of the KV_Cache_Manager, the invariant `used_blocks + free_blocks == total_blocks`
         /// shall hold. Additionally, when a sequence is freed, all its blocks shall return to the free pool.
         /// **Validates: Requirements 2.4, 2.5**
@@ -450,7 +450,7 @@ mod property_tests {
             }
         }
 
-        /// **Feature: paged-inference-system, Property 3: Block Allocation on Sequence Start**
+        /// **Feature: paged-servingence-system, Property 3: Block Allocation on Sequence Start**
         /// *For any* new sequence with n input tokens, the KV_Cache_Manager shall allocate
         /// ceil(n / block_size) logical blocks, each mapped to a distinct physical block.
         /// **Validates: Requirements 2.2**
@@ -489,7 +489,7 @@ mod property_tests {
             );
         }
 
-        /// **Feature: paged-inference-system, Property 4: Block Allocation on Growth**
+        /// **Feature: paged-servingence-system, Property 4: Block Allocation on Growth**
         /// *For any* sequence that grows beyond its current block capacity, the KV_Cache_Manager
         /// shall allocate exactly one additional physical block when the token count crosses a block boundary.
         /// **Validates: Requirements 2.3**
@@ -531,7 +531,7 @@ mod property_tests {
             );
         }
 
-        /// **Feature: paged-inference-system, Property 12: Memory Statistics Invariant**
+        /// **Feature: paged-servingence-system, Property 12: Memory Statistics Invariant**
         /// *For any* state of the KV_Cache_Manager, the reported memory statistics shall satisfy:
         /// `total_blocks == used_blocks + free_blocks` and
         /// `num_sequences == count of sequences with allocated blocks`.

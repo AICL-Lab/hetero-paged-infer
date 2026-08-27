@@ -1234,7 +1234,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "paged-infer"
+name = "paged-serving"
 version = "0.2.0"
 dependencies = [
  "async-stream",
@@ -1245,7 +1245,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "log",
- "paged-infer",
+ "paged-serving",
  "proptest",
  "rand 0.8.6",
  "reqwest",

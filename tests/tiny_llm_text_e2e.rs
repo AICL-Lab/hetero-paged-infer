@@ -10,7 +10,7 @@
 
 #![cfg(feature = "tiny-llm")]
 
-use paged_infer::{
+use paged_serving::{
     EngineConfig, GenerationParams, HuggingFaceTokenizer, InferenceEngine, Scheduler,
     TinyLlmExecutor, TokenizerTrait,
 };
@@ -246,8 +246,8 @@ fn qwen2_three_concurrent_paged_requests_match_llama_cpp() {
         assert!(
             matches!(
                 c.finish_reason,
-                Some(paged_infer::types::FinishReason::Stop)
-                    | Some(paged_infer::types::FinishReason::Length)
+                Some(paged_serving::types::FinishReason::Stop)
+                    | Some(paged_serving::types::FinishReason::Length)
             ),
             "{label} finish_reason 应为 Stop/Length，实际 {:?}",
             c.finish_reason

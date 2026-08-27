@@ -8,20 +8,20 @@
 //!   scatter/gather 写入分页 KV 池（max_num_blocks 由 [`EngineConfig`] 配置，
 //!   默认 1024，即默认启用策略 1）；
 //! - 每序列首次出现时分配 KV（context_len + decode 预留 token，预留默认 512，
-//!   `PAGED_INFER_TINY_LLM_DECODE_RESERVE` 可调），decode 超出预留会失败
+//!   `PAGED_SERVING_TINY_LLM_DECODE_RESERVE` 可调），decode 超出预留会失败
 //!   （调用方应限制 `max_tokens`）；
 //! - 仅支持 greedy 采样（[`ExecutorCapabilities::GREEDY_ONLY`]）；
 //! - tokenizer 必须与 tiny-llm 加载的模型词表一致。
 //!
 //! # 策略 2（连续 KV）fallback
-//! 设置环境变量 `PAGED_INFER_TINY_LLM_STRATEGY=2` 时强制 `max_num_blocks=0`，
+//! 设置环境变量 `PAGED_SERVING_TINY_LLM_STRATEGY=2` 时强制 `max_num_blocks=0`，
 //! tiny-llm 走连续 KV，`block_tables` / `num_blocks` 传 null（行为同 D1b）。
 //!
 //! # 容量调节（环境变量）
-//! - `PAGED_INFER_TINY_LLM_MAX_SEQS`：最大并发序列数（默认 4）。单序列 KV
+//! - `PAGED_SERVING_TINY_LLM_MAX_SEQS`：最大并发序列数（默认 4）。单序列 KV
 //!   按 max_seq_len 预分配，该值决定 KV 池显存占用；显存充裕时可上调以做
 //!   更高并发的压测（如 6GB 卡跑 0.5B 模型时并发 8 可容纳）。
-//! - `PAGED_INFER_TINY_LLM_DECODE_RESERVE`：每序列 decode 预留 token 数
+//! - `PAGED_SERVING_TINY_LLM_DECODE_RESERVE`：每序列 decode 预留 token 数
 //!   （默认 512）。长生成场景应不低于 `max_tokens`。
 //!   非法值（非整数）记录警告并回退默认值。
 //!
@@ -46,14 +46,14 @@ const DEFAULT_DECODE_RESERVE: i32 = 512;
 /// clamp 到此值，避免 KV pool 超出显存；显存充裕时可经环境变量上调。
 const DEFAULT_MAX_CONCURRENT_SEQS: i32 = 4;
 
-/// 连续 KV（策略 2）fallback 开关：`PAGED_INFER_TINY_LLM_STRATEGY=2`。
-const STRATEGY2_ENV: &str = "PAGED_INFER_TINY_LLM_STRATEGY";
+/// 连续 KV（策略 2）fallback 开关：`PAGED_SERVING_TINY_LLM_STRATEGY=2`。
+const STRATEGY2_ENV: &str = "PAGED_SERVING_TINY_LLM_STRATEGY";
 
-/// 最大并发序列调节：`PAGED_INFER_TINY_LLM_MAX_SEQS=<n>`（默认 4，下限 1）。
-const MAX_SEQS_ENV: &str = "PAGED_INFER_TINY_LLM_MAX_SEQS";
+/// 最大并发序列调节：`PAGED_SERVING_TINY_LLM_MAX_SEQS=<n>`（默认 4，下限 1）。
+const MAX_SEQS_ENV: &str = "PAGED_SERVING_TINY_LLM_MAX_SEQS";
 
-/// decode 预留调节：`PAGED_INFER_TINY_LLM_DECODE_RESERVE=<n>`（默认 512，下限 0）。
-const DECODE_RESERVE_ENV: &str = "PAGED_INFER_TINY_LLM_DECODE_RESERVE";
+/// decode 预留调节：`PAGED_SERVING_TINY_LLM_DECODE_RESERVE=<n>`（默认 512，下限 0）。
+const DECODE_RESERVE_ENV: &str = "PAGED_SERVING_TINY_LLM_DECODE_RESERVE";
 
 /// 读取 i32 环境变量；缺失/非法值回退默认（非法值记警告，避免静默误配置）。
 fn env_i32_or(name: &str, default: i32) -> i32 {
@@ -79,7 +79,7 @@ pub struct TinyLlmExecutor {
     /// 后端 batch 上限（config.max_batch_size clamp 到显存可承受范围），
     /// 用于 `execute` 的 batch 超限前置检查（B1）。
     max_batch_size: i32,
-    /// decode 预留 token 数（`PAGED_INFER_TINY_LLM_DECODE_RESERVE`，默认 512）。
+    /// decode 预留 token 数（`PAGED_SERVING_TINY_LLM_DECODE_RESERVE`，默认 512）。
     decode_reserve: i32,
 }
 
@@ -89,7 +89,7 @@ impl TinyLlmExecutor {
         // 维度字段由 GGUF 提取，仅 block_size / max_batch_size / max_num_blocks
         // 生效；max_batch_size clamp 到显存可承受范围。
         // 策略 1（分页 KV）为默认：max_num_blocks = config（默认 1024）。
-        // `PAGED_INFER_TINY_LLM_STRATEGY=2` 强制策略 2（连续 KV，max_num_blocks=0）。
+        // `PAGED_SERVING_TINY_LLM_STRATEGY=2` 强制策略 2（连续 KV，max_num_blocks=0）。
         let force_strategy2 = std::env::var(STRATEGY2_ENV)
             .map(|v| v == "2")
             .unwrap_or(false);
@@ -207,7 +207,7 @@ impl GPUExecutorTrait for TinyLlmExecutor {
                     return Err(EngineError::BackendError(format!(
                         "sequence {sid} 生成将超出 tiny-llm 预留 KV 容量 \
                          (context+{reserve}，容量 {capacity})，请调小 max_tokens \
-                         或调大 PAGED_INFER_TINY_LLM_DECODE_RESERVE"
+                         或调大 PAGED_SERVING_TINY_LLM_DECODE_RESERVE"
                     )));
                 }
             }
@@ -339,6 +339,6 @@ mod tests {
     #[test]
     fn test_env_i32_or_fallback() {
         // 缺失键回退默认；不设置非法值避免污染其他测试的环境。
-        assert_eq!(env_i32_or("PAGED_INFER_TEST_UNSET_KEY_XYZ", 42), 42);
+        assert_eq!(env_i32_or("PAGED_SERVING_TEST_UNSET_KEY_XYZ", 42), 42);
     }
 }

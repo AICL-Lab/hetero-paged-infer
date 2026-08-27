@@ -53,7 +53,7 @@ EOS 等特殊 token，必须在报表中标注。未提供 tokenizer 时 token �
 
 ## 4. 实验协议
 
-1. **三件套绑定**：实验根 `metadata.json` 记录 paged-infer/tiny-llm commit、
+1. **三件套绑定**：实验根 `metadata.json` 记录 paged-serving/tiny-llm commit、
    `nvidia-smi` 快照、驱动/CUDA 与构建口径；每次 run 的
    `run_metadata.json` 记录被测引擎 commit、模型路径、量化格式和完整负载参数。
    `run_sweep.sh` 默认拒绝 dirty worktree（`--allow-dirty` 显式放行并在根
@@ -62,7 +62,7 @@ EOS 等特殊 token，必须在报表中标注。未提供 tokenizer 时 token �
 3. **重复与收敛**：每个 (并发, 分布) 组合跑 3 次，报告均值与 min/max 波动；
    run-to-run 偏差 >10% 视为未收敛，须排查（笔记本卡散热降频是常见原因，
    写入结果说明而非隐藏）。
-4. **横向可比**：三个后端（paged-infer / llama-server / vLLM）使用
+4. **横向可比**：三个后端（paged-serving / llama-server / vLLM）使用
    同一 `loadgen` 二进制、同一数据集、同一参数矩阵；量化格式差异
    （W8A16 vs Q4_K_M vs FP16）必须在结果表头声明——比值是完整路径差，
    不是同量化对比。
@@ -94,7 +94,7 @@ results/<date>-<gpu-slug>/
   "date": "2026-08-30",
   "hardware": {"gpu": "RTX 3060 Laptop", "vram": "6144 MiB", "driver": "…"},
   "software": {"cuda_toolkit": "Cuda compilation tools, release 12.0, …"},
-  "commits": {"paged_infer": "sha", "tiny_llm": "sha", "dirty": false},
+  "commits": {"paged_serving": "sha", "tiny_llm": "sha", "dirty": false},
   "build": {"profile": "release", "cuda_archs": "86"}
 }
 ```

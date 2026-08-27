@@ -1,15 +1,15 @@
 //! tiny-llm 执行后端 FFI 桥接
 //!
-//! 定义 paged-infer（Rust）与 [tiny-llm](C++/CUDA 引擎) 之间的 C ABI 契约。
+//! 定义 paged-serving（Rust）与 [tiny-llm](C++/CUDA 引擎) 之间的 C ABI 契约。
 //! 本模块声明接口形态与数据布局；启用 `tiny-llm` feature 后由 `build.rs`
 //! 链接真实静态库，`TinyLlmExecutor` 负责调用。
 //!
 //! # 为什么需要 FFI
 //!
 //! tiny-llm 是 C++/CUDA 项目，其推理入口是整段 `InferenceEngine::generate()`，
-//! 而 paged-infer 的引擎需要"每步执行一个 batch"
+//! 而 paged-serving 的引擎需要"每步执行一个 batch"
 //! （[`crate::gpu_executor::GPUExecutorTrait`]）。
-//! 因此 tiny-llm 侧必须导出步进式 C ABI，paged-infer 侧经本模块调用。
+//! 因此 tiny-llm 侧必须导出步进式 C ABI，paged-serving 侧经本模块调用。
 //!
 //! # C ABI 契约（ABI v2，tiny-llm 侧已实现）
 //!
@@ -45,7 +45,7 @@
 //! - `input_tokens` / `positions` 是扁平化数组（`seq_lens` 描述每序列切分，
 //!   与 `seq_ids` 对齐）；
 //! - `block_tables` 是扁平化物理块索引；`num_blocks` 给出每序列块数，
-//!   对齐 paged-infer 的 [`crate::types::ExecutionBatch::block_tables`]
+//!   对齐 paged-serving 的 [`crate::types::ExecutionBatch::block_tables`]
 //!   （策略 2 下忽略）；
 //! - `logprobs_k == 0` 表示不输出 logprobs；否则 `logprobs` 至少容纳
 //!   `num_sequences × logprobs_k × 2` 个 `f32`，第 0/1 个值分别是以 `f32`
@@ -55,15 +55,15 @@
 //! # KV 适配策略
 //!
 //! - **策略 1（默认）**：tiny-llm 侧使用分页 KV，按 `block_tables` 间接访问，
-//!   与 paged-infer 的 BlockPool 对齐。
+//!   与 paged-serving 的 BlockPool 对齐。
 //! - **策略 2（回退）**：tiny-llm 使用连续 KV，忽略 `block_tables` /
-//!   `num_blocks`；设置 `PAGED_INFER_TINY_LLM_STRATEGY=2` 启用。
+//!   `num_blocks`；设置 `PAGED_SERVING_TINY_LLM_STRATEGY=2` 启用。
 //!
 //! # 构建与运行前置条件
 //!
 //! 1. 在 tiny-llm 仓库构建 `libtiny_llm.a`；
 //! 2. 设置 `TINY_LLM_DIR` 指向包含该静态库的构建目录；
-//! 3. 使用 `--features tiny-llm` 构建 paged-infer，并配置真实 GGUF 模型。
+//! 3. 使用 `--features tiny-llm` 构建 paged-serving，并配置真实 GGUF 模型。
 
 /// 与 tiny-llm `TinyLlmConfig` 对齐的配置布局（`repr(C)`，字段为 C `int`）。
 #[repr(C)]
@@ -75,7 +75,7 @@ pub struct TinyLlmConfig {
     pub num_kv_heads: i32,
     pub head_dim: i32,
     pub vocab_size: i32,
-    /// 分页块大小（paged-infer 侧，策略 1 时后端按此对齐）。
+    /// 分页块大小（paged-serving 侧，策略 1 时后端按此对齐）。
     pub block_size: i32,
     pub max_batch_size: i32,
     /// 分页 KV 池的物理块总数；0 = 策略 2（连续 KV）。

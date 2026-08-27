@@ -244,7 +244,7 @@ def main():
     if not metadata_path.is_file():
         raise SystemExit(f"缺少 metadata.json：{metadata_path}")
     metadata = json.loads(metadata_path.read_text())
-    commit = metadata.get("commits", {}).get("paged_infer", "?")[:10]
+    commit = metadata.get("commits", {}).get("paged_serving", "?")[:10]
     date = metadata.get("date", "?")
     gpu = metadata.get("hardware", {}).get("gpu", "?")
     caption = f"@ {commit}, {date}, {gpu}"

@@ -5,7 +5,7 @@
 #       → 汇总 summary。服务需预先启动（见 README 的启动命令）。
 #
 # 用法：
-#   ./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-infer
+#   ./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-serving
 #   ./run_sweep.sh --base-url http://127.0.0.1:8080 --engine llama-server \
 #       --modes closed --concurrencies "1 2 4" --allow-dirty
 #
@@ -20,7 +20,7 @@
 #   --warmup-secs <n>       预热秒数（默认 30）
 #   --max-tokens <n>        每请求生成上限（默认 128）
 #   --repeats <n>           每组合重复次数（默认 3，收敛判定用）
-#   --model <name>          OpenAI API model 字段（默认 paged-infer）
+#   --model <name>          OpenAI API model 字段（默认 paged-serving）
 #   --tokenizer <path>      usage 缺失时用于统计完整输出文本 token 数
 #   --model-path <path>     被测模型路径（仅写入 run_metadata.json）
 #   --model-sha256 <hex>    模型文件 SHA-256；省略时对可访问的 --model-path 自动计算
@@ -37,7 +37,7 @@ cd "$(dirname "$0")"
 # ---------- 参数 ----------
 BASE_URL="" ENGINE="" MODES="closed" CONCS="1 2 4 8" RATES="0.5 1.0 2.0"
 DATASETS="work" REQUESTS=64 WARMUP=30 MAX_TOKENS=128 REPEATS=3
-API_MODEL="paged-infer" TOKENIZER="" MODEL_PATH="" MODEL_SHA256="" BACKEND_QUANT="unspecified"
+API_MODEL="paged-serving" TOKENIZER="" MODEL_PATH="" MODEL_SHA256="" BACKEND_QUANT="unspecified"
 ENGINE_DIR="../.." CUDA_ARCHS="unspecified" RESULTS_DIR=""
 ENGINE_DIR_SET=0 ALLOW_DIRTY=0 TINY_LLM_DIR="../../../tiny-llm"
 
@@ -85,8 +85,8 @@ fi
 if [[ -z "$MODEL_SHA256" && -n "$MODEL_PATH" && -f "$MODEL_PATH" ]]; then
   MODEL_SHA256=$(sha256sum "$MODEL_PATH" | awk '{print $1}')
 fi
-if [[ "$ENGINE" != "paged-infer" && "$ENGINE_DIR_SET" -eq 0 ]]; then
-  echo "非 paged-infer 后端必须用 --engine-dir 指向其 git checkout，以记录真实 commit"
+if [[ "$ENGINE" != "paged-serving" && "$ENGINE_DIR_SET" -eq 0 ]]; then
+  echo "非 paged-serving 后端必须用 --engine-dir 指向其 git checkout，以记录真实 commit"
   exit 2
 fi
 git -C "$ENGINE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
@@ -94,15 +94,15 @@ git -C "$ENGINE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 }
 
 # ---------- dirty 检查（方法论 §4.1）----------
-PAGED_DIRTY=false TINYLLM_DIRTY=false ENGINE_DIRTY=false
-if [[ -n "$(git -C ../.. status --porcelain)" ]]; then PAGED_DIRTY=true; fi
+PAGED_SERVING_DIRTY=false TINYLLM_DIRTY=false ENGINE_DIRTY=false
+if [[ -n "$(git -C ../.. status --porcelain)" ]]; then PAGED_SERVING_DIRTY=true; fi
 if git -C "$TINY_LLM_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
    [[ -n "$(git -C "$TINY_LLM_DIR" status --porcelain)" ]]; then
   TINYLLM_DIRTY=true
 fi
 if [[ -n "$(git -C "$ENGINE_DIR" status --porcelain)" ]]; then ENGINE_DIRTY=true; fi
 DIRTY=false
-if [[ "$PAGED_DIRTY" == true || "$TINYLLM_DIRTY" == true || "$ENGINE_DIRTY" == true ]]; then
+if [[ "$PAGED_SERVING_DIRTY" == true || "$TINYLLM_DIRTY" == true || "$ENGINE_DIRTY" == true ]]; then
   DIRTY=true
   if [[ "$ALLOW_DIRTY" -eq 1 ]]; then
     echo "⚠ 相关 worktree 为 dirty（--allow-dirty 放行，metadata 将逐仓记录）"
@@ -120,7 +120,7 @@ else GPU_SLUG=$(printf '%s' "$GPU_NAME" | tr ' ' '-' | tr -cd '[:alnum:]-_'); fi
 OUTDIR=${RESULTS_DIR:-"results/${DATE}-${GPU_SLUG}"}
 mkdir -p "$OUTDIR"
 
-PINFER_COMMIT=$(git rev-parse HEAD)
+PAGED_SERVING_COMMIT=$(git rev-parse HEAD)
 TINYLLM_COMMIT=$(git -C "$TINY_LLM_DIR" rev-parse HEAD 2>/dev/null || echo "unavailable")
 ENGINE_COMMIT=$(git -C "$ENGINE_DIR" rev-parse HEAD 2>/dev/null || echo "unavailable")
 DRIVER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "n/a")
@@ -128,15 +128,15 @@ VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | h
 CUDA_TOOLKIT=$(nvcc --version 2>/dev/null | tail -1 || echo "n/a")
 
 python3 - "$OUTDIR/metadata.json" "$DATE" "$GPU_NAME" "$VRAM" "$DRIVER" \
-  "$CUDA_TOOLKIT" "$PINFER_COMMIT" "$TINYLLM_COMMIT" "$DIRTY" "$PAGED_DIRTY" \
+  "$CUDA_TOOLKIT" "$PAGED_SERVING_COMMIT" "$TINYLLM_COMMIT" "$DIRTY" "$PAGED_SERVING_DIRTY" \
   "$TINYLLM_DIRTY" "$CUDA_ARCHS" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 (
-    path, date, gpu, vram, driver, cuda_toolkit, paged_commit,
-    tiny_commit, dirty, paged_dirty, tiny_dirty, cuda_archs,
+    path, date, gpu, vram, driver, cuda_toolkit, paged_serving_commit,
+    tiny_commit, dirty, paged_serving_dirty, tiny_dirty, cuda_archs,
 ) = sys.argv[1:]
 metadata = {
     "schema_version": 1,
@@ -144,10 +144,10 @@ metadata = {
     "hardware": {"gpu": gpu, "vram": vram, "driver": driver},
     "software": {"cuda_toolkit": cuda_toolkit},
     "commits": {
-        "paged_infer": paged_commit,
+        "paged_serving": paged_serving_commit,
         "tiny_llm": tiny_commit,
         "dirty": dirty.lower() == "true",
-        "paged_infer_dirty": paged_dirty.lower() == "true",
+        "paged_serving_dirty": paged_serving_dirty.lower() == "true",
         "tiny_llm_dirty": tiny_dirty.lower() == "true",
     },
     "build": {"profile": "release", "cuda_archs": cuda_archs},

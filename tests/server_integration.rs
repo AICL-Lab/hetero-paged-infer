@@ -1,7 +1,7 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
-use paged_infer::{
+use paged_serving::{
     create_router, create_router_with_engine,
     test_utils::{AlwaysFailExecutor, ConstantTokenExecutor, SequenceExecutor},
     EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, InferenceEngine,

@@ -1,16 +1,16 @@
-//! Custom configuration example for Hetero-Paged-Infer
+//! Custom configuration example for Hetero-Paged-Serving
 //!
 //! This example demonstrates using custom configuration.
 //!
 //! Run with: cargo run --example custom_config
 
-use paged_infer::{EngineConfig, GenerationParams, InferenceEngine, SpecialTokenIds};
+use paged_serving::{EngineConfig, GenerationParams, InferenceEngine, SpecialTokenIds};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    println!("=== Hetero-Paged-Infer Custom Configuration Example ===\n");
+    println!("=== Hetero-Paged-Serving Custom Configuration Example ===\n");
 
     // Example 1: Create config with custom parameters
     println!("1. Creating config with custom parameters:");
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 3: Save and load config from file
     println!("\n3. Saving and loading config from file:");
-    let config_path = Path::new("/tmp/paged_infer_config.json");
+    let config_path = Path::new("/tmp/paged_serving_config.json");
 
     // Save config
     custom_config.to_file(config_path)?;

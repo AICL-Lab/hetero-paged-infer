@@ -1,6 +1,6 @@
 # Serving 评测体系
 
-对 paged-infer（及对照基线 llama-server / vLLM）做可复现的 serving 级
+对 paged-serving（及对照基线 llama-server / vLLM）做可复现的 serving 级
 负载实验。**指标口径与方法论的唯一权威是
 [`methodology.md`](methodology.md)**——任何数字引用必须与其口径一致。
 
@@ -38,8 +38,8 @@ python3 benchmarks/serving/datasets/synth/gen_synth.py \
     --outdir benchmarks/serving/datasets/synth
 
 # 2. 启动被测服务（三选一）
-# paged-infer（tiny-llm 真实后端）：
-#   PAGED_INFER_TINY_LLM_MAX_SEQS=8 ./target/release/paged-infer --serve \
+# paged-serving（tiny-llm 真实后端）：
+#   PAGED_SERVING_TINY_LLM_MAX_SEQS=8 ./target/release/paged-serving --serve \
 #       --port 3000 --tokenizer <tokenizer.json> ...（模型经配置加载）
 # llama-server（基线）：
 #   llama-server -m <model.gguf> -c 2048 --parallel 8 --cont-batching --port 8080
@@ -49,15 +49,15 @@ python3 benchmarks/serving/datasets/synth/gen_synth.py \
 
 # 3. 冒烟（3 条 prompt，验证管线连通）
 ./target/release/loadgen --base-url http://127.0.0.1:3000 \
-    --engine paged-infer --model paged-infer \
+    --engine paged-serving --model paged-serving \
     --mode closed --concurrency 2 \
     --dataset benchmarks/serving/datasets/synth/smoke.jsonl \
     --requests 4 --warmup-secs 0 --max-tokens 16 --out /tmp/smoke.jsonl
 
 # 4. 完整矩阵（默认闭环并发 1/2/4/8 × work 分布 × 3 次重复）
 cd benchmarks/serving
-./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-infer \
-    --model paged-infer --model-path ../../../models/<model>.gguf \
+./run_sweep.sh --base-url http://127.0.0.1:3000 --engine paged-serving \
+    --model paged-serving --model-path ../../../models/<model>.gguf \
     --backend-quant W8A16 --tokenizer <tokenizer.json> --cuda-archs 86
 
 # 5. 检查产物并生成图表
@@ -79,7 +79,7 @@ python3 validate_results.py --formal results/<date>-<gpu>/
 
 - 正确性 canary 后的真实 CUDA 后端；
 - closed-loop 并发 1/2/4/8 与 Poisson 到达率矩阵；
-- `paged-infer`、`llama-server`、可运行时的 vLLM 使用同一 loadgen、数据集与请求参数；
+- `paged-serving`、`llama-server`、可运行时的 vLLM 使用同一 loadgen、数据集与请求参数；
 - 每个数字绑定硬件、驱动、双仓 commit、模型 SHA-256、量化格式和原始请求数据；
 - 失败、OOM、429、无法启动的对照与 token coverage 不足均写进 `report.md`。
 

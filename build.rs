@@ -16,7 +16,7 @@ fn main() {
 
     let Ok(dir) = env::var("TINY_LLM_DIR") else {
         println!(
-            "cargo:warning=paged-infer: 未设置 TINY_LLM_DIR，跳过 tiny-llm 静态库链接。\
+            "cargo:warning=paged-serving: 未设置 TINY_LLM_DIR，跳过 tiny-llm 静态库链接。\
              设置它指向 tiny-llm 的 build 目录以启用真实后端。"
         );
         return;
@@ -32,7 +32,7 @@ fn main() {
     }
     if !lib_a.exists() {
         println!(
-            "cargo:warning=paged-infer: TINY_LLM_DIR 下未找到 libtiny_llm.a（{}），跳过链接。",
+            "cargo:warning=paged-serving: TINY_LLM_DIR 下未找到 libtiny_llm.a（{}），跳过链接。",
             lib_a.display()
         );
         return;

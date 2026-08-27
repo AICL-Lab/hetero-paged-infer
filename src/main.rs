@@ -1,14 +1,14 @@
-//! Paged-Infer - Main Entry Point
+//! Paged-Serving - Main Entry Point
 
 use clap::Parser;
 use log::info;
-use paged_infer::{
+use paged_serving::{
     create_router, EngineConfig, GenerationParams, InferenceEngine, TokenizerConfig, TokenizerKind,
 };
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "paged-infer")]
+#[command(name = "paged-serving")]
 #[command(
     about = "Paged-memory, continuously-batched inference engine scaffold with a CPU reference backend"
 )]
@@ -148,10 +148,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     }
 
-    info!("Starting Paged-Infer");
+    info!("Starting Paged-Serving");
     info!("Configuration: {:?}", config);
 
-    println!("Paged-Infer");
+    println!("Paged-Serving");
     println!("===========");
     println!("Configuration:");
     println!("  Block size: {}", config.block_size);
@@ -216,7 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("No input provided. Use --input to specify text to process.");
         println!();
         println!("Example:");
-        println!("  paged-infer --input \"Hello, world!\" --max-tokens 50");
+        println!("  paged-serving --input \"Hello, world!\" --max-tokens 50");
     }
 
     Ok(())

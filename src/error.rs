@@ -18,7 +18,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use paged_infer::{EngineError, GenerationParams};
+//! use paged_serving::{EngineError, GenerationParams};
 //!
 //! let params = GenerationParams {
 //!     max_tokens: 0,
@@ -101,7 +101,7 @@ pub enum ConfigError {
 /// # 示例
 ///
 /// ```rust
-/// use paged_infer::EngineError;
+/// use paged_serving::EngineError;
 ///
 /// fn handle_error(error: EngineError) {
 ///     match error {

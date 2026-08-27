@@ -1,4 +1,4 @@
-# Paged-Infer 后续开发计划
+# Paged-Serving 后续开发计划
 
 > **历史执行档案**：本文记录 v0.2.0 正确性修复开始前的基线和任务拆解，文中的
 > 测试数量、失败状态与“冻结”步骤不代表当前 HEAD。当前状态与下一步以
@@ -467,7 +467,7 @@ cargo test --test server_integration test_completions_honors_stop_sequences
 ### T8：文档与代码事实对齐
 
 **问题清单**
-- `src/lib.rs`、`src/main.rs` 仍出现 “Hetero-Paged-Infer / Heterogeneous Inference System / mock compute backend”。
+- `src/lib.rs`、`src/main.rs` 仍出现 “Hetero-Paged-Serving / Heterogeneous Inference System / mock compute backend”。
 - CLI `--tokenizer` 帮助写 Qwen2.5 词表 151936，但 `HuggingFaceTokenizer::vocab_size()` 实际是 151665。
 - README 快速开始使用中文输入，但默认 SimpleTokenizer 只支持 ASCII，中文会变 UNK。
 - README/CHANGELOG 声称 “true token-level SSE streaming”，对 HF tokenizer 不成立（`BufferedDecoder` 在 finish 时才输出）。
@@ -475,9 +475,9 @@ cargo test --test server_integration test_completions_honors_stop_sequences
 - README 内存压力描述与实现细节不一致（提交即拒绝，而非“pending 保留”的新语义需要重新表述）。
 
 **实施步骤**
-1. `src/lib.rs`：模块文档改为 `paged-infer`、CPU reference backend，不再叫 Hetero/mock。
+1. `src/lib.rs`：模块文档改为 `paged-serving`、CPU reference backend，不再叫 Hetero/mock。
 2. `src/main.rs`：
-   - `#[command(about = "...")]` 改为 paged-infer + CPU reference；
+   - `#[command(about = "...")]` 改为 paged-serving + CPU reference；
    - 启动日志与打印去掉 Heterogeneous；
    - `--tokenizer` 帮助改为“完整有效词表 151665；GGUF embedding 可能为 151936 并含 padding 行”。
 3. `README.md`：
@@ -597,14 +597,14 @@ cargo bench --bench concurrency_benchmark -- --test   # smoke
 ### T11：tiny-llm 策略 1：分页 KV C ABI 与适配器 ✅（2026-08-18，Batch D）
 
 > 已完成：ABI v2（9 int config + `num_blocks`）、`TinyLlmExecutor` 默认策略 1
-> （真实块表扁平化上传）、`PAGED_INFER_TINY_LLM_STRATEGY=2` 回退策略 2。
+> （真实块表扁平化上传）、`PAGED_SERVING_TINY_LLM_STRATEGY=2` 回退策略 2。
 > llama.cpp 逐 token 对齐与 3 并发 e2e（`qwen2_three_concurrent_paged_requests_match_llama_cpp`）
 > 通过；tiny-llm 侧实现见其仓库 Batch D 提交。
 
 **背景**
 当前策略 2 连续 KV，`block_tables` 传 NULL。要形成完整 PagedAttention 故事，需要策略 1。
 
-**paged-infer 侧实施**
+**paged-serving 侧实施**
 1. 修改 `src/tiny_llm_ffi.rs` 的 C ABI 为 v2（与 tiny-llm 侧共同确认）：
    ```c
    int tinyllm_step(

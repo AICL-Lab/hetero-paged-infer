@@ -2,7 +2,7 @@
 //!
 //! These tests verify end-to-end functionality across all components.
 
-use paged_infer::{
+use paged_serving::{
     test_utils::{create_test_config, AlwaysFailExecutor, ConstantTokenExecutor},
     EngineConfig, EngineError, ExecutionBatch, ExecutionOutput, GPUExecutorTrait, GenerationParams,
     InferenceEngine, Scheduler, SimpleTokenizer,

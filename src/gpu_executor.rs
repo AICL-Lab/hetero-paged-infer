@@ -264,7 +264,7 @@ mod property_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        /// **Feature: paged-inference-system, Property 11: Variable Sequence Length Handling**
+        /// **Feature: paged-servingence-system, Property 11: Variable Sequence Length Handling**
         /// *For any* batch containing sequences of different lengths, the GPU_Executor shall
         /// produce correct attention outputs for each sequence independently.
         /// **Validates: Requirements 4.2**

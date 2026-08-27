@@ -1,12 +1,12 @@
 # 贡献指南
 
-感谢参与 Paged-Infer。
+感谢参与 Paged-Serving。
 
 ## 开发环境
 
 ```bash
-git clone https://github.com/open-infra-ai/paged-infer.git
-cd paged-infer
+git clone https://github.com/open-infra-ai/paged-serving.git
+cd paged-serving
 cargo build
 ```
 

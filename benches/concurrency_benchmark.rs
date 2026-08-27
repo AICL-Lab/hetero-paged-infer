@@ -5,9 +5,9 @@
 //! 正确性断言见 tests/concurrency_stress.rs；本文件只出性能数字。
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use paged_infer::test_utils::create_test_config;
-use paged_infer::types::RequestId;
-use paged_infer::{
+use paged_serving::test_utils::create_test_config;
+use paged_serving::types::RequestId;
+use paged_serving::{
     EngineConfig, GenerationParams, InferenceEngine, MockGPUExecutor, Scheduler, SimpleTokenizer,
 };
 use std::collections::HashMap;

@@ -1,10 +1,10 @@
-# Paged-Infer
+# Paged-Serving
 
 > 📚 Portfolio map: https://github.com/open-infra-ai/open-infra-ai
 
 <div align="center">
 
-[![CI](https://github.com/open-infra-ai/paged-infer/actions/workflows/ci.yml/badge.svg)](https://github.com/open-infra-ai/paged-infer/actions/workflows/ci.yml)
+[![CI](https://github.com/open-infra-ai/paged-serving/actions/workflows/ci.yml/badge.svg)](https://github.com/open-infra-ai/paged-serving/actions/workflows/ci.yml)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org/)
@@ -26,7 +26,7 @@
 
 ## 项目概述
 
-Paged-Infer 是一个基于 Rust 构建的 LLM Serving 控制面，以模块化、可测试的架构
+Paged-Serving 是一个基于 Rust 构建的 LLM Serving 控制面，以模块化、可测试的架构
 练习分页 KV 内存管理与连续批处理调度。计算后端默认是 CPU 参考执行器（随机初始化
 小型 Transformer，确定性输出）；`tiny-llm` feature 下接入真实 CUDA Runtime，
 并把每序列 `block_tables` 上传到 tiny-llm 的分页 KV 池（策略 1）。本仓库不把
@@ -41,7 +41,7 @@ Paged-Infer 是一个基于 Rust 构建的 LLM Serving 控制面，以模块化�
 | **模块化架构** | 基于 Trait 的抽象设计 | ✅ |
 | **OpenAI 兼容服务器** | `/v1/completions` + `/v1/chat/completions` + SSE | ✅ |
 | **自动化验证** | unit、integration、server integration 与 property tests | ✅ |
-| **tiny-llm 真实后端** | `tiny-llm` feature 下接入 CUDA 后端，分页 KV（策略 1）默认启用，`PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV；`PAGED_INFER_TINY_LLM_MAX_SEQS`（默认 4）与 `PAGED_INFER_TINY_LLM_DECODE_RESERVE`（默认 512）可按显存/生成长度调节容量 | ✅ |
+| **tiny-llm 真实后端** | `tiny-llm` feature 下接入 CUDA 后端，分页 KV（策略 1）默认启用，`PAGED_SERVING_TINY_LLM_STRATEGY=2` 可回退连续 KV；`PAGED_SERVING_TINY_LLM_MAX_SEQS`（默认 4）与 `PAGED_SERVING_TINY_LLM_DECODE_RESERVE`（默认 512）可按显存/生成长度调节容量 | ✅ |
 
 在五仓学习路径中，本仓库只练习 LLM Serving 控制面；真实模型权重加载与 token 计算属于 `tiny-llm`。整体顺序见 [`LEARNING_PATH.md`](https://github.com/open-infra-ai/open-infra-ai/blob/master/LEARNING_PATH.md)（meta 仓）。
 
@@ -158,8 +158,8 @@ Paged-Infer 是一个基于 Rust 构建的 LLM Serving 控制面，以模块化�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/open-infra-ai/paged-infer.git
-cd paged-infer
+git clone https://github.com/open-infra-ai/paged-serving.git
+cd paged-serving
 
 # 以 release 模式构建
 cargo build --release
@@ -175,16 +175,16 @@ cargo test
 
 ```bash
 # 基本用法
-./target/release/paged-infer --input "Hello, world!" --max-tokens 50
+./target/release/paged-serving --input "Hello, world!" --max-tokens 50
 
 # 使用自定义参数（当前 CPU 后端仅支持 greedy：--temperature 0.0 --top-p 1.0，
 # 其他采样参数会在提交时返回错误，而不是被静默忽略）
-./target/release/paged-infer \
+./target/release/paged-serving \
   --input "Explain quantum computing" \
   --max-tokens 100
 
 # 启动 OpenAI 兼容 HTTP 服务
-./target/release/paged-infer --serve
+./target/release/paged-serving --serve
 ```
 
 ### OpenAI 兼容服务
@@ -201,12 +201,12 @@ curl http://127.0.0.1:3000/metrics
 # Completions 接口
 curl http://127.0.0.1:3000/v1/completions \
   -H "content-type: application/json" \
-  -d '{"model":"paged-infer","prompt":"Hello","max_tokens":8}'
+  -d '{"model":"paged-serving","prompt":"Hello","max_tokens":8}'
 
 # Chat Completions 接口
 curl http://127.0.0.1:3000/v1/chat/completions \
   -H "content-type: application/json" \
-  -d '{"model":"paged-infer","messages":[{"role":"user","content":"Say hello"}],"max_tokens":8}'
+  -d '{"model":"paged-serving","messages":[{"role":"user","content":"Say hello"}],"max_tokens":8}'
 ```
 
 ### 指标（/metrics，Prometheus 格式）
@@ -226,7 +226,7 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 ### 库用法
 
 ```rust
-use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
 
 // 使用默认配置创建引擎
 let mut engine = InferenceEngine::new(EngineConfig::default())?;
@@ -279,7 +279,7 @@ for result in results {
 }
 ```
 
-加载：`./paged-infer --config config.json`
+加载：`./paged-serving --config config.json`
 
 ## 文档
 

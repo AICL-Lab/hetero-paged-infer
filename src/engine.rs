@@ -26,7 +26,7 @@
 //! # 示例
 //!
 //! ```rust
-//! use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+//! use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
 //!
 //! // 创建引擎
 //! let config = EngineConfig::default();
@@ -45,7 +45,7 @@
 //! for result in completed {
 //!     println!("输出: {}", result.output_text);
 //! }
-//! # Ok::<(), paged_infer::EngineError>(())
+//! # Ok::<(), paged_serving::EngineError>(())
 //! ```
 
 use crate::config::EngineConfig;
@@ -110,11 +110,11 @@ fn tokens_before_char(
 /// # 示例
 ///
 /// ```rust
-/// use paged_infer::{EngineConfig, InferenceEngine};
+/// use paged_serving::{EngineConfig, InferenceEngine};
 ///
 /// let config = EngineConfig::default();
 /// let engine = InferenceEngine::new(config)?;
-/// # Ok::<(), paged_infer::EngineError>(())
+/// # Ok::<(), paged_serving::EngineError>(())
 /// ```
 pub struct InferenceEngine {
     config: EngineConfig,
@@ -146,11 +146,11 @@ impl InferenceEngine {
     /// # 示例
     ///
     /// ```rust
-    /// use paged_infer::{EngineConfig, InferenceEngine};
+    /// use paged_serving::{EngineConfig, InferenceEngine};
     ///
     /// let config = EngineConfig::default();
     /// let engine = InferenceEngine::new(config)?;
-    /// # Ok::<(), paged_infer::EngineError>(())
+    /// # Ok::<(), paged_serving::EngineError>(())
     /// ```
     pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
         config.validate()?;
@@ -232,7 +232,7 @@ impl InferenceEngine {
     /// # 示例
     ///
     /// ```rust
-    /// use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+    /// use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
     ///
     /// let config = EngineConfig::default();
     /// let mut engine = InferenceEngine::new(config)?;
@@ -244,7 +244,7 @@ impl InferenceEngine {
     ///
     /// let (request_id, prompt_tokens) = engine.submit_request("你好", params)?;
     /// assert!(request_id > 0 && prompt_tokens > 0);
-    /// # Ok::<(), paged_infer::EngineError>(())
+    /// # Ok::<(), paged_serving::EngineError>(())
     /// ```
     pub fn submit_request(
         &mut self,
@@ -534,7 +534,7 @@ impl InferenceEngine {
     /// # 示例
     ///
     /// ```rust
-    /// use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+    /// use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
     ///
     /// let config = EngineConfig::default();
     /// let mut engine = InferenceEngine::new(config)?;
@@ -546,7 +546,7 @@ impl InferenceEngine {
     /// for result in completed {
     ///     println!("输出: {}", result.output_text);
     /// }
-    /// # Ok::<(), paged_infer::EngineError>(())
+    /// # Ok::<(), paged_serving::EngineError>(())
     /// ```
     pub fn run(&mut self) -> Vec<CompletedRequest> {
         // 先排出循环前已缓冲的终态（如 cancel_request 产生的失败请求）；
@@ -671,14 +671,14 @@ impl InferenceEngine {
     /// # 示例
     ///
     /// ```rust
-    /// use paged_infer::{EngineConfig, InferenceEngine};
+    /// use paged_serving::{EngineConfig, InferenceEngine};
     ///
     /// let config = EngineConfig::default();
     /// let engine = InferenceEngine::new(config)?;
     ///
     /// let metrics = engine.get_metrics();
     /// println!("完成请求: {}", metrics.completed_requests);
-    /// # Ok::<(), paged_infer::EngineError>(())
+    /// # Ok::<(), paged_serving::EngineError>(())
     /// ```
     pub fn get_metrics(&self) -> EngineMetrics {
         EngineMetrics {

@@ -1,16 +1,16 @@
-//! Basic usage example for Hetero-Paged-Infer
+//! Basic usage example for Hetero-Paged-Serving
 //!
 //! This example demonstrates the basic usage of the inference engine.
 //!
 //! Run with: cargo run --example basic_usage
 
-use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logger
     env_logger::init();
 
-    println!("=== Hetero-Paged-Infer Basic Usage Example ===\n");
+    println!("=== Hetero-Paged-Serving Basic Usage Example ===\n");
 
     // Create engine with default configuration
     let config = EngineConfig::default();

@@ -4,9 +4,9 @@
 //! 资源不变量、延迟分布与失败隔离；真实 tiny-llm 后端接入后直接切换
 //! executor 复用本套场景（executor 可替换是 EngineBackend 契约的设计目标）。
 
-use paged_infer::test_utils::create_test_config;
-use paged_infer::types::{CompletedRequest, ExecutionBatch, ExecutionOutput, RequestId, TokenId};
-use paged_infer::{
+use paged_serving::test_utils::create_test_config;
+use paged_serving::types::{CompletedRequest, ExecutionBatch, ExecutionOutput, RequestId, TokenId};
+use paged_serving::{
     EngineConfig, EngineError, GPUExecutorTrait, GenerationParams, InferenceEngine,
     MockGPUExecutor, Scheduler, SimpleTokenizer,
 };

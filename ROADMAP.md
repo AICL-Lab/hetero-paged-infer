@@ -1,4 +1,4 @@
-# Paged-Infer 路线图
+# Paged-Serving 路线图
 
 > **当前定位**：Serving 控制面的**架构练习作品**。v0.2.0 控制面核心已经稳定，
 > 仓库保持 `active`，只继续完善可信评测、跨引擎验证与上游贡献；功能边界冻结。
@@ -52,7 +52,7 @@
         （真实 BOS/EOS/PAD 探测），差分测试与 tiny-llm 权威 fixture 逐 id 对齐
         （`tests/tokenizer_real_diff.rs`、`tests/tiny_llm_text_e2e.rs`）
       - **分页 KV 策略 1 默认启用**（真实 `block_tables`）；
-        `PAGED_INFER_TINY_LLM_STRATEGY=2` 可回退连续 KV。请求 1 与 llama.cpp
+        `PAGED_SERVING_TINY_LLM_STRATEGY=2` 可回退连续 KV。请求 1 与 llama.cpp
         greedy 全序列对齐；请求 2 因 W8A16 vs Q4_K_M 量化分歧，断言为
         前缀一致 + EOS（见 `tiny_llm_text_e2e.rs`）
 - [x] 并发压测：资源守恒、尾延迟、失败传播
@@ -62,7 +62,7 @@
 ## 阶段 3：可信评测与上游贡献（当前）
 
 - [ ] closed-loop / Poisson 两种负载使用统一的请求起点、全局墙钟与 token coverage
-- [ ] paged-infer / llama-server / vLLM 三后端结果绑定 commit、模型与量化口径
+- [ ] paged-serving / llama-server / vLLM 三后端结果绑定 commit、模型与量化口径
 - [ ] 补齐 KV 利用率采样、取消/HOL/fairness 场景，原始请求与负结果一并归档
 - [ ] 把本仓库的调度练习转化为对 vLLM / SGLang 的理解与 PR
 - [ ] 从调度器/内存管理相关的 good-first-issue 入手

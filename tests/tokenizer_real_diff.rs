@@ -1,4 +1,4 @@
-//! Qwen2 真实 tokenizer 差分验证（paged-infer 侧）。
+//! Qwen2 真实 tokenizer 差分验证（paged-serving 侧）。
 //!
 //! 门控（与 `tiny_llm_backend.rs` 一致，运行时跳过）：
 //! - `PINF_TOKENIZER_JSON`：Qwen2.5 tokenizer.json 路径
@@ -6,10 +6,10 @@
 //!
 //! 验证内容：
 //! - 编码与 HF 权威 fixture 逐 id 对齐（tiny-llm 自研 BPE 已与该 fixture 对齐，
-//!   故本测试证明 paged-infer ↔ tiny-llm 词表一致）
+//!   故本测试证明 paged-serving ↔ tiny-llm 词表一致）
 //! - 真实特殊 token ID（BOS/PAD=151643、EOS=151645）与词表大小（151936）
 
-use paged_infer::{HuggingFaceTokenizer, TokenizerTrait};
+use paged_serving::{HuggingFaceTokenizer, TokenizerTrait};
 use std::path::Path;
 
 fn tokenizer_path() -> Option<String> {

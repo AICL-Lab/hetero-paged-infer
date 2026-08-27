@@ -1,14 +1,14 @@
 [package]
-name = "paged-infer"
+name = "paged-serving"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
-default-run = "paged-infer"
+default-run = "paged-serving"
 description = "Learning-oriented LLM serving control plane with paged KV scheduling and continuous batching"
 authors = ["holtwood"]
 license = "MIT"
-repository = "https://github.com/open-infra-ai/paged-infer"
-homepage = "https://github.com/open-infra-ai/paged-infer"
+repository = "https://github.com/open-infra-ai/paged-serving"
+homepage = "https://github.com/open-infra-ai/paged-serving"
 keywords = ["llm", "inference", "serving", "kv-cache", "scheduler"]
 categories = ["development-tools", "simulation"]
 
@@ -30,7 +30,7 @@ futures-util = "0.3"
 rand = "0.8"
 
 [dev-dependencies]
-paged-infer = { path = ".", features = ["test-utils"] }
+paged-serving = { path = ".", features = ["test-utils"] }
 proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 tower = { version = "0.5", features = ["util"] }
@@ -54,9 +54,9 @@ test-utils = []
 tiny-llm = []
 
 [[bin]]
-name = "paged-infer"
+name = "paged-serving"
 path = "src/main.rs"
 
 [lib]
-name = "paged_infer"
+name = "paged_serving"
 path = "src/lib.rs"

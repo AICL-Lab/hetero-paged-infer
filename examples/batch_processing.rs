@@ -1,15 +1,15 @@
-//! Batch processing example for Hetero-Paged-Infer
+//! Batch processing example for Hetero-Paged-Serving
 //!
 //! This example demonstrates processing multiple requests concurrently.
 //!
 //! Run with: cargo run --example batch_processing
 
-use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    println!("=== Hetero-Paged-Infer Batch Processing Example ===\n");
+    println!("=== Hetero-Paged-Serving Batch Processing Example ===\n");
 
     // Create engine with larger capacity for batch processing
     let config = EngineConfig {

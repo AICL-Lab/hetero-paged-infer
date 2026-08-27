@@ -1,4 +1,4 @@
-//! # Paged-Infer
+//! # Paged-Serving
 //!
 //! 基于 `PagedAttention` 分页内存与 Continuous Batching 的推理引擎脚手架；
 //! 默认计算后端为 CPU 参考执行器（真实前向、greedy 采样）。
@@ -32,7 +32,7 @@
 //! ## 快速开始
 //!
 //! ```rust
-//! use paged_infer::{EngineConfig, GenerationParams, InferenceEngine};
+//! use paged_serving::{EngineConfig, GenerationParams, InferenceEngine};
 //!
 //! // 创建引擎
 //! let config = EngineConfig::default();
@@ -52,7 +52,7 @@
 //! for result in completed {
 //!     println!("输出: {}", result.output_text);
 //! }
-//! # Ok::<(), paged_infer::EngineError>(())
+//! # Ok::<(), paged_serving::EngineError>(())
 //! ```
 //!
 //! ## 核心组件

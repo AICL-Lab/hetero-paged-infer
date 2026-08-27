@@ -13,16 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （`--mode closed`）与开环泊松（`--mode poisson`）双负载模型；指标口径
   TTFT（首个非空文本 chunk）/ ITL / 逐请求 TPOT / 失败归类（timeout /
   http_429 / http_4xx / http_5xx / connection / stream_error / no_done）；
-  同一二进制零改动覆盖 paged-infer / llama-server / vLLM，保证横向可比；
+  同一二进制零改动覆盖 paged-serving / llama-server / vLLM，保证横向可比；
   输出 per_request.jsonl + stdout 分位汇总。冒烟数据集
   `benchmarks/serving/datasets/synth/smoke.jsonl`。CPU 后端双模式端到端验证通过。
-- tiny-llm 后端容量调节环境变量：`PAGED_INFER_TINY_LLM_MAX_SEQS`（最大并发序列，
-  默认 4，下限 1）与 `PAGED_INFER_TINY_LLM_DECODE_RESERVE`（decode 预留 token，
+- tiny-llm 后端容量调节环境变量：`PAGED_SERVING_TINY_LLM_MAX_SEQS`（最大并发序列，
+  默认 4，下限 1）与 `PAGED_SERVING_TINY_LLM_DECODE_RESERVE`（decode 预留 token，
   默认 512，下限 0）；原硬编码常量改为默认值，非法值记警告并回退默认。
   动机：6GB 卡跑 0.5B 模型时 KV 池仅 ~300MB，并发 8 可容纳，压测不再被
   保守上限挡住；长生成场景可按 `max_tokens` 上调预留。README 能力表同步。
 - 分页 KV 策略 1 默认启用（**T11 完成**，`9e8f6c7`）：tiny-llm 后端经 C ABI 真实
-  上传 `block_tables`/`num_blocks`（ABI v2），默认启用；`PAGED_INFER_TINY_LLM_STRATEGY=2`
+  上传 `block_tables`/`num_blocks`（ABI v2），默认启用；`PAGED_SERVING_TINY_LLM_STRATEGY=2`
   可回退连续 KV。同步更新 README / ROADMAP / DEVELOPMENT_PLAN（0.2.0 发布时的
   CHANGELOG 仍写 T11 未实施，此处订正）。
 
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   不是 token 级 ITL，当前协议无法可靠测得 ITL 时必须显示不可用。README 与
   ROADMAP 统一为“控制面核心稳定、可信评测与上游转化仍 active”，并明确
   推理加速主线属于 tiny-llm。Cargo 包元数据改为真实维护者、仓库、许可证和
-  Rust 版本，并设置 `paged-infer` 为默认 binary，恢复 README 中
+  Rust 版本，并设置 `paged-serving` 为默认 binary，恢复 README 中
   `cargo run -- --serve` 的可用性；FFI rustdoc 同步当前真实接入状态。
 - README IN/OUT：tokenizer 改为 HTTP 边界适配器；词表/BPE 权威仍在 tiny-llm
 - 架构图改为控制面 + CPU 参考 / tiny-llm 策略 1 双后端
@@ -60,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- 仓库由 `hetero-paged-infer` 更名为 `paged-infer`：原名中的 "hetero"（异构）与当前纯 CPU 参考后端的实际状态不符。crate 更名为 `paged-infer`/`paged_infer`，指标名同步更名为 `paged_*`。旧仓库地址自动重定向。
+- 仓库由 `hetero-paged-serving` 更名为 `paged-serving`：原名中的 "hetero"（异构）与当前纯 CPU 参考后端的实际状态不符。crate 更名为 `paged-serving`/`paged_serving`，指标名同步更名为 `paged_*`。旧仓库地址自动重定向。
 
 ### Added
 
@@ -79,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     语义一致），`vocab_size()` 返回含 added tokens 的完整词表（Qwen2.5 为 151665）
   - CLI 新增 `--tokenizer <path>`：启用 HuggingFace tokenizer（也可经
     `config.json` 的 `tokenizer.kind=huggingface` 配置）
-  - 差分验证 `tests/tokenizer_real_diff.rs`：paged-infer(HF) 与 tiny-llm 权威
+  - 差分验证 `tests/tokenizer_real_diff.rs`：paged-serving(HF) 与 tiny-llm 权威
     fixture 逐 id 对齐（30/30，`PINF_TOKENIZER_JSON` + `PINF_TOKENIZER_FIXTURE` 门控）
   - 文本质量端到端 `tests/tiny_llm_text_e2e.rs`：真实后端 + 真实 tokenizer，
     与 llama.cpp 同 prompt greedy 输出逐 token 完全一致（24/24），EOS 正确终止
@@ -192,5 +192,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
-[0.2.0]: https://github.com/aicl-lab/paged-infer/releases/tag/v0.2.0
-[0.1.0]: https://github.com/aicl-lab/paged-infer/releases/tag/v0.1.0
+[0.2.0]: https://github.com/aicl-lab/paged-serving/releases/tag/v0.2.0
+[0.1.0]: https://github.com/aicl-lab/paged-serving/releases/tag/v0.1.0

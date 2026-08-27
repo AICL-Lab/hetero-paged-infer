@@ -5,7 +5,7 @@
 //! - 链接期：`TINY_LLM_DIR` 指向 tiny-llm 构建目录（build.rs）
 //! - 运行期：`TINY_LLM_MODEL` 指向真实 GGUF 模型
 //!
-//! 使用 paged-infer 自带的 SimpleTokenizer（词表语义与 Qwen 不同），
+//! 使用 paged-serving 自带的 SimpleTokenizer（词表语义与 Qwen 不同），
 //! 本测试验证的是**接入流程正确性**（引擎驱动、KV 生命周期、资源守恒、
 //! 能力声明），而非文本质量；文本质量验证需接入与模型词表一致的 tokenizer。
 //!
@@ -14,8 +14,8 @@
 
 #![cfg(feature = "tiny-llm")]
 
-use paged_infer::test_utils::create_test_config;
-use paged_infer::{
+use paged_serving::test_utils::create_test_config;
+use paged_serving::{
     EngineError, GenerationParams, InferenceEngine, Scheduler, SimpleTokenizer, TinyLlmExecutor,
 };
 

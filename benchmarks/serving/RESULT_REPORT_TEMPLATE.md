@@ -6,7 +6,7 @@
 ## 范围与结论
 
 - 日期 / 硬件：[GPU、显存、驱动、CUDA、CPU、发压机位置]
-- 被测 commit：[paged-infer、tiny-llm、外部引擎]
+- 被测 commit：[paged-serving、tiny-llm、外部引擎]
 - 模型与量化：[模型文件 SHA-256、量化格式、tokenizer]
 - 结论：[只陈述本次矩阵实际支持的观察；不外推到其他 GPU、模型或负载]
 

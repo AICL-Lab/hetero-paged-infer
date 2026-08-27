@@ -1,7 +1,7 @@
 //! Serving 压测客户端（loadgen）：对 OpenAI 兼容 `/v1/completions`（SSE 流式）
 //! 端点做可复现负载实验。
 //!
-//! 同一二进制零改动覆盖三个后端：paged-infer / llama-server / vLLM，
+//! 同一二进制零改动覆盖三个后端：paged-serving / llama-server / vLLM，
 //! 保证横向可比（口径定义见 `benchmarks/serving/methodology.md`）。
 //!
 //! # 负载模型
@@ -103,7 +103,7 @@ struct Args {
     engine: String,
 
     /// model 字段（透传给 API，不影响路由）
-    #[arg(long, default_value = "paged-infer")]
+    #[arg(long, default_value = "paged-serving")]
     model: String,
 }
 
@@ -945,7 +945,7 @@ mod tests {
             out: "results/per_request.jsonl".to_string(),
             summary_out: None,
             tokenizer: None,
-            engine: "paged-infer".to_string(),
+            engine: "paged-serving".to_string(),
             model: "test-model".to_string(),
         }
     }

@@ -1,9 +1,9 @@
-//! Performance benchmarks for Hetero-Paged-Infer
+//! Performance benchmarks for Hetero-Paged-Serving
 //!
 //! Run with: cargo bench
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use paged_infer::{EngineConfig, GenerationParams, InferenceEngine, KVCacheManager, Scheduler};
+use paged_serving::{EngineConfig, GenerationParams, InferenceEngine, KVCacheManager, Scheduler};
 use std::hint::black_box;
 
 /// Benchmark engine creation
@@ -171,7 +171,7 @@ fn bench_scheduler(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut scheduler = Scheduler::new(config.clone());
-                use paged_infer::{Request, RequestState};
+                use paged_serving::{Request, RequestState};
                 for i in 1..=5 {
                     let mut request =
                         Request::new(i, vec![1, 2, 3, 4, 5], GenerationParams::default());
