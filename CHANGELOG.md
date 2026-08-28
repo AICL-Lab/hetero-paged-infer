@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-28
 
 ### Added
 - **Serving 压测客户端 `loadgen`**（`src/bin/loadgen.rs`，W1 评测地基）：
@@ -171,7 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   流式为"请求结束时的一个完整文本 chunk"，"token-level streaming" 表述限定
   `SimpleTokenizer`（随 T8 完成）。
 - **T11** 在 0.2.0 发布时未实施（需 tiny-llm 仓库同步改造分页 KV C ABI）；
-  已于 2026-08-18 完成并默认启用（策略 1），详见 [Unreleased]。
+  已于 2026-08-18 完成并默认启用（策略 1），详见 [0.2.1]。
 
 ## [0.1.0] - 2026-04-16
 

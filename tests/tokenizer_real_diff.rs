@@ -25,7 +25,8 @@ fn qwen2_tokenizer_matches_tiny_llm_fixture() {
     let tokenizer =
         HuggingFaceTokenizer::from_file(Path::new(&path)).expect("failed to load tokenizer.json");
 
-    let fixture_path = std::env::var("PSERV_TOKENIZER_FIXTURE").expect("set PSERV_TOKENIZER_FIXTURE");
+    let fixture_path =
+        std::env::var("PSERV_TOKENIZER_FIXTURE").expect("set PSERV_TOKENIZER_FIXTURE");
     let raw = std::fs::read_to_string(&fixture_path).expect("read fixture");
     let fixture: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture");
 

@@ -58,7 +58,7 @@ Paged-Serving 是一个基于 Rust 构建的 LLM Serving 控制面，以模块�
 **OUT（明确不做，见对应仓库）**：
 - 计算 kernel（GEMM/attention/RoPE/W8A16）→ [tiny-llm](https://github.com/open-infra-ai/tiny-llm)
 - 模型加载、词表与 BPE 算法权威 → [tiny-llm](https://github.com/open-infra-ai/tiny-llm)（本仓不重新实现 GGUF tokenizer；HF 路径必须与 tiny-llm fixture 逐 id 对齐）
-- FlashAttention 深挖 → [cuflash-attn](https://github.com/open-infra-ai/cuflash-attn)
+- FlashAttention 深挖 → [cuflash](https://github.com/open-infra-ai/cuflash)
 
 ## 系统架构
 
@@ -393,7 +393,7 @@ cargo test && cargo fmt --check && cargo clippy
 
 推理加速主线位于 [tiny-llm](https://github.com/open-infra-ai/tiny-llm)；本仓库只负责
 把 Runtime 能力置于真实请求、调度和 KV 生命周期中验证。FlashAttention 的独立
-kernel 学习仍在 [cuflash-attn](https://github.com/open-infra-ai/cuflash-attn)。
+kernel 学习仍在 [cuflash](https://github.com/open-infra-ai/cuflash)。
 
 ## 许可证
 
