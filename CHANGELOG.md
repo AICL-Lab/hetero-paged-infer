@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   上传 `block_tables`/`num_blocks`（ABI v2），默认启用；`PAGED_SERVING_TINY_LLM_STRATEGY=2`
   可回退连续 KV。同步更新 README / ROADMAP / DEVELOPMENT_PLAN（0.2.0 发布时的
   CHANGELOG 仍写 T11 未实施，此处订正）。
+- 优先级调度（**E2 完成**，`a69b146`）：`GenerationParams::priority` 高优先级先调度
+  （同级 FCFS）；server 层透传优先级，支持单请求指定优先级。
 
 ### Fixed
 - 与 tiny-llm 同步澄清 `tinyllm_step` 的 logprobs 缓冲区契约：每个候选占两个
@@ -192,5 +194,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Legacy spec archive records were removed during repository simplification.
 Durable project history is now condensed in this changelog and GitHub Releases.
 
+[0.2.1]: https://github.com/open-infra-ai/paged-serving/releases/tag/v0.2.1
 [0.2.0]: https://github.com/aicl-lab/paged-serving/releases/tag/v0.2.0
 [0.1.0]: https://github.com/aicl-lab/paged-serving/releases/tag/v0.1.0
